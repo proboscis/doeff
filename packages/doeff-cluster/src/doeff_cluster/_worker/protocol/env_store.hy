@@ -53,7 +53,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.launch [entry-place-of-marker])
-(import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv])
+(import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MemoryUse LayerMemoryUse MemoryUnread WarmRoom
                                               LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal
@@ -119,7 +119,11 @@
    jobs の上限から引く(worker/core/eviction_rules の prepare-reserve)。jobs の層で焼くと、動く job と memory を分け合い、焼く子が層の
    上限で殺されて準備が落ちた(2026-11-02 の node-d — jobs 896 MiB のうち動く job が約 450 MiB)。2 つの量の値は worker の
    起動の引数(main.hy の --env-roots-cap・--env-min-free — 既定は boot.sh)。prepare-layer-dir = 準備の process が置かれる cgroup の層の dir
-   (先の組みの入口はこの層の memory で判じる — core/env_upkeep の warm-refusal。None = 層が無い機体・container の読みで判じる)。"
+   (先の組みの入口はこの層の memory で判じる — core/env_upkeep の warm-refusal。None = 層が無い機体・container の読みで判じる)・
+   service-procs = 常駐の job(service)の root の準備(PrepareEnv の service)を置く service の兄弟の cgroup の cgroup.procs(準備の層が無い
+   機体だけ使う・None = 置き直さない)。jobs の層は task の CPU の枠(機体の配備の cpu.max と cpu.idle)の下に在り、service の版の切り替えの
+   準備(約 1 分の CPU)が task と枠を分け合うと 6 分を越えた。準備の process の CPU の優先度は今までどおり下げる(lowered-priority-argv —
+   service の兄弟の中でも、動いている service に必ず譲る)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
@@ -137,7 +141,8 @@
   (setv #^ (| str None) code-store None)
   (setv #^ (| str None) shared None)
   (setv #^ (| str None) prepare-procs None)
-  (setv #^ (| str None) prepare-layer-dir None))
+  (setv #^ (| str None) prepare-layer-dir None)
+  (setv #^ (| str None) service-procs None))
 
 
 (defrecord PendingEnv
@@ -146,7 +151,7 @@
    置かれる層の回収できない使いの、起こす前の読みと準備の間の最大(層の無い・読めない機体は None — sample-layers)・group = 準備の層の
    下のこの準備の子の dir(層が無い機体は None — core/job_cgroup の「準備ごとの子」)・runtime-env と compile-jobs = 頼み(層の memory の
    上限で殺された時に待ちへ戻す)・need = 起こした時に層の空きから取り置いた見込みの山(byte — 層で絞らない worker は 0)・alone = 1 本
-   だけで起こした準備か(層の memory の上限で殺されて起こし直した物)。"
+   だけで起こした準備か(層の memory の上限で殺されて起こし直した物)・service = 常駐の job の root の準備か(PrepareEnv の service)。"
   (#^ int pid)
   (#^ int started-ms)
   (#^ str result)
@@ -158,17 +163,19 @@
   (setv #^ str runtime-env "")
   (setv #^ (| int None) compile-jobs None)
   (setv #^ int need 0)
-  (setv #^ bool alone False))
+  (setv #^ bool alone False)
+  (setv #^ bool service False))
 
 
 (defrecord WaitingEnv
   "起こすのを待っている準備 1 本の頼み(待ちの記録の値 — キー → この record): runtime-env = 宣言の JSON の文字列・compile-jobs = bytecode を
    焼く道具の並べる数(None = 道具の既定 — PrepareEnv と同じ・2026-10-08)・warm = 先読みの準備か・alone = 1 本だけで起こし直す準備か
-   (準備の層の memory の上限で殺された準備 — env_rules の launch-order)。"
+   (準備の層の memory の上限で殺された準備 — env_rules の launch-order)・service = 常駐の job の root の準備か(PrepareEnv の service)。"
   (#^ str runtime-env)
   (#^ (| int None) compile-jobs)
   (#^ bool warm)
-  (setv #^ bool alone False))
+  (setv #^ bool alone False)
+  (setv #^ bool service False))
 
 
 (defk roots-dir [settings]
@@ -264,13 +271,14 @@
   None)
 
 
-(defk launch-prepare [settings key runtime-env compile-jobs warm [need 0] [alone False]]
-  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool) (: need int) (: alone bool)]
+(defk launch-prepare [settings key runtime-env compile-jobs warm [need 0] [alone False] [service False]]
+  {:pre [(: settings EnvSettings) (: key str) (: runtime-env str) (: compile-jobs (| int None)) (: warm bool) (: need int) (: alone bool)
+         (: service bool)]
    :post [(: % PendingEnv)]}
   "root の準備の process を 1 本起こして記録を返すため。マーカーの無い root(途中で止まった準備)は、準備の process がキーごとの錠を
    取ってから脇へ退ける(AL-D2g — root の置き場を分け合う他の世代がそのキーを準備している間に、ここで退けるとその準備を壊す)。
    compile-jobs = 焼く道具の並べる数(頼みの JSON の compileJobs に書く)・need = 層の空きから取り置く見込みの山・alone = 1 本だけで
-   起こす準備か(記録に残す — PendingEnv)。"
+   起こす準備か(記録に残す — PendingEnv)・service = 常駐の job の root の準備か(準備の層が無ければ service の兄弟の cgroup に置く)。"
   (<- root str (env-root settings key))
   (<- now-ms int (now-epoch-ms))
   (val requests (+ settings.state "/env-requests"))
@@ -303,13 +311,18 @@
     (<- wrapped tuple (grouped-argv dir argv))
     (:= group dir)
     (:= placed wrapped))
+  ;; 準備の層が無い機体の service の root の準備は、service の兄弟の cgroup に置く(EnvSettings の service-procs の註 — 外側の
+  ;; job-cgroup-placer は包んだ argv を包み直さない)。
+  (when (and (is settings.prepare-procs None) service (is-not settings.service-procs None))
+    (<- moved tuple (placed-argv settings.service-procs argv))
+    (:= placed moved))
   ;; 子は worker の環境を継ぐ(env = None)。出力は標準出力と標準エラーを同じ log の末尾へ。
   (<- started (StartProcess :argv placed :stdout-path log :stderr-path log))
   (when (isinstance started ProcessNotStarted)
     (raise (OSError started.detail)))
   (PendingEnv :pid started.pid :started-ms now-ms :result result :progress progress :warm warm :memory memory :group group
               :sample (if (is base None) None (LayerSample :base base :peak base))
-              :runtime-env runtime-env :compile-jobs compile-jobs :need need :alone alone))
+              :runtime-env runtime-env :compile-jobs compile-jobs :need need :alone alone :service service))
 
 
 (defk group-oom-kills [group]
@@ -891,7 +904,8 @@
     (val entry (get left key))
     (val need (if (is room None) 0 (.get room.needs key room.default-need)))
     (:= left (dfor #(k v) (.items left) :if (!= k key) k v))
-    (<- started PendingEnv (launch-prepare settings key entry.runtime-env entry.compile-jobs entry.warm need entry.alone))
+    (<- started PendingEnv (launch-prepare settings key entry.runtime-env entry.compile-jobs entry.warm need entry.alone
+                                                   :service entry.service))
     (:= running (| running {key started})))
   #(left running))
 
@@ -943,7 +957,7 @@
               (and (> kills 0) (not p.alone))
                 (do (<- (slog MEMORY-KILLED-LOG :level "warning" :key key :oom-kills kills))
                     (:= queued (| queued {key (WaitingEnv :runtime-env p.runtime-env :compile-jobs p.compile-jobs :warm p.warm
-                                                          :alone True)})))
+                                                          :alone True :service p.service)})))
               (> kills 0)
                 (do (<- failure EnvFailure (memory-killed-failure kills code exit-log))
                     (<- (slog "worker: 準備が失敗した" :key key :kind (str failure.kind) :detail failure.detail))
@@ -988,12 +1002,12 @@
   (session var unmeasured (frozenset))
   ;; 完成した root の依存のキー(root のキー → 依存のキー — heartbeat の readyDeps・印を読み直さないため最後の名乗りの値を持つ)。
   (session var dependencies {})
-  (PrepareEnv [key runtime-env compile-jobs warm]
+  (PrepareEnv [key runtime-env compile-jobs warm service]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
     ;; 先読みと同じ停滞の長さ・走っている焼きの並べる数は変えない)、待っていれば job の頼み(焼きの並べる数も)に置き換える。先の組み(warm)は
     ;; 始める前に空き・roots の上限・memory で断るかを判じ(warm-admission — #3748)、断れば断りの記録に種類つきで置く(heartbeat の env-failed
     ;; → 温める表の WarmFailure)。job の準備は断らない。断りの記録は完成の印の有無によらず頼みのたびに消す(他の世代が組んだ root を断りで隠さない)。
-    (val wanted (WaitingEnv :runtime-env runtime-env :compile-jobs compile-jobs :warm warm))
+    (val wanted (WaitingEnv :runtime-env runtime-env :compile-jobs compile-jobs :warm warm :service service))
     (cond
       (in key pending)
         (when (and (. (get pending key) warm) (not warm))

@@ -41,7 +41,7 @@
 (import doeff_cluster._worker.core.bake_plan [BAKE-JOBS-CEILING])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready warm-child-places mark-refusal
-  warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys
+  warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys service-only-warm-keys
   urgent-warm-keys
   fork-candidate WarmStart warm-start])
 
@@ -233,9 +233,11 @@
 (defn #^ (| PrepareCode PrepareEnv) prepare-action [#^ JobSpec spec #^ WorldView world #^ (| int None) compile-jobs]
   "spec の置き場を用意する action: 実行環境の job は env の root(PrepareEnv)、それ以外は commit の木(PrepareCode)。bytecode を焼く道具の
    並べる数は、この worker の準備の CPU の宣言から決める(compartment-jobs — 区画を持たない worker は compile-jobs のまま)。
-   compile-jobs = 呼び手の絞り(None = 絞らない — 旧い process が動いている間の準備だけ replace-step が方策の値を渡す・2026-10-08)。"
+   compile-jobs = 呼び手の絞り(None = 絞らない — 旧い process が動いている間の準備だけ replace-step が方策の値を渡す・2026-10-08)。
+   常駐の job(service)の root の準備は service を名乗る(宿が service の兄弟の cgroup に置く — 版の切り替えの道を task の層の CPU の枠に
+   置かない)。"
   (if spec.runtime-env
-      (PrepareEnv (code-key spec) spec.runtime-env (compartment-jobs world.compartments compile-jobs))
+      (PrepareEnv (code-key spec) spec.runtime-env (compartment-jobs world.compartments compile-jobs) :service (not spec.once))
       (PrepareCode (code-key spec) (compartment-jobs world.compartments compile-jobs))))
 
 (defn #^ tuple prepare-actions [#^ int now #^ JobSpec spec #^ WorldView world #^ WorkerPolicy policy #^ (| int None) compile-jobs]
@@ -622,13 +624,15 @@
       #((StopWarmChild key StopStage.TERM (! (mark-refusal view.mark))))
     True #()))
 
-(defk launch-of [key wanted desired world warm services]
-  {:pre [(: key str) (: wanted frozenset) (: desired tuple) (: world WorldView) (: warm tuple) (: services frozenset)]
+(defk launch-of [key wanted desired world warm services [service-only (frozenset)]]
+  {:pre [(: key str) (: wanted frozenset) (: desired tuple) (: world WorldView) (: warm tuple) (: services frozenset)
+         (: service-only frozenset)]
    :post [(: % (| WarmLaunch None))] :tags {:context "worker" :role "judgment"}}
   "root のキーの待ちの子の起こし方を求めるため(要らない root・READY でない root は None — 判断の 1 歩はそれを「要らない」と読む)。
-   services = service を分ける root のキー(その root の service の module も前もって読む)。"
+   services = service を分ける root のキー(その root の service の module も前もって読む)・service-only = service だけが分かれる root の
+   キー(warm_rules の service-only-warm-keys — その root の待ちの子は service の兄弟の cgroup に起こす)。"
   (val root (if (in key wanted) (ready-path (code-of world key)) None))
-  (if (is root None) None (! (warm-launch key root desired warm :services services))))
+  (if (is root None) None (! (warm-launch key root desired warm :services services :service-only service-only))))
 
 (defk fork-refusals [records]
   {:pre [(: records dict)] :post [(: % (get dict #(str JobNotStarted)))] :tags {:context "worker" :role "judgment"}}
@@ -652,16 +656,19 @@
    warm-child-roomless の taken — 2 つの root の待ちの子を 1 本分の空きに並べて起こさない)。急ぎを名乗る温める行の root
    (urgent-warm-keys)の待ちの子は、上に載る系の残す線を外した jobs の層の空きで判じる(warm_rules の warm-room-of の urgent)。"
   (val services (service-warm-keys desired policy))
+  (val table-keys (if policy.warm-table-children (tuple (gfor w warm w.key)) #()))
   (val wanted (frozenset (+ (tuple (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec)))
-                            (if policy.warm-table-children (tuple (gfor w warm w.key)) #())
+                            table-keys
                             (tuple services))))
+  ;; service だけが分かれる root の待ちの子は service の兄弟の cgroup に起こす(版の切り替えの道を task の層の CPU の枠に置かない)。
+  (<- service-only frozenset (service-only-warm-keys desired policy (frozenset table-keys)))
   (val keys (sorted (| wanted (frozenset (gfor view world.warm-children view.key)))))
   (<- urgent frozenset (urgent-warm-keys (if policy.warm-table-children warm #())))
   (<- refusals dict (fork-refusals records))
   (var actions #())
   (var taken 0)
   (for [key keys]
-    (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm services))
+    (<- launch (| WarmLaunch None) (launch-of key wanted desired world warm services :service-only service-only))
     (val view (warm-child-of world key))
     (<- step tuple (warm-child-step now key launch view policy :refusal (.get refusals key)
                                     :roomless (warm-child-roomless key view world policy :taken taken :urgent (in key urgent))))

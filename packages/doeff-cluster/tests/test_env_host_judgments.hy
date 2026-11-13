@@ -45,7 +45,7 @@
 (import doeff_cluster [env-host]
         doeff_cluster._worker.protocol.env_store [EnvSettings ENV-TOOL env-root WARM-REFUSED-LOG MEMORY-UNMEASURED-LOG])
 (import doeff_cluster._worker.core.env_upkeep [DEFAULT-ROOT-BYTES DEFAULT-BUILD-MEMORY-BYTES prepare-layer-dir])
-(import doeff_cluster._worker.core.job_cgroup [CLOSE-SCRIPT GROUP-SCRIPT prepare-group-dir closing-argv])
+(import doeff_cluster._worker.core.job_cgroup [CLOSE-SCRIPT GROUP-SCRIPT PLACE-SCRIPT prepare-group-dir closing-argv])
 (import doeff_cluster._worker.protocol.code_store [PREPARE-TOOL])
 (import doeff_cluster [ObserveEnvs])
 (import doeff_cluster._worker.protocol.declared [task-spec])
@@ -240,6 +240,41 @@
             (assert (= runs.closes #((! (closing-argv group)))) runs.closes))
         (do (assert (!= (get argv 0) "/bin/sh") argv)
             (assert (= runs.closes #()) runs.closes)))
+    (assert (in ENV-TOOL argv) argv)))
+
+
+(defk released-service-prepare [runs key text]
+  {:pre [(: runs ToolRuns) (: key str) (: text str)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "常駐の job(service)の root の準備を 1 回頼み、終わらせてから観測するため。"
+  (<- (PrepareEnv key text None :service True))
+  (setv runs.released True)
+  (<- after tuple (ObserveEnvs))
+  after)
+
+
+(deftest test-a-service-roots-preparation-runs-in-the-service-cgroup-when-the-worker-has-no-prepare-layer [tmp-path]
+  ;; 失敗ケース(2026-11-12): 準備の層の無い機体で、service の版の切り替えの root の準備(約 1 分の CPU)を jobs の層(task の CPU の枠
+  ;; 1.5 CPU・cpu.idle)に置き、task と枠を分け合って 6 分 37 秒かかった。service の root の準備は service の兄弟の cgroup へ移してから
+  ;; 起こす。準備の層を名乗る機体は層のまま(層の memory の守りを外さない)・兄弟の名が無ければ包まない。
+  (<- env RuntimeEnv (declared 1))
+  (<- key str (env-key-of env))
+  (<- text str (declared-text env))
+  (val services "/cg/pod/services/cgroup.procs")
+  (val layer "/cg/pod/prepare/cgroup.procs")
+  (for [#(where service-procs prepare-procs head) [#("services" services None "place")
+                                                   #("layer" services layer "group")
+                                                   #("none" None None "none")]]
+    (val runs (ToolRuns))
+    (<- base EnvSettings (settings-at (/ tmp-path where)))
+    (val settings (replace base :service-procs service-procs :prepare-procs prepare-procs))
+    (<- (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler subprocess-handler (inline-env-tool runs) (env-host settings)]
+          (released-service-prepare runs key text)))
+    (assert (= (len runs.argvs) 1) runs.argvs)
+    (val argv (get runs.argvs 0))
+    (cond
+      (= head "place") (assert (= (cut argv 4) #("/bin/sh" "-c" PLACE-SCRIPT services)) argv)
+      (= head "group") (assert (= (cut argv 3) #("/bin/sh" "-c" GROUP-SCRIPT)) argv)
+      True (assert (!= (get argv 0) "/bin/sh") argv))
     (assert (in ENV-TOOL argv) argv)))
 
 

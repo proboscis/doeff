@@ -4,6 +4,7 @@
 (require doeff-hy.macros [deftest defk defhandler defeffect val var <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
+(import doeff_cluster._worker.core.job_cgroup [PLACE-SCRIPT])
 (import pathlib [Path])
 (import dataclasses [replace])
 (import doeff [run with-handlers])
@@ -96,6 +97,37 @@
   (assert (= forgotten #()) forgotten)
   (assert (= gone.kind PathKind.MISSING) gone)
   (assert (= (. (get seen 5) kind) PathKind.MISSING) (get seen 5)))
+
+
+;; --- 待ちの子の置き場の cgroup ------------------------------------------------------------------
+;; 失敗ケース(2026-11-12): service だけが分かれる root の待ちの子を jobs の層(task の CPU の枠)に起こし、読み込みが task と枠を分け合って
+;; 5 分に延び、service の版の切り替えが約 12 分かかった。宿は WarmLaunch の service の待ちの子を service の兄弟の cgroup へ移してから起こす。
+
+(defk started-argv [launch]
+  {:pre [(: launch WarmLaunch)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "待ちの子を 1 つ起こし、起こされた argv の記録を返すため。"
+  (<- (StartWarmChild "env-a" launch))
+  (<- record str (ReadText ARGV-RECORD))
+  (get (json.loads record) "argv"))
+
+
+(deftest test-a-warm-child-only-services-fork-from-starts-in-the-service-cgroup
+  (val procs "/cg/services/cgroup.procs")
+  (val script (ProcessScript :commands #((ScriptedCommand :name "uv" :run warm-child-starts)
+                                         (ScriptedCommand :name "sh" :run warm-child-starts))
+                             :env SCRIPT-ENV))
+  (val rows
+    #(#("service の待ちの子・兄弟の名が在る → 兄弟へ移ってから起こす" (replace LAUNCH :service True) procs True)
+      #("task も分かれる root の待ちの子 → 包まない(外の placer が jobs の層へ置く)" LAUNCH procs False)
+      #("兄弟の名が無い機体 → 包まない" (replace LAUNCH :service True) None False)))
+  (for [#(label launch service-procs wrapped) rows]
+    (val got (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
+                                  (warm-host (replace SETTINGS :service-procs service-procs))]
+                    (started-argv launch))))
+    (if wrapped
+        (do (assert (= (cut got 0 4) ["/bin/sh" "-c" PLACE-SCRIPT procs]) (.format "{}: {}" label got))
+            (assert (= (get got 4) "uv") (.format "{}: {}" label got)))
+        (assert (= (get got 0) "uv") (.format "{}: {}" label got)))))
 
 
 ;; --- 待ちの子 1 本の大きさ(準備完了の時の RSS)--------------------------------------------

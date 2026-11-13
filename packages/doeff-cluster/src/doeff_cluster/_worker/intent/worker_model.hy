@@ -299,10 +299,13 @@
 
 (defrecord WarmLaunch
   "要る root の待ちの子の起こし方(判断の層が宣言から決める): root = READY の root の path・project = uv の --project(task の子と同じ規則
-   launch.env-project-dir)・preload = 起動で読み込む module の名(名の順)。"
+   launch.env-project-dir)・preload = 起動で読み込む module の名(名の順)・service = service だけが分かれる root の待ちの子か
+   (warm_rules の service-only-warm-keys — 真なら宿は service の兄弟の cgroup に起こす。service の版の切り替えの道に在る子を、task の
+   層の CPU の枠に置かない)。"
   (#^ str root)
   (#^ str project)
-  (#^ (get tuple #(str ...)) preload))
+  (#^ (get tuple #(str ...)) preload)
+  (setv #^ bool service False))
 
 
 (defrecord WarmChildView
@@ -623,7 +626,10 @@
   (#^ str runtime-env)
   (#^ (| int None) compile-jobs)
   ;; 先読み(温める表から)の準備か。先読みは job の準備より後に起こし、同時の準備の枠の 1 つを job に残し、期限は停滞だけ。
-  (setv #^ bool warm False))
+  (setv #^ bool warm False)
+  ;; 常駐の job(service)の root の準備か。真なら宿は準備の process を service の兄弟の cgroup に置く(準備の層が在る機体は層のまま)
+  ;; — service の版の切り替えの道を task の層の CPU の枠に置かない。
+  (setv #^ bool service False))
 
 
 (defclass [(dataclass :frozen True)] SweepEnvs [EffectBase]

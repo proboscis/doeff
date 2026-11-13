@@ -43,6 +43,19 @@
         (frozenset (gfor #(key n) (.items counts) :if (or (>= n policy.warm-services-min) (in key tasks)) key)))))
 
 
+(defk service-only-warm-keys [desired policy [warm-keys (frozenset)]]
+  {:pre [(: desired tuple) (: policy WorkerPolicy) (: warm-keys frozenset)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "service だけが分かれる root のキー: service-warm-keys のうち、分かれる task が宣言に無く、温める表(warm-keys — 先読みの task が分かれうる
+   root)にも無い root。その root の待ちの子は service の版の切り替えの道に在るので、宿は service の兄弟の cgroup に起こし(WarmLaunch の
+   service)、起こす前の空きの判じ(warm-child-roomless)は今までどおり jobs の層の空きで数える(層の外に置く子を数えても、起こさない側に
+   倒れるだけ — 準備済みの子は層の使いに載らないので、空きを食い違えて数えない)。jobs の層は task の
+   CPU の枠(機体の配備の cpu.max と cpu.idle)の下に在り、待ちの子の読み込み(約 20〜30 CPU 秒)が task と枠を分け合うと、版の切り替えが
+   10 分を越えた(読み込みが 27 秒から 352 秒まで延びた)。task も分かれうる root は今までどおり jobs の層(印 serviceForks の無い版の
+   待ちの子から分かれた task が、待ちの子の cgroup を継いで service の兄弟に残らないように)。"
+  (val tasks (frozenset (gfor spec desired :if (forks-from-warm-child spec) (warm-key-of spec))))
+  (- (service-warm-keys desired policy) tasks warm-keys))
+
+
 (defn #^ bool fork-candidate [#^ JobSpec spec #^ WorkerPolicy policy #^ frozenset warm-keys]  ; cannot be a defk: 純粋な判断の warm-start・ready-followups が呼ぶ
   "待ちの子から分けて起こしうる job か: 分かれる task(forks-from-warm-child)と、warm-keys(service-warm-keys)の root の実行環境の
    service(warm-services が真の時)。"
@@ -225,13 +238,15 @@
     (WarmChildMark) (.format "準備完了の印が分かれる前の形でない(threads={} vmLive={})" mark.threads (list mark.vm-live))))
 
 
-(defk warm-launch [key root specs warm [services (frozenset)]]
-  {:pre [(: key str) (: root str) (: specs tuple) (: warm tuple) (: services frozenset)] :post [(: % WarmLaunch)] :tags {:context "worker" :role "judgment"}}
+(defk warm-launch [key root specs warm [services (frozenset)] [service-only (frozenset)]]
+  {:pre [(: key str) (: root str) (: specs tuple) (: warm tuple) (: services frozenset) (: service-only frozenset)] :post [(: % WarmLaunch)]
+   :tags {:context "worker" :role "judgment"}}
   "要る root の待ちの子の起こし方を宣言から決めるため: uv の --project は venv を持つ project の dir の定義点(runtime_env.project-dir —
    同じ root の宣言は project が同じなので最初の宣言を読む)、起動で読み込む module の名は、その root の task の宣言と温める表の行の bytecodeEntries を
    合わせた物(名の順・重なりは 1 つ — 宣言の読みは定義点 runtime-env-of-json)。名は root のキーに入らないので、同じ root の宣言どうしで
    違えば合わせた物を読む(読まなかった module は分かれた task が自分で読む — 遅くなるだけで落ちない)。services = service を分ける root の
-   キー(service-warm-keys — 在れば、その root の service の宣言の bytecodeEntries も合わせる)。"
+   キー(service-warm-keys — 在れば、その root の service の宣言の bytecodeEntries も合わせる)・service-only = service だけが分かれる root の
+   キー(service-only-warm-keys — 在れば WarmLaunch の service を真にする)。"
   (val texts (+ (tuple (gfor spec specs :if (and (= (warm-key-of spec) key)
                                                   (or (forks-from-warm-child spec)
                                                       (and (in key services) (is-not spec.runtime-env None) (not spec.once))))
@@ -243,7 +258,7 @@
     (:= names (| names (frozenset env.bytecode-entries))))
   (<- declared RuntimeEnv (runtime-env-of-json (json.loads (get texts 0))))
   (<- project str (project-dir declared root))
-  (WarmLaunch :root root :project project :preload (tuple (sorted names))))
+  (WarmLaunch :root root :project project :preload (tuple (sorted names)) :service (in key service-only)))
 
 
 ;; --- 置き場と起動の命令(宿 = worker/protocol/warm_host と process_host が読む)--------------------------------------------

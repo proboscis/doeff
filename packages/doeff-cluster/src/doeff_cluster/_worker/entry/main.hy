@@ -743,7 +743,9 @@
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
-        warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv)
+        warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv
+                           ;; service だけが分かれる root の待ちの子を置く cgroup(版の切り替えの道を task の層の CPU の枠に置かない)。
+                           :service-procs service-procs)
         ;; 実行環境(runtime env)の root の準備(別の process・worker は再起動しない)。
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :repo-access args.repo-access :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
@@ -753,6 +755,8 @@
                           ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
                           :shared (str shared-dir)
                           :prepare-procs prepare-procs
+                          ;; 準備の層の無い機体で service の root の準備を置く cgroup(版の切り替えの道を task の層の CPU の枠に置かない)。
+                          :service-procs service-procs
                           ;; 先の組みの入口が memory を読む層(準備の層か jobs の層 — core/env_upkeep の warm-refusal)。
                           :prepare-layer-dir (run (prepare-layer-dir cgroup-root (.get machine-env PREPARE-CGROUP-VAR)
                                                                      (.get machine-env JOB-CGROUP-VAR))))

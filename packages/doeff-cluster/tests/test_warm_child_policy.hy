@@ -373,7 +373,9 @@
   (val rows
     #(#("方策が偽 → 2 本でも入れ物 shim・待ちの子は起こさない" POLICY #(s1 s2) bare #((StartJob s1 1 ROOT-A) (StartJob s2 1 ROOT-A)))
       #("下限に満たない root → 入れ物 shim・待ちの子は起こさない" on #(lone) bare #((StartJob lone 1 ROOT-B)))
-      #("下限の root・待ちの子が無い → 待ちの子を起こし、service は待つ" on #(s1 s2) bare #((StartWarmChild KEY-A LAUNCH-A)))
+      ;; service だけが分かれる root の待ちの子は service の兄弟の cgroup に起こす(WarmLaunch の service)。
+      #("下限の root・待ちの子が無い → 待ちの子を起こし、service は待つ" on #(s1 s2) bare
+        #((StartWarmChild KEY-A (replace LAUNCH-A :service True))))
       #("下限の root・起こし中 → 何もしない" on #(s1 s2) starting #())
       #("下限の root・service を受ける待ちの子 → 分ける" on #(s1 s2) ready
         #((StartJob s1 1 ROOT-A :warm-key KEY-A) (StartJob s2 1 ROOT-A :warm-key KEY-A)))
@@ -394,6 +396,26 @@
   (assert (= (tuple (gfor s waiting s.phase)) #(JobPhase.PREPARING JobPhase.PREPARING)) waiting)
   (<- cold tuple (statuses NOW #(s1 s2) starting {} POLICY))
   (assert (= (tuple (gfor s cold s.phase)) #(JobPhase.STARTING JobPhase.STARTING)) cold))
+
+
+;; 失敗ケース(2026-11-12): service だけが分かれる root の待ちの子を jobs の層(task の CPU の枠 1.5 CPU・cpu.idle)に起こし、待ちの子の
+;; 読み込みが task と枠を分け合って 27 秒から 5 分へ延び、版を書いてから service が新しい版で動くまで約 12 分かかった。
+(deftest test-only-a-warm-child-that-just-services-fork-from-is-started-in-the-service-cgroup
+  (val on (replace POLICY :warm-services True :warm-services-min 2 :warm-table-children True))
+  (<- s1 JobSpec (task-on "s1" KEY-A :once False))
+  (<- s2 JobSpec (task-on "s2" KEY-A :once False))
+  (<- ta JobSpec (task-on "ta" KEY-A))
+  (<- bare WorldView (world))
+  (val table #((WarmEnv KEY-A s1.runtime-env)))
+  (val rows
+    #(#("service だけの root → service の兄弟" #(s1 s2) #() True)
+      #("分かれる task も在る root → jobs の層" #(s1 s2 ta) #() False)
+      #("温める表に在る root(先読みの task が分かれうる)→ jobs の層" #(s1 s2) table False)))
+  (for [#(label desired warm expected) rows]
+    (<- got tuple (warm-child-actions NOW desired bare warm on))
+    (val starts (tuple (gfor a got :if (isinstance a StartWarmChild) a)))
+    (assert (= (len starts) 1) (.format "{}: {}" label got))
+    (assert (= (. (get starts 0) launch service) expected) (.format "{}: {}" label got))))
 
 
 (deftest test-a-service-outliving-the-worker-forks-only-from-a-warm-child-that-names-orphan-forks

@@ -27,17 +27,21 @@
 (import doeff_cluster._worker.protocol.observations [ObserveWarmChildren])
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
+(import doeff_cluster._worker.core.job_cgroup [placed-argv])
 (import doeff_cluster._worker.protocol.env_store [root-entry-place])
 
 
 (defrecord WarmSettings
   "待ちの子の置き場と起こし方の設定(worker の組み立ての入口 main が作る): warm-dir = 待ちの子の置き場の根(warm_rules.warm-dir-of)・
    log-dir = 待ちの子の出力の file の dir(job の子と同じ dir — 世代をまたいで分け合う・名は warm-log-path)・generation = log-dir の中の
-   名に入れる世代の印(worker/core/places の WorkerPlaces.generation — AL-D2j)・uv = root の venv の uv。"
+   名に入れる世代の印(worker/core/places の WorkerPlaces.generation — AL-D2j)・uv = root の venv の uv・service-procs = service だけが
+   分かれる root の待ちの子(WarmLaunch の service)を置く service の兄弟の cgroup の cgroup.procs(機体の配備が名を渡した時だけ・None =
+   置き直さない — 外の job-cgroup-placer が jobs の層の共有の子へ置く)。"
   (#^ str warm-dir)
   (#^ str log-dir)
   (#^ str generation)
-  (#^ str uv))
+  (#^ str uv)
+  (setv #^ (| str None) service-procs None))
 
 
 (defk warm-log-path [settings key]
@@ -99,7 +103,13 @@
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(待ちの子は root の版の doeff で起きる)。
   (<- entry-place (| str None) (root-entry-place launch.root))
-  (<- argv tuple (warm-child-argv settings.uv launch place entry-place))
+  (<- plain tuple (warm-child-argv settings.uv launch place entry-place))
+  ;; service だけが分かれる root の待ちの子は service の兄弟の cgroup へ移ってから起こす(WarmSettings の service-procs の註 — 外の
+  ;; job-cgroup-placer は包んだ argv を包み直さない)。
+  (var argv plain)
+  (when (and launch.service (is-not settings.service-procs None))
+    (<- moved tuple (placed-argv settings.service-procs plain))
+    (:= argv moved))
   (<- log str (warm-log-path settings key))
   (<- now int (now-epoch-ms))
   (<- answer (| ProcessStarted ProcessNotStarted)
