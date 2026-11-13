@@ -2134,10 +2134,13 @@
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
           (setv (get writes id) (end-env-failed task now task.detail))
-        ;; 能力の合う生きた worker はいるが、宣言の道具を名乗る worker が無い。
+        ;; 能力の合う生きた worker はいるが、どれも宣言の道具を満たさない時だけ道具の欠けで終える。able は積み直した後の連絡待ち
+        ;; (heard-since-rerun)でも空になるので、道具を満たす worker が在れば下の枝で待つ。
         (and (not able) (is-not task.runtime-env None)
              (any (gfor w (.rows state.workers)
-                        (and (alive now w timing.lease-ms) (placeable task.needs w)))))
+                        (and (alive now w timing.lease-ms) (placeable task.needs w))))
+             (not (any (gfor w (.rows state.workers)
+                             (and (alive now w timing.lease-ms) (placeable task.needs w) (tools-satisfy task w))))))
           (setv (get writes id)
                 (end-env-failed (replace task :failure-kind "tool-missing" :retryable False) now
                                 (.format "宣言の道具 {} を名乗る worker が無い"
