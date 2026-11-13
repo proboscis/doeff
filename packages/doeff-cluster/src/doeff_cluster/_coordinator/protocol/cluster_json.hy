@@ -90,7 +90,10 @@
                  (if (is task.placed-memory-available-mib None) #{"placed_memory_available_mib"} #{})
                  (if (is task.placed-measured-at-ms None) #{"placed_measured_at_ms"} #{})
                  ;; 待ちの期限の無い行も欄を置かない(同じ訳 — 2026-11-12)。
-                 (if (is task.queue-limit-ms None) #{"queue_limit_ms"} #{})))
+                 (if (is task.queue-limit-ms None) #{"queue_limit_ms"} #{})
+                 ;; 置けない訳の種類は保存しない(拍ごとの判断 — 読み直した後の最初の place-tasks が detail と一緒に書き直す。欄を
+                 ;; 知らない前の版へ戻しても、待っている行を旧い形と読んで failed にしない — 2026-11-13)。
+                 #{"unplaced_kind"}))
   (dfor #(k v) (.items row) :if (not-in k unset) k v))
 
 

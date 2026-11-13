@@ -1621,8 +1621,9 @@
 
 (defn #^ TaskRecord end-detached [#^ TaskRecord task #^ str phase #^ int now #^ str detail #^ (| str None) [result None]]
   "純粋: 切り離した task を終わりの phase にする(終わりの phase は二度と変わらない)。置き場のキー program は持ったまま — 行が在る間
-   (結果の保持の間)は置き場の Program を参照し、行が消えたら program_policy.sweep-programs が猶予の後に消す(掃除の規則を 1 つにする)。"
-  (replace task :phase phase :finished-ms now :detail detail :result result))
+   (結果の保持の間)は置き場の Program を参照し、行が消えたら program_policy.sweep-programs が猶予の後に消す(掃除の規則を 1 つにする)。
+   detail を終わりの訳に替えるので、待っていた間の置けない訳の種類(unplaced-kind)も消す。"
+  (replace task :phase phase :finished-ms now :detail detail :result result :unplaced-kind None))
 
 
 ;; 走らせ直し(2026-11-04): 送り手が名乗った切り離した task は、担い手が消えた時に lost で終わらず、同じ key の次の試行として待ちの行へ戻る。
@@ -1832,7 +1833,7 @@
     (return (get kept 1)))
   (setv row (replace task :id "" :name "" :program None :revision "" :lease-ms 0 :lease-until-ms 0 :submitted-ms 0
                           :detail "" :key None :retain-ms 0 :environ #() :notify "" :queued-noticed-ms None
-                          :rerun-note "" :runtime-env None)
+                          :rerun-note "" :runtime-env None :unplaced-kind None)
         env (if (is task.runtime-env None) None (json.dumps task.runtime-env :sort-keys True :ensure-ascii False))
         group #(row env))
   (when (>= (len _PLACEMENT-ROWS) PLACEMENT-ROW-MEMO-MAX)
@@ -1940,7 +1941,7 @@
   (for [#(id task) (.items queue)]
     (<- queued-class PlacementClass (placement-class task worker-rows now))
     (setv (get classes id) queued-class))
-  ;; 置けないと判じた入力の答え(入力 → 待ちの文 — None = 文を書かずに待つ)。この拍に task を置いた・取っておいた・場所を譲らせた時に
+  ;; 置けないと判じた入力の答え(入力 → 置けない訳の種類 — 文は task-unplaced-text で作る・None = 文を書かずに待つ)。この拍に task を置いた・取っておいた・場所を譲らせた時に
   ;; 捨てる(区画の和・組の升・取っておきが変わる)。同じ入力の後ろの task は、捨てるまで worker ごとの和と理由を数え直さずに同じ文で待つ
   ;; (2026-11-12 — 置けない task が数百本溜まると、要求ごとの調停が待っている task の数 × worker の数の数えで主 thread を埋めた)。
   ;; 急ぎの優先の task は場所の譲りの候補(taken)を読むので借りない。
@@ -1951,13 +1952,13 @@
     ;; 急ぎの優先(KEEP-NOW-PRIORITY 以上)の task は、入らなければ優先の低い task に場所を譲らせる(R6)。
     (val urgent (>= task.priority KEEP-NOW-PRIORITY))
     (val task-class (get classes id))
-    ;; 同じ入力の task が、この拍の今の数えで置けないと判じられた: 同じ文で待つ(上の unplaced-verdicts の註)。
+    ;; 同じ入力の task が、この拍の今の数えで置けないと判じられた: 同じ種類と文で待つ(上の unplaced-verdicts の註)。
     (when (and (not urgent) (in task-class unplaced-verdicts))
-      (val known-reason (get unplaced-verdicts task-class))
-      (when (is-not known-reason None)
-        (val known-text (waiting-detail task known-reason))
-        (when (!= task.detail known-text)
-          (setv (get writes id) (replace task :detail known-text))))
+      (val known (get unplaced-verdicts task-class))
+      (when (is-not known None)
+        (val known-text (waiting-detail task (! (task-unplaced-text known))))
+        (when (or (!= task.detail known-text) (is-not task.unplaced-kind known))
+          (setv (get writes id) (replace task :detail known-text :unplaced-kind known))))
       (continue))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
@@ -2050,9 +2051,9 @@
                        seen-available (if (is seen None) None seen.memory-available-MiB)
                        seen-at (if (is seen None) None seen.at-ms))
                  ;; 切り離した task は置いた worker の process の世代を覚え、lease を置いた時から数える。場所を譲らせて置いた task は、
-                 ;; 止めた task を detail に名指す。和を越えて置いた門の外の task は、そう書く。
+                 ;; 止めた task を detail に名指す。和を越えて置いた門の外の task は、そう書く。置いた行は置けない訳の種類を持たない。
                  (setv (get writes id) (if task.detached
-                                          (replace task :phase phase :worker chosen.name :started-ms now
+                                          (replace task :phase phase :worker chosen.name :started-ms now :unplaced-kind None
                                                    :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at
                                                    :boot chosen.boot :lease-until-ms (+ now task.lease-ms)
                                                    :detail (cond
@@ -2063,19 +2064,21 @@
                                                              True
                                                                (.format "tasks 区画の申告の和に入らないので、worker {} の優先の低い task {} に場所を譲らせて置いた"
                                                                         chosen.name (.join "・" (gfor v yielded.victims v.task.id)))))
-                                          (replace task :phase phase :worker chosen.name :started-ms now
+                                          (replace task :phase phase :worker chosen.name :started-ms now :unplaced-kind None
                                                    :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at))))
         ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(区画の和・区画の無さ・組の上限): 失敗にせず待つ。
-        ;; 理由は閉じた語(misfit-reason)の固定の文(task-unplaced-text)。既に同じ文なら書き換えない(調停が拍ごとに保存して版を進めない)。
+        ;; 理由は閉じた語(misfit-reason)の種類と、その固定の文(task-unplaced-text)。種類は文と同じ所で一緒に行へ書く(GET /state の
+        ;; unplacedKind)。既に同じ種類と文なら書き換えない(調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now
-          (let [reason (! (task-unplaced-text (! (misfit-reason misfits))))
+          (let [kind (! (misfit-reason misfits))
+                reason (! (task-unplaced-text kind))
                 text (waiting-detail task (if (is keeper None) reason (! (kept-text reason keeper.name))))]
             ;; 取っておかずに待つ答えは、同じ入力の後ろの task に貸す(取っておいた時は上で答えを捨てた)。
             (when (and (not urgent) (is keeper None))
-              (setv (get unplaced-verdicts task-class) reason))
-            (when (!= task.detail text)
-              (setv (get writes id) (replace task :detail text))))
+              (setv (get unplaced-verdicts task-class) kind))
+            (when (or (!= task.detail text) (is-not task.unplaced-kind kind))
+              (setv (get writes id) (replace task :detail text :unplaced-kind kind))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。
         (and (not able) task.failure-kind)
           (setv (get writes id) (end-env-failed task now task.detail))
@@ -2110,10 +2113,12 @@
             (setv (get writes id)
                   (cond
                     (is ended None)
-                      (replace task :detail (waiting-detail task (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
-                                                                          (list task.needs) names limit-s)))
+                      ;; 連絡の途絶えは置けない訳の種類(区画・組の上限)の外なので、種類を持たない。
+                      (replace task :unplaced-kind None
+                               :detail (waiting-detail task (.format "要る能力 {} の worker {} がいま連絡していない — 連絡が戻るまで待つ(待ちの期限 = 最後の連絡から {} 秒)"
+                                                                     (list task.needs) names limit-s)))
                     task.detached (end-detached task (unplaceable-phase task state now timing) now ended)
-                    True (replace task :phase "failed" :finished-ms now :detail ended))))
+                    True (replace task :phase "failed" :finished-ms now :detail ended :unplaced-kind None))))
         ;; 置ける worker が drain 中か disk 尽きだけ: 文を書かずに待つ答えを、同じ入力の後ろの task に貸す。
         (not urgent)
           (setv (get unplaced-verdicts task-class) None))))
@@ -2129,7 +2134,7 @@
   "純粋: 実行環境を準備できなかった task を終える(切り離した task は終わりの phase)。"
   (if task.detached
       (replace (end-detached task "env-failed" now detail) :failure-kind task.failure-kind :retryable task.retryable)
-      (replace task :phase "env-failed" :finished-ms now :detail detail)))
+      (replace task :phase "env-failed" :finished-ms now :detail detail :unplaced-kind None)))
 
 
 (defn #^ TaskRecord absorb-env-failure [#^ TaskRecord task #^ str worker #^ StatusRow status #^ int now]
