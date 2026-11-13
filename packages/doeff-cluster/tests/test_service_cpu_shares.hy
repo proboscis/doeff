@@ -28,6 +28,32 @@
 (val SHIM-ARGV #("python" "-m" "doeff_cluster._worker.entry.shim" "--" "uv" "run" "hy"))
 
 
+(deftest test-the-worker-reads-its-share-from-the-mounted-room-file-without-a-pod-env-change [#^ Path tmp-path]
+  (val room (/ tmp-path "room.json"))
+  (val procs (str (/ tmp-path "services" "cgroup.procs")))
+  (.mkdir (/ tmp-path "services"))
+  (.write-text room "{\"node-a\": {\"memoryMiB\": 100, \"serviceShares\": \"reads=400\"}, \"node-b\": {\"memoryMiB\": 100}}")
+  (<- placed tuple (with-handlers [os-file-handler] (service-shares-placed None procs (str room) "node-a")))
+  (assert (= placed #((str (/ tmp-path "services")) #(#("reads" 400)) (str (/ tmp-path "services" "_shared" "cgroup.procs")))) placed)
+  (assert (= (! (with-handlers [os-file-handler] (service-shares-placed None procs (str room) "node-b"))) #(None #() procs)))
+  ;; 明示した環境変数の優先は保つ。別の worker の値を拾わない。
+  (<- explicit tuple (with-handlers [os-file-handler] (service-shares-placed "reads=200" procs (str room) "node-a")))
+  (assert (= (get explicit 1) #(#("reads" 200)))))
+
+
+(deftest test-the-worker-refuses-an-unreadable-or-malformed-share-file-instead-of-silently-disabling-it [#^ Path tmp-path]
+  (val room (/ tmp-path "room.json"))
+  (val procs (str (/ tmp-path "services" "cgroup.procs")))
+  (.mkdir (/ tmp-path "services"))
+  (with [(pytest.raises ValueError :match "serviceShares")]
+    (! (with-handlers [os-file-handler] (service-shares-placed None procs (str room) "node-a"))))
+  (for [body #("{" "[]" "{}" "{\"node-a\": []}" "{\"node-a\": {\"serviceShares\": null}}"
+                "{\"node-a\": {\"serviceShares\": 400}}" "{\"node-a\": {\"serviceShares\": \"reads=0\"}}")]
+    (.write-text room body)
+    (with [(pytest.raises ValueError :match "serviceShares")]
+      (! (with-handlers [os-file-handler] (service-shares-placed None procs (str room) "node-a"))))))
+
+
 ;; --- 宣言の欄 ------------------------------------------------------------------------------------
 
 (deftest test-defsystem-keeps-the-cpu-share-in-the-static-description-and-refuses-a-bad-name
