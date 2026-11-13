@@ -3,9 +3,10 @@
 ;;   1. 新しい世代が準備の上限で落ちて能力(job の needs)が足りないのに、常駐の job の置き先を名から外し、まだ動いている前の世代の
 ;;      job を止めさせた(前の世代への返事から job が消えた)。
 ;;   2. 新しい世代の Pod が消えた後も、生きている前の世代の heartbeat を起動の時刻の古さで名乗りとして受けず、名が沈黙した。
-;; 直した後: 前の世代が lease の内に報告していて、新しい世代と別の Pod(Pod の IP が違う)なら重なりと判じ、新しい世代が job を受け
-;; 取れる(能力と準備を揃えて elder-runs を報告する)まで前の世代に残す。今の世代が lease を越えて黙ったら、届いた前の世代の heartbeat を
-;; 今の世代として受け直す。同じ Pod の起こし直し(Pod の IP が同じ)は今どおり前の世代の終わりと読む。
+;; 直した後: 新しい世代が名乗った後に前の世代の heartbeat が届けば重なりと判じ、新しい世代が job を受け取れる(能力と準備を揃えて
+;; elder-runs を報告する)まで前の世代に残す。名乗りから前の世代の次の heartbeat までは、前の世代の最新の報告で置き先を保つ。今の
+;; 世代が lease を越えて黙ったら、届いた前の世代の heartbeat を今の世代として受け直す。前の世代の heartbeat が届かない(突然止まった
+;; worker の作り直し)時は今どおり、新しい世代がすぐ job を起こす。
 (require doeff-hy.macros [deftest defk val var <-])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import tests.room_rows [ROOM-JSONS])
@@ -50,6 +51,8 @@
   (<- #(c old-row) (agent-job-on-old))
   (setv (get c.boots "node-a") "new")
   (var fresh (pod-beat c "new" "10.0.0.2" K3S []))
+  (assert (is (job-in fresh "r") None) "前の世代の次の heartbeat の前も、能力の足りない新しい世代には r を載せない")
+  (assert (= (c.placed "r") "node-a") "前の世代の次の heartbeat の前も置き先を保つ")
   (c.advance 1)
   (val elder (pod-beat c "old" "10.0.0.1" AGENT [old-row]))
   (assert (.get elder "superseded") elder)
@@ -65,19 +68,20 @@
 
 
 (deftest test-a-new-pod-still-preparing-waits-while-the-old-generation-runs-the-job
-  ;; 失敗ケース 2(準備中): 新しい世代(別の Pod)は能力を持つが、まだ r を準備している。直す前は新しい世代への返事に印 elderRuns が無く
-  ;; (新しい世代は r を起こす)、前の世代への返事から r が消えた(同じ job が 2 つの世代で重なりうる上に、前の世代が止める)。直した後は
-  ;; 新しい世代は elderRuns で準備だけをして待ち、前の世代は r を動かし続ける。
+  ;; 失敗ケース 2(準備中): 新しい世代(別の Pod)は能力を持つが、まだ r を準備している。直す前は前の世代への返事から r が消え(前の世代は
+  ;; r を止める)、新しい世代への返事に印 elderRuns が付かなかった。直した後は、前の世代の heartbeat が届いた時から前の世代が r を
+  ;; 動かし続け、新しい世代は elderRuns で準備だけをして待ち、受け渡しを待つ(ready を書かない)。
   (<- #(c old-row) (agent-job-on-old))
   (setv (get c.boots "node-a") "new")
   (val preparing {"name" "r" "phase" "preparing" "desiredRevision" (get old-row "desiredRevision")})
-  (val fresh (pod-beat c "new" "10.0.0.2" AGENT [preparing]))
-  (assert (.get (job-in fresh "r") "elderRuns" False) fresh)
-  (assert (.get fresh "handoverPending") fresh)
+  (pod-beat c "new" "10.0.0.2" AGENT [preparing])
   (c.advance 1)
   (val elder (pod-beat c "old" "10.0.0.1" AGENT [old-row]))
   (assert (is-not (job-in elder "r") None) "前の世代は r を動かし続ける")
-  (assert (= (c.placed "r") "node-a")))
+  (assert (= (c.placed "r") "node-a"))
+  (val fresh (pod-beat c "new" "10.0.0.2" AGENT [preparing]))
+  (assert (.get (job-in fresh "r") "elderRuns" False) fresh)
+  (assert (.get fresh "handoverPending") fresh))
 
 
 (deftest test-the-old-generation-is-taken-back-after-the-new-pod-vanished
@@ -107,12 +111,15 @@
   (assert (= (. (.row c.state.workers "node-a") boot) "new")))
 
 
-(deftest test-a-restart-in-the-same-pod-still-reads-as-the-end-of-the-previous-generation
-  ;; 境: 同じ Pod の起こし直し(container の再起動 — Pod の IP が同じ)は、前の世代の process が終わった印のまま。新しい世代へは r を
-  ;; 印 elderRuns 無しで載せる(前の世代の終わりを待たずに起こす — 今どおり)。
+(deftest test-a-new-generation-after-an-abrupt-stop-starts-the-job-without-waiting
+  ;; 境: 前の世代が突然止まって作り直された(新しい世代が名乗った後に前の世代の heartbeat が届かない)時は、前の世代の process が
+  ;; 終わった印のまま(#3770)。新しい世代へは r を印 elderRuns 無しで載せる(前の世代の終わりを待たずに起こす — 今どおり)。
   (<- #(c old-row) (agent-job-on-old))
   (setv (get c.boots "node-a") "new")
-  (val fresh (pod-beat c "new" "10.0.0.1" AGENT []))
+  (var fresh (pod-beat c "new" "10.0.0.2" AGENT []))
   (assert (is-not (job-in fresh "r") None) fresh)
   (assert (not (.get (job-in fresh "r") "elderRuns" False)) fresh)
-  (assert (not (.get fresh "handoverPending")) fresh))
+  (assert (not (.get fresh "handoverPending")) fresh)
+  (c.advance 5)
+  (:= fresh (pod-beat c "new" "10.0.0.2" AGENT []))
+  (assert (not (.get (job-in fresh "r") "elderRuns" False)) fresh))
