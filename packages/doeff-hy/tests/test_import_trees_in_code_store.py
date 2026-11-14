@@ -153,6 +153,17 @@ def test_reading_a_tree_marks_it_used(store: Path) -> None:
     assert time.time() - entry.stat().st_mtime < 60
 
 
+def test_reading_a_tree_used_within_the_hour_keeps_its_time(store: Path) -> None:
+    """A hit on a tree used within code_store.TOUCH_AFTER_SECONDS does not write its time again (the mark is for the 7-day cleanup — an hour does not move it)."""
+    expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
+    [entry] = trees_under(store)
+    minute_ago = time.time() - 60
+    os.utime(entry, (minute_ago, minute_ago))
+    before = entry.stat().st_mtime_ns
+    assert expansion_trees.read_import_tree("pkg.m", SOURCE) is not None
+    assert entry.stat().st_mtime_ns == before
+
+
 def test_a_key_keeps_at_most_the_limit_of_environments_and_the_used_ones_stay(store: Path) -> None:
     """Tree entries per key are capped -- for environments beyond the cap, entries that were only added and never used are removed first (entries of environments that keep being used are not pushed out)."""
     limit = code_store.TREE_ENTRIES_PER_KEY

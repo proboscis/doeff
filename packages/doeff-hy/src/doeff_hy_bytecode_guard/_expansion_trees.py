@@ -70,14 +70,14 @@ def _key(module_name: str, source: str | bytes) -> str:
 
 def read_import_tree(module_name: str, source: str) -> ImportTree | None:
     """The tree and macro record that import-time compilation stored for this source (None if the store is not named or no entry can be used after checking against the current environment's macros).
-    A hit entry has its timestamp set to now to mark it used."""
+    A hit entry has its timestamp set to now to mark it used (only when older than an hour — code_store.mark_used)."""
     store = tree_store()
     if store is None:
         return None
     for entry in code_store.tree_entries(store, _key(module_name, source)):
         found = _read_entry(entry)
         if found is not None:
-            code_store.touch_entry(entry)
+            code_store.mark_used(entry)
             return found
     return None
 

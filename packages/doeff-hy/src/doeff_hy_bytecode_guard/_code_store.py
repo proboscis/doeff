@@ -96,7 +96,9 @@ NEW_ENTRY_FLOOR_SECONDS = 24 * 3600
 
 #: A hit advances an entry's used time only when the time is older than this (the used mark is read by the sweep's 7 days and by the order of the key's entries — an hour
 #: does not move either). Advancing it on every hit wrote the file's metadata twice per placed .pyc: the worker tools place about 3,000 .pyc for one root, and on a busy
-#: disk the writes were a large part of the bytecode stage (2026-11-08 — 6,500 utime calls for one root).
+#: disk the writes were a large part of the bytecode stage (2026-11-08 — 6,500 utime calls for one root). Every read that marks an entry used goes through this
+#: (:func:`read_entry`, :func:`stored_code`, :func:`mark_used` and the source-code lookups — an entry behind another of the key too): marking on every read rewrote the
+#: entry's inode on every CLI and hook start — one entry took about 212 utime calls in 8 minutes, and the store's inode writes were about 5 GB a day (2026-11-15).
 TOUCH_AFTER_SECONDS = 3600
 
 #: Cap on the number of entries held per key for trees expanded by import-time compilation (when adding goes over it, the oldest by timestamp are removed — removed the same way as code entries).
@@ -283,12 +285,12 @@ def current_data(store: str, key: str, is_current: Callable[[bytes], bool], *, c
 
 
 def _mark_used(path: str, at: int, *, first: bool) -> None:
-    """Put the used mark on a source-code entry that was checked and used (its time was at, ns): an entry behind another of the key always comes to the head (the order of the
-    key's entries — an added entry waits at the back until it is used); the head entry is advanced only when older than :data:`TOUCH_AFTER_SECONDS`."""
-    if not first:
-        touch_entry(path)
-    else:
-        _touch_if_older(path, at)
+    """Put the used mark on a source-code entry that was checked and used (its time was at, ns) — advanced only when older than :data:`TOUCH_AFTER_SECONDS`, the head entry
+    and an entry behind another of the key alike, so the order of the key's entries is kept at that grain. An entry used behind another comes to the head at its first use
+    after its time is an hour old (an added entry is placed more than an hour back — :func:`_place_after` — so its first use brings it to the head). Bringing it to the
+    head on every use made two environments that use the same key in turn rewrite both entries' times on every read (2026-11-15)."""
+    del first  # the head and the entries behind it are marked the same way
+    _touch_if_older(path, at)
 
 
 def _touch_if_older(path: str, at: int) -> None:
@@ -354,17 +356,33 @@ def _add_entry(store: str, key: str, name: str, suffix: str, limit: int, data: b
 
 
 def _place_after(path: str, others: tuple[tuple[int, str], ...]) -> None:
-    """Place the added entry's time 1 second before every other entry of the key (others — newest time first) (but never further back than NEW_ENTRY_FLOOR_SECONDS from now).
-    If it cannot be placed, one line naming it is printed (the entry is still usable — it is just at the head of the order)."""
+    """Place the added entry's time 1 second before every other entry of the key (others — newest time first) and more than :data:`TOUCH_AFTER_SECONDS` back from now
+    (but never further back than NEW_ENTRY_FLOOR_SECONDS from now) — so its first use advances its time and brings it to the head even when the key's other entries were
+    all used within the hour (:func:`_mark_used`). If it cannot be placed, one line naming it is printed (the entry is still usable — it is just at the head of the order)."""
     import time  # loaded only when adding to the store
 
     now = time.time_ns()
     oldest = others[-1][0] if others else now
-    at = max(now - NEW_ENTRY_FLOOR_SECONDS * 1_000_000_000, oldest - 1_000_000_000)
+    behind = min(oldest - 1_000_000_000, now - (TOUCH_AFTER_SECONDS + 1) * 1_000_000_000)
+    at = max(now - NEW_ENTRY_FLOOR_SECONDS * 1_000_000_000, behind)
     try:
         os.utime(path, ns=(at, at))
     except OSError as error:
         print(f"doeff-hy: cannot set the time of an entry added to the bytecode store ({error}) — {path}", file=sys.stderr, flush=True)
+
+
+def mark_used(path: str) -> None:
+    """Put the used mark on an entry that was read and used — its time is set to now only when older than :data:`TOUCH_AFTER_SECONDS` (for a caller that reads the entry
+    itself — the import trees). An entry that vanished in between is left alone (the sweep or a concurrent writer removed it — nothing to mark); an entry whose time cannot
+    be read is named in one line, as for :func:`touch_entry`."""
+    try:
+        at = os.stat(path).st_mtime_ns
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        print(f"doeff-hy: cannot read the time of an entry in the bytecode store ({error}) — {path}", file=sys.stderr, flush=True)
+        return
+    _touch_if_older(path, at)
 
 
 def touch_entry(path: str) -> None:
@@ -378,17 +396,18 @@ def touch_entry(path: str) -> None:
 
 def read_entry(path: str, *, touch: bool = True) -> bytes | None:
     """Read an entry's content (None if absent). For an entry unreadable for a reason other than absence, one line naming it is printed and None is returned (the caller rebuilds). On a hit,
-    the entry's time is set to now (not advanced if touch is false — a caller that checks before using advances it with :func:`touch_entry`)."""
+    the entry's time is set to now when older than :data:`TOUCH_AFTER_SECONDS` (not advanced if touch is false — a caller that checks before using marks it itself)."""
     try:
         with open(path, "rb") as entry:
             data = entry.read()
+            at = os.fstat(entry.fileno()).st_mtime_ns
     except FileNotFoundError:
         return None
     except OSError as error:
         print(f"doeff-hy: cannot read an entry in the bytecode store ({error}) — not using {path}; rebuilding", file=sys.stderr, flush=True)
         return None
     if touch:
-        touch_entry(path)
+        _touch_if_older(path, at)
     return data
 
 

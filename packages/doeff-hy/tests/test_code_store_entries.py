@@ -233,7 +233,7 @@ def test_current_data_with_check_code_removes_a_broken_entry_and_uses_the_next(t
 
 def test_a_recently_used_head_entry_is_not_touched_but_an_old_one_is(tmp_path: Path) -> None:
     """The head entry of the key used within TOUCH_AFTER_SECONDS keeps its time (one metadata write per placed .pyc was a large part of the bytecode stage on a busy disk —
-    2026-11-08); an older one is advanced (the sweep's 7 days), and an entry behind another always comes to the head
+    2026-11-08); an older one is advanced (the sweep's 7 days), and an added entry comes to the head at its first use
     (test_a_new_entry_waits_behind_the_entries_in_use_until_it_is_used)."""
     store, key = str(tmp_path), _key()
     code_store.add_code(store, key, _code(RECORD_FIVE))
@@ -246,3 +246,35 @@ def test_a_recently_used_head_entry_is_not_touched_but_an_old_one_is(tmp_path: P
     stale = os.stat(entry).st_mtime_ns
     assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
     assert os.stat(entry).st_mtime_ns > stale, "an entry not used for over an hour did not get the used mark"
+
+
+def test_two_environments_taking_turns_on_one_key_do_not_rewrite_the_times(tmp_path: Path) -> None:
+    """Two writers with different records that read the same key in turn (the CLI and hook starts of two layers) leave both entries' times alone within the hour — bringing
+    the entry behind to the head on every use rewrote both entries' inodes on every read (2026-11-15: about 212 utime calls on one entry in 8 minutes)."""
+    store, key = str(tmp_path), _key()
+    for record in (RECORD_FIVE, RECORD_SIX):
+        assert not _read(store, key, record)
+        assert _read(store, key, record)
+    entries = code_store.code_entries(store, key)
+    before = {path: os.stat(path).st_mtime_ns for path in entries}
+    for _ in range(3):
+        assert _read(store, key, RECORD_FIVE)
+        assert _read(store, key, RECORD_SIX)
+    assert {path: os.stat(path).st_mtime_ns for path in entries} == before, "a read within the hour rewrote an entry's time"
+
+
+@pytest.mark.parametrize("read", [code_store.read_entry, code_store.stored_code, code_store.mark_used], ids=["read_entry", "stored_code", "mark_used"])
+def test_a_read_that_marks_use_advances_the_time_only_after_an_hour(tmp_path: Path, read) -> None:
+    """The reads that mark an entry used by default (the .binding, .digests and .code readers, and the import trees through mark_used) advance its time only when it is
+    older than TOUCH_AFTER_SECONDS — before, every read called utime (2026-11-15: the store's inode writes were about 5 GB a day)."""
+    store, key = str(tmp_path), _key()
+    code_store.add_code(store, key, _code(RECORD_FIVE))
+    entry = _entry_of(store, key, RECORD_FIVE)
+    _age(entry, 60)
+    recent = os.stat(entry).st_mtime_ns
+    read(entry)
+    assert os.stat(entry).st_mtime_ns == recent, "a read of an entry used a minute ago wrote its time again"
+    _age(entry, code_store.TOUCH_AFTER_SECONDS + 60)
+    stale = os.stat(entry).st_mtime_ns
+    read(entry)
+    assert os.stat(entry).st_mtime_ns > stale, "a read of an entry not used for over an hour did not get the used mark"
