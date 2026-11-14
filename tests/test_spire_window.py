@@ -6,6 +6,7 @@ It opens a real tkinter window, so a display is required (skipped otherwise). Ru
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -29,7 +30,15 @@ def _display():
         pytest.skip("no display")
 
 
-def _terminal_fight() -> tuple[list[str], tuple]:
+@dataclass(frozen=True)
+class _Fight:
+    """The Show lines of a fight and its outcome."""
+
+    lines: list[str]
+    result: tuple
+
+
+def _terminal_fight() -> _Fight:
     """The Show lines and outcome when the same moves are played by script (collected without drawing to the screen)."""
     lines = []
 
@@ -38,7 +47,7 @@ def _terminal_fight() -> tuple[list[str], tuple]:
         lines.append(effect.text)
         return (yield Resume(k, None))
 
-    return lines, run(quiet_stats(keep(dice(SEED)(scripted(MOVES)(battle())))))
+    return _Fight(lines, run(quiet_stats(keep(dice(SEED)(scripted(MOVES)(battle()))))))
 
 
 def _click_when_asked(moves: list[int]) -> None:
@@ -72,13 +81,13 @@ def _shown_lines(drawn):
 
 
 def test_clicks_play_the_same_fight_as_the_terminal():
-    expected_lines, expected_result = _terminal_fight()
+    expected = _terminal_fight()
     drawn, clicked, end = window()
     lines, tee = _shown_lines(drawn)
     _click_when_asked(list(MOVES))
     result = run(quiet_stats(drawn(tee(dice(SEED)(clicked(battle()))))))
-    assert result == expected_result == ("win", 3)
-    assert lines == expected_lines
+    assert result == expected.result == ("win", 3)
+    assert lines == expected.lines
     root = tk._default_root
     root.after(1, root.destroy)
     end(result)

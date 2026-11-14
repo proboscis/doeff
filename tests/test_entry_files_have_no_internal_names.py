@@ -15,10 +15,13 @@ so the entry-file list is narrowed to names and kept separately.
 
 from __future__ import annotations
 
-import os
 import re
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+
+from doeff_core_effects import ReadEnvironment, subprocess_handler
+
+from doeff import run, with_handlers
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,7 +54,8 @@ def name_patterns(machine_names: Sequence[str]) -> dict[str, re.Pattern[str]]:
     return {kind: re.compile(rf"(?i)(?<![a-z0-9])(?:{pattern})") for kind, pattern in kinds.items()}
 
 
-_PATTERNS = name_patterns(machine_names_from(os.environ))
+_SITE_ENVIRONMENT = run(with_handlers([subprocess_handler], ReadEnvironment((MACHINE_NAMES_ENV,))))
+_PATTERNS = name_patterns(machine_names_from({entry.name: entry.value for entry in _SITE_ENVIRONMENT}))
 
 # Fixed entry files (paths from the root). Those under .github/ISSUE_TEMPLATE/, packages/*/README.md and examples/ are read from the tree.
 FIXED_ENTRY_FILES = (

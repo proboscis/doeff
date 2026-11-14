@@ -18,6 +18,7 @@ import importlib
 import re
 import types
 import typing
+from dataclasses import dataclass
 from pathlib import Path
 
 import doeff
@@ -58,8 +59,16 @@ def undocumented(package: str) -> list[str]:
     )
 
 
-def doeff_public_names() -> tuple[frozenset[str], frozenset[str]]:
-    """The names ``from doeff import ...`` gives: (current names, removed names).
+@dataclass(frozen=True)
+class PublicNames:
+    """The names ``from doeff import ...`` gives, split into the current API and the removed one."""
+
+    current: frozenset[str]
+    removed: frozenset[str]
+
+
+def doeff_public_names() -> PublicNames:
+    """The names ``from doeff import ...`` gives: the current names and the removed names.
 
     Submodules (``doeff.result``, ...) and the names doeff's own imports leave in its namespace
     (``Any``, ``Generator``, ``TYPE_CHECKING``, ...) are not part of the API.
@@ -75,7 +84,7 @@ def doeff_public_names() -> tuple[frozenset[str], frozenset[str]]:
         if any(getattr(source, name, None) is obj for source in (typing, collections.abc)):
             continue
         (removed if isinstance(obj, _REMOVED_TYPE) else current).add(name)
-    return frozenset(current), frozenset(removed)
+    return PublicNames(frozenset(current), frozenset(removed))
 
 
 def _section(text: str, heading: str) -> str:
@@ -123,7 +132,7 @@ def test_the_count_covers_the_api() -> None:
 
 
 def test_the_api_reference_index_lists_every_public_name() -> None:
-    current, _ = doeff_public_names()
+    current = doeff_public_names().current
     listed = index_rows().keys()
     assert sorted(current - listed) == [], f"add a row to '{INDEX_HEADING}' of {API_REFERENCE}"
     assert sorted(listed - current) == [], f"rows of '{INDEX_HEADING}' for names doeff lacks"
@@ -139,7 +148,7 @@ def test_every_index_row_says_what_the_name_is_and_links_to_it() -> None:
 
 
 def test_the_removed_apis_table_lists_every_removed_name() -> None:
-    _, removed = doeff_public_names()
+    removed = doeff_public_names().removed
     assert sorted(removed - removed_table_names()) == [], (
         f"add the removed names to '{REMOVED_HEADING}' of {API_REFERENCE}"
     )

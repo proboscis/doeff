@@ -17,16 +17,16 @@ class FlakyApi:
     """An operation that fails its first `failures` calls, to drive the retry path."""
 
     def __init__(self, failures):
-        self.left = failures
-        self.first = None
+        self._mut_left = failures
+        self._mut_first = None
 
     @do
     def fetch(self):
         now = yield GetTime()
-        self.first = self.first or now
-        at = (now - self.first).total_seconds()
-        if self.left > 0:
-            self.left -= 1
+        self._mut_first = self._mut_first or now
+        at = (now - self._mut_first).total_seconds()
+        if self._mut_left > 0:
+            self._mut_left -= 1
             print(f"  t={at:.0f}s attempt fails: ConnectionError")
             raise ConnectionError("unreachable")
         print(f"  t={at:.0f}s attempt answers")
