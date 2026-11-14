@@ -190,6 +190,7 @@ if TYPE_CHECKING:
     from doeff_records._event_source import ride_out_stall as ride_out_stall
     from doeff_records._event_source import source_patience_handler as source_patience_handler
     from doeff_records._event_source import waits_beside_sources as waits_beside_sources
+    from doeff_records._maintenance import MAINTENANCE_EFFECTS as MAINTENANCE_EFFECTS
     from doeff_records._maintenance import ExpiredCursor as ExpiredCursor
     from doeff_records._request_timing import RequestMark as RequestMark
 
@@ -382,6 +383,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "source_patience_handler": "doeff_records._event_source",
     "waits_beside_sources": "doeff_records._event_source",
     "ExpiredCursor": "doeff_records._maintenance",
+    "MAINTENANCE_EFFECTS": "doeff_records._maintenance",
     "RequestMark": "doeff_records._request_timing",
 }
 
