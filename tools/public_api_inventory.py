@@ -112,7 +112,7 @@ from collections.abc import Callable, Iterable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, NotRequired, TypedDict, cast
+from typing import Literal, NamedTuple, NotRequired, TypedDict, cast
 
 import tomllib
 
@@ -1495,14 +1495,15 @@ def _scratch_home() -> Iterator[None]:
     workspace dir); it makes it in the scratch dir, not in the home of whoever lists the API. A path
     a module computed when imported is not moved — the call keeps writing there.
     """
-    saved = {name: os.environ.get(name) for name in _HOME_VARIABLES}
+    environment = os.environ  # the one place that reads and writes this process's environment
+    saved = {name: environment.get(name) for name in _HOME_VARIABLES}
     cwd = os.getcwd()
     with tempfile.TemporaryDirectory(
         prefix="public-api-call-", ignore_cleanup_errors=True
     ) as scratch:
-        os.environ["HOME"] = scratch
+        environment["HOME"] = scratch
         for name in _HOME_VARIABLES[1:]:
-            os.environ.pop(name, None)
+            environment.pop(name, None)
         os.chdir(scratch)
         try:
             yield
@@ -1510,9 +1511,9 @@ def _scratch_home() -> Iterator[None]:
             os.chdir(cwd)
             for name, value in saved.items():
                 if value is None:
-                    os.environ.pop(name, None)
+                    environment.pop(name, None)
                 else:
-                    os.environ[name] = value
+                    environment[name] = value
 
 
 def _call_factory(factory: Callable[..., object], needed: list[inspect.Parameter]) -> object:
@@ -1936,18 +1937,25 @@ def _lazy_names(module: types.ModuleType) -> list[str]:
     return sorted({*listed, *imported} - set(module.__dict__))
 
 
-def _exported_names(module: types.ModuleType, sources: _Sources) -> tuple[list[str], ModuleReadWay]:
+class _ExportedNames(NamedTuple):
+    """The names a module exports, and how they were read."""
+
+    names: list[str]
+    read: ModuleReadWay
+
+
+def _exported_names(module: types.ModuleType, sources: _Sources) -> _ExportedNames:
     """The names a module exports, and how they were read (``__all__`` or the package's own names)."""
     declared = module.__dict__.get("__all__")
     if isinstance(declared, (list, tuple)):
-        return [str(name) for name in cast(Sequence[object], declared)], "__all__"
+        return _ExportedNames([str(name) for name in cast(Sequence[object], declared)], "__all__")
     candidates = [*module.__dict__, *_lazy_names(module)]
     names = sorted(
         name
         for name in candidates
         if not name.startswith("_") and _is_own_name(module, name, sources)
     )
-    return names, "own"
+    return _ExportedNames(names, "own")
 
 
 def _is_own_name(module: types.ModuleType, name: str, sources: _Sources) -> bool:
@@ -2705,9 +2713,17 @@ def inventory(
         return list(pool.map(lambda path: _run_probe(path, timeout), dirs))
 
 
-def _merge_key(row: ExportRow) -> tuple[str, str, str]:
+class _MergeKey(NamedTuple):
+    """What makes two rows the same name (ordered as a tuple, to sort rows by it)."""
+
+    name: str
+    defined_at: str
+    kind: Kind
+
+
+def _merge_key(row: ExportRow) -> _MergeKey:
     """What makes two rows the same name: its name, its definition and its kind."""
-    return row["name"], row["defined_at"], row["kind"]
+    return _MergeKey(row["name"], row["defined_at"], row["kind"])
 
 
 def merged_exports(package: PackageInventory) -> list[MergedRow]:

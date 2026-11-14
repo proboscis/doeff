@@ -726,6 +726,14 @@ def file_scan(root: Path, site: tuple[str, ...], rel: str) -> list[Hit]:
     return [kept(h) for h in (*file_hits(rel, text, site), *(line_hits(rel, text) if text else ()))]
 
 
+@dataclass(frozen=True)
+class Scan:
+    """The files looked at and every hit on them."""
+
+    files: list[str]
+    hits: list[Hit]
+
+
 def named_files(root: Path, names: list[str]) -> list[str]:
     """Return the named files as POSIX paths relative to ``root``, outside the excluded directories."""
     base = root.resolve()
@@ -736,9 +744,7 @@ def named_files(root: Path, names: list[str]) -> list[str]:
     return sorted({r for r in rels if not set(r.split("/")[:-1]) & EXCLUDED_DIRS})
 
 
-def scan(
-    root: Path, jobs: int, names: list[str] | None = None
-) -> tuple[list[str], list[Hit]]:
+def scan(root: Path, jobs: int, names: list[str] | None = None) -> Scan:
     """Return the files looked at and every hit on them, reading files in ``jobs`` processes.
 
     ``names`` limits the reading to those files; without it every file of the tree is read.
@@ -746,9 +752,9 @@ def scan(
     files = tree_files(root) if names is None else named_files(root, names)
     one = partial(file_scan, root, site_pages(root))
     if jobs <= 1:
-        return files, [h for rel in files for h in one(rel)]
+        return Scan(files, [h for rel in files for h in one(rel)])
     with ProcessPoolExecutor(jobs) as pool:
-        return files, [h for hits in pool.map(one, files, chunksize=32) for h in hits]
+        return Scan(files, [h for hits in pool.map(one, files, chunksize=32) for h in hits])
 
 
 # ---- grouping ---------------------------------------------------------------------------------
@@ -991,7 +997,8 @@ def main(argv: list[str] | None = None) -> int:
         help="read only these files (relative to ROOT) and write no summary - the commit hook's form",
     )
     args = parser.parse_args(argv)
-    files, hits = scan(args.root, args.jobs, args.files)
+    scanned = scan(args.root, args.jobs, args.files)
+    files, hits = scanned.files, scanned.hits
     if args.table == "-":
         sys.stdout.write(table(hits, args.format))
     else:

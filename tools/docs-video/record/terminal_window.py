@@ -17,7 +17,9 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import NamedTuple
 
 from doeff import Resume, handler, run
 from PIL import Image, ImageDraw, ImageFont
@@ -52,7 +54,16 @@ WINDOW_LINE = ("run(quiet_stats(", ("drawn", True), "(dice(seed)(", ("clicked", 
 UNCHANGED_LINE = ("run(quiet_stats(", ("printed", False), "(dice(seed)(", ("human", False), "(battle())))))")
 
 
-def the_fight() -> tuple[list[int], list[str], tuple]:
+@dataclass(frozen=True)
+class Fight:
+    """A fight played without a screen: the hand positions pressed, the lines of Show, and the result."""
+
+    moves: list[int]
+    lines: list[str]
+    result: tuple
+
+
+def the_fight() -> Fight:
     """Play PLAN without a screen: the hand positions to press, the lines of Show, and the result."""
     plan, moves, lines = list(PLAN), [], []
 
@@ -67,12 +78,12 @@ def the_fight() -> tuple[list[int], list[str], tuple]:
         return (yield Resume(k, None))
 
     result = run(spire.quiet_stats(keep(spire.dice(SEED)(follow(spire.battle())))))
-    return moves, lines, result
+    return Fight(moves, lines, result)
 
 
-def font(size: int, bold: bool = False):
+def font(folders: list[str], size: int, bold: bool = False):
     name = "DejaVuSansMono-Bold.ttf" if bold else "DejaVuSansMono.ttf"
-    for folder in os.environ.get("RECORD_FONT_DIRS", "/usr/share/fonts/truetype/dejavu").split(os.pathsep):
+    for folder in folders:
         if (Path(folder) / name).exists():
             return ImageFont.truetype(str(Path(folder) / name), size)
     raise SystemExit(f"{name} not found (set RECORD_FONT_DIRS)")
@@ -81,7 +92,7 @@ def font(size: int, bold: bool = False):
 class Screen:
     """An Xvfb screen read from its frame-buffer file, and xdotool on it."""
 
-    def __init__(self, work: Path) -> None:
+    def __init__(self, work: Path, environment: dict[str, str]) -> None:
         self.display = ":" + str(70 + os.getpid() % 900)
         self.fb = work / "Xvfb_screen0"
         size = f"{SCREEN[0]}x{SCREEN[1]}x24"
@@ -90,7 +101,7 @@ class Screen:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        self.env = {**os.environ, "DISPLAY": self.display}
+        self.env = {**environment, "DISPLAY": self.display}
         self.children: list[subprocess.Popen] = [self.server]
         deadline = time.time() + 20
         while not self.fb.exists():
@@ -150,7 +161,7 @@ class Screen:
 class Film:
     """The frames of the gif: a capture of the screen, with the code lines, a caption and a pointer around it."""
 
-    def __init__(self, screen: Screen) -> None:
+    def __init__(self, screen: Screen, font_folders: list[str]) -> None:
         self.screen = screen
         self.frames: list[tuple[Image.Image, int]] = []
         self.pointer: tuple[int, int] | None = None
@@ -160,9 +171,9 @@ class Film:
         self.terminal_command = "python spire.py play 39"
         self.window_command = ""
         self.caption = ""
-        self.code = font(14)
-        self.code_bold = font(14, True)
-        self.words = font(15, True)
+        self.code = font(font_folders, 14)
+        self.code_bold = font(font_folders, 14, True)
+        self.words = font(font_folders, 15, True)
 
     def _header(self, draw: ImageDraw.ImageDraw, y: int, parts: tuple | None, command: str) -> None:
         draw.rectangle((0, y, STAGE[0], y + HEADER - 1), fill=BAND)
@@ -213,8 +224,13 @@ class Film:
         )
 
 
-def card_centre(move: int) -> tuple[int, int]:
-    return 16 + 126 * move + 58, WINDOW_TOP + 130
+class Point(NamedTuple):
+    x: int
+    y: int
+
+
+def card_centre(move: int) -> Point:
+    return Point(16 + 126 * move + 58, WINDOW_TOP + 130)
 
 
 def type_move(film: Film, move: int, hold: float) -> None:
@@ -236,16 +252,18 @@ def click_move(film: Film, move: int, hold: float) -> None:
     film.snap(hold)
 
 
-def record(work: Path) -> None:
-    moves, lines, result = the_fight()
+def record(work: Path, environment: dict[str, str]) -> None:
+    """Record the gif; ``environment`` is this process's environment, read once at the entry point."""
+    fight = the_fight()
+    moves, lines, result = fight.moves, fight.lines, fight.result
     session = work / "session.log"
     window_out = work / "window.out"
-    screen = Screen(work)
-    film = Film(screen)
+    screen = Screen(work, environment)
+    film = Film(screen, environment.get("RECORD_FONT_DIRS", "/usr/share/fonts/truetype/dejavu").split(os.pathsep))
     try:
         # `python` in the terminal is this interpreter: the one that has doeff.
         interpreter = Path(sys.executable).parent
-        screen.env.update(PATH=f"{interpreter}{os.pathsep}{os.environ['PATH']}", PYTHONDONTWRITEBYTECODE="1")
+        screen.env.update(PATH=f"{interpreter}{os.pathsep}{environment['PATH']}", PYTHONDONTWRITEBYTECODE="1")
         shell = ["script", "-qf", str(session), "-c", "PS1='$ ' bash --norc --noprofile"]
         screen.start(
             "xterm", "-fa", "DejaVu Sans Mono", "-fs", "9", "-geometry", f"100x{TERMINAL_ROWS}+0+0", "-b", "0",
@@ -321,4 +339,4 @@ def record(work: Path) -> None:
 
 if __name__ == "__main__":
     with tempfile.TemporaryDirectory(prefix="spire-record-") as place:
-        record(Path(place))
+        record(Path(place), dict(os.environ))
