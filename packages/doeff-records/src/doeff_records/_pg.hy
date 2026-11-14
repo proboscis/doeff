@@ -1312,7 +1312,15 @@
 (defk pg-list-rows [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int)] :post [(: % (| Page Reset NotIndexed))]
    :tags {:context "records" :role "foundation"}}
-  "ListRows に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない — 文の条件・頭の註)。"
+  "ListRows に答えるため。最初の頁は ReadBatch と同じ読みだけの transaction で頭と行を 1 往復にまとめる。
+   続きの頁は版違いの Reset を行の SQL より先に返す。刻 now-ms で期限を過ぎた終端の行は回収の前でも出さない。"
+  (when (is ask.cursor None)
+    (try
+      (<- batch BatchRead (pg-read-batch store (ReadBatch #(ask)) now-ms))
+      (except [error RecordsSqlFailed]
+        (<- shape (list-rows-shape ask))
+        (raise (RecordsSqlFailed error.sqlstate (.format "{} — {}" error.reason shape)))))
+    (return (get batch.items 0)))
   (<- head (store-head store))
   (<- answer (| Page Reset NotIndexed) (pg-list-rows-at store ask now-ms head))
   answer)
@@ -1321,8 +1329,8 @@
 (defk pg-list-rows-at [store ask now-ms head]
   {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int) (: head StoreHead)] :post [(: % (| Page Reset NotIndexed))]
    :tags {:context "records" :role "foundation"}}
-  "ListRows に、先に読んだ置き場の版と頭 head で答えるため(1 つの読みの pg-list-rows と束の読みの pg-read-batch が、頭の読みを読みごとに
-   撃つか束で 1 度にするかだけを違えて同じ頁を作る 1 点)。"
+  "続きの ListRows に、先に読んだ置き場の版と頭 head で答えるため。版違いなら行の SQL より先に Reset を返す。
+   文と頁の組み方は最初の頁・束の読みと共用する(list-rows-plan・list-rows-page)。"
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch head.epoch))
     (return (Reset head.epoch head.floor)))
   (<- plan (| Statement NotIndexed) (list-rows-plan store ask now-ms))

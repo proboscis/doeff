@@ -6,11 +6,11 @@
 ;; 実 PostgreSQL の検は env DOEFF_RECORDS_TEST_PG_DSN の物(無ければ conftest が使い捨ての PostgreSQL を立てて置く — #2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [deftest defk <- val var])
 (import doeff [run with_handlers])
-(import doeff_core_effects [scheduled])
+(import doeff_core_effects [scheduled inline-compute-handler])
 (import doeff_core_effects [postgres-sql-handler])
 (import doeff_time [SimClock sim-time-handler Delay])
 (import doeff_hy._frozen [FrozenMap])
-(import doeff_records [ExpectAbsent ExpectVersion Missing Page Changes Events EventsQuiet StreamEmpty StreamTailEmpty WatchCursor])
+(import doeff_records [ExpectAbsent ExpectVersion Missing Page Reset NotIndexed ListCursor Changes Events EventsQuiet StreamEmpty StreamTailEmpty WatchCursor])
 (import doeff_records [ReadRow ListRows WatchChanges WatchEvents ReadEvents ReadStreamEnd PutRow AppendEvent])
 (import doeff_records._laws [MAKER TICKET-KEEP-SECONDS])
 (import doeff_records [pg-records-handler]
@@ -75,14 +75,56 @@
     (assert (and (isinstance (get answers "ReadEvents pairs") Events) (= (. (get answers "ReadEvents pairs") items) #())) answers)
     (assert (= (get answers "WatchEvents") (EventsQuiet)) answers)
     (assert (= (get answers "ReadStreamEnd") (StreamEmpty)) answers)
-    ;; 読み 1 回が流す文は読みの文だけ(transaction の外の文 1 つ = 往復 1 回): 行・追記の読みは 1 往復、置き場の頭を読む一覧と変更の列は
-    ;; 2 往復(頭 + 読み)。回収の候補の読み(終端の行の読み・期限を過ぎた出来事の在るかの読み)も回収の transaction の文(BEGIN・DELETE)も
-    ;; 流れない。
-    (val expected {"ReadRow" 1 "ListRows" 2 "WatchChanges" 2 "WatchChanges tails" 2 "ReadEvents pulses" 1 "ReadEvents pairs" 1
+    ;; 最初の一覧は BEGIN・頭・行・COMMIT を 1 往復にまとめる。他の読みの文数は変えず、期限切れの DELETE は流さない。
+    (val expected {"ReadRow" 1 "ListRows" 1 "WatchChanges" 2 "WatchChanges tails" 2 "ReadEvents pulses" 1 "ReadEvents pairs" 1
                    "WatchEvents" 1 "ReadStreamEnd" 1})
     (assert (= (dfor #(name round-trips) (.items trips) name (len round-trips)) expected) trips)
-    (assert (= (dfor #(name statements) (.items ran) name (len statements)) expected) ran)
+    (assert (= (dfor #(name statements) (.items ran) name (len statements)) {#** expected "ListRows" 4}) ran)
     (assert (not (any (gfor #(_ statements) (.items ran) text statements (in "DELETE" text)))) ran)
+    (finally
+      (run-sql connections (drop-records-tables store))
+      (.close connections))))
+
+
+(defk list-pages-across-a-write [counts]
+  {:pre [(: counts StatementCounts)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "先頭の頁の順・射影・続きと、次の読みが直前の書きを見ることを実 DB で確かめるため。版違いは行の SQL を撃たず Reset にする。"
+  (<- (PutRow "parts" #("b") {"label" "before" "note" 1} (ExpectAbsent)))
+  (<- (PutRow "parts" #("a") {"label" "other" "note" 2} (ExpectAbsent)))
+  (<- first (effect-round-trips counts (ListRows "parts" :fields #("label") :limit 1 :descending-by "note")))
+  (val page (get first 0))
+  (<- next-page (effect-round-trips counts (ListRows "parts" :fields #("label") :limit 1 :descending-by "note" :cursor page.next-cursor)))
+  (<- (PutRow "parts" #("b") {"label" "after"} (ExpectVersion 1)))
+  (<- fresh (effect-round-trips counts (ListRows "parts" :where-any (FrozenMap {"label" #("after")}) :fields #("label"))))
+  (<- reset (effect-round-trips counts (ListRows "parts" :cursor (ListCursor (+ page.epoch 1) ""))))
+  (<- unindexed (effect-round-trips counts (ListRows "parts" :where (FrozenMap {"grant" "unindexed"}))))
+  #(first next-page fresh reset unindexed))
+
+
+(deftest test-list-first-page-keeps-order-projection-freshness-and-cursor-reset
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections))
+  (val store (prepared-store connections (fresh-prefix)))
+  (val counts (StatementCounts))
+  (try
+    (val seen (run (scheduled (with_handlers [(sim-time-handler :clock (SimClock)) inline-compute-handler (postgres-sql-handler connections)
+                                              (probe-sql-handler connections DATABASE (QueryProbe counts))
+                                              (pg-records-handler store MAKER ORIGIN-HOST)]
+                                             (list-pages-across-a-write counts)))))
+    (val pages (tuple (gfor #(answer _) (cut seen 3) answer)))
+    (assert (all (gfor page pages (isinstance page Page))) pages)
+    (assert (= (tuple (gfor page pages row page.rows #(row.key row.value row.version)))
+               #(#(#("a") (FrozenMap {"id" "a" "label" "other"}) 1)
+                 #(#("b") (FrozenMap {"id" "b" "label" "before"}) 1)
+                 #(#("b") (FrozenMap {"id" "b" "label" "after"}) 2))) pages)
+    (assert (> (. (get pages 2) sequence) (. (get pages 0) sequence)) pages)
+    (assert (is (. (get pages 1) next-cursor) None))
+    (assert (isinstance (get (get seen 3) 0) Reset))
+    (assert (isinstance (get (get seen 4) 0) NotIndexed))
+    (assert (= (tuple (gfor #(_ trips) seen (len trips))) #(1 2 1 1 1)) seen)
+    ;; Reset は頭の SELECT だけ。行の読みに失敗する置き場でも、版違いの答えを先に返す。
+    (assert (= (len (get (get (get seen 3) 1) 0)) 1))
     (finally
       (run-sql connections (drop-records-tables store))
       (.close connections))))
