@@ -1,18 +1,31 @@
 # How scheduled() chooses its implementation: the argument, then $DOEFF_SCHEDULER, then DEFAULT_IMPLEMENTATION.
-import os
+# $DOEFF_SCHEDULER is set for a whole process, so each case asks a child process started with `env` that sets it.
+import subprocess
+import sys
 
 from doeff_core_effects import _scheduler as scheduler
-from doeff_core_effects._scheduler import resolve_implementation
 
-os.environ.pop("DOEFF_SCHEDULER", None)
-print("DEFAULT_IMPLEMENTATION =", repr(scheduler.DEFAULT_IMPLEMENTATION))
-print("scheduled(main())                          ->", resolve_implementation())
-print('scheduled(main(), implementation="python") ->', resolve_implementation("python"))
-os.environ["DOEFF_SCHEDULER"] = "python"
-print("DOEFF_SCHEDULER=python  scheduled(main())  ->", resolve_implementation())
-print('DOEFF_SCHEDULER=python  implementation="rust" ->', resolve_implementation("rust"))
-os.environ["DOEFF_SCHEDULER"] = "go"
+# The child prints what resolve_implementation answers for the implementation in its arguments (none = no argument).
+ASK = """
+import sys
+from doeff_core_effects._scheduler import resolve_implementation
 try:
-    resolve_implementation()
+    print(resolve_implementation(*sys.argv[1:]))
 except ValueError as exc:
-    print("DOEFF_SCHEDULER=go ->", type(exc).__name__ + ":", exc)
+    print(type(exc).__name__ + ":", exc)
+"""
+
+
+def chosen(*settings: str, implementation: str | None = None) -> str:
+    """What a child process with only ``settings`` (NAME=VALUE) for DOEFF_SCHEDULER resolves."""
+    argument = [] if implementation is None else [implementation]
+    command = ["env", "-u", "DOEFF_SCHEDULER", *settings, sys.executable, "-c", ASK, *argument]
+    return subprocess.run(command, capture_output=True, text=True, check=True).stdout.strip()
+
+
+print("DEFAULT_IMPLEMENTATION =", repr(scheduler.DEFAULT_IMPLEMENTATION))
+print("scheduled(main())                          ->", chosen())
+print('scheduled(main(), implementation="python") ->', chosen(implementation="python"))
+print("DOEFF_SCHEDULER=python  scheduled(main())  ->", chosen("DOEFF_SCHEDULER=python"))
+print('DOEFF_SCHEDULER=python  implementation="rust" ->', chosen("DOEFF_SCHEDULER=python", implementation="rust"))
+print("DOEFF_SCHEDULER=go ->", chosen("DOEFF_SCHEDULER=go"))

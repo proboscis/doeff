@@ -11,7 +11,6 @@ from __future__ import annotations
 import collections
 import importlib
 import importlib.util
-import os
 import sys
 import textwrap
 from collections.abc import Iterator
@@ -19,6 +18,9 @@ from pathlib import Path
 from types import FunctionType, ModuleType
 
 import pytest
+from doeff_core_effects import ReadEnvironment, subprocess_handler
+
+from doeff import run, with_handlers
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -431,7 +433,8 @@ def test_a_factory_is_called_with_home_and_cwd_in_a_scratch_dir(
     assert list(home.iterdir()) == []
     assert list(work.iterdir()) == []
     assert Path.cwd() == work
-    assert (os.environ["HOME"], os.environ["XDG_STATE_HOME"]) == (str(home), str(home / "state"))
+    restored = run(with_handlers([subprocess_handler], ReadEnvironment(("HOME", "XDG_STATE_HOME"))))
+    assert tuple(entry.value for entry in restored) == (str(home), str(home / "state"))
 
 
 def test_names_made_on_demand_are_exported(sample: ModuleType) -> None:

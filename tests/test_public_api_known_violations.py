@@ -79,7 +79,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, NotRequired, TypedDict, cast
+from typing import Any, NamedTuple, NotRequired, TypedDict, cast
 
 import pytest
 
@@ -235,6 +235,13 @@ class AllowedTable(TypedDict):
 
 #: An allowed table that allows nothing (the default for matching throwaway packages).
 NOTHING_ALLOWED: AllowedTable = {"allowed": []}
+
+
+class Tables(NamedTuple):
+    """The known table and the allowed table one package is matched against (check_package's two arguments)."""
+
+    table: KnownTable
+    allowed: AllowedTable
 
 
 def _load() -> ModuleType:
@@ -514,9 +521,19 @@ def _unread_native_text(directory: str, modules: list[Mapping[str, Any]]) -> str
     )
 
 
+class TableDiff(NamedTuple):
+    """One inventory package matched against the two tables (what _diff_against_tables returns)."""
+
+    found: dict[Key, Mapping[str, Any]]
+    known: set[Key]
+    permitted: set[Key]
+    moved: set[tuple[Key, Key]]
+    new: list[Key]
+
+
 def _diff_against_tables(
     package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable
-) -> tuple[dict[Key, Mapping[str, Any]], set[Key], set[Key], set[tuple[Key, Key]], list[Key]]:
+) -> TableDiff:
     """Return one inventory package's violations, the names in the two tables, the moved rows, and the new violations in neither table (the one point that check_package and
     the report step after the daily full verification share for the same matching)."""
     directory = package["dir"]
@@ -525,7 +542,7 @@ def _diff_against_tables(
     permitted = allowed_names(allowed, directory)
     moved = moved_to_root(package["import_roots"], found, known | permitted)
     new = sorted(set(found) - known - permitted - {root for root, _old in moved})
-    return found, known, permitted, moved, new
+    return TableDiff(found, known, permitted, moved, new)
 
 
 def unlisted_names(package: Mapping[str, Any], table: KnownTable, allowed: AllowedTable) -> list[Key]:
@@ -533,7 +550,7 @@ def unlisted_names(package: Mapping[str, Any], table: KnownTable, allowed: Allow
     entry = table["packages"].get(package["dir"])
     if package["error"] is not None or entry is None or entry["scope"] == "out of scope":
         return []
-    return _diff_against_tables(package, table, allowed)[4]
+    return _diff_against_tables(package, table, allowed).new
 
 
 def check_package(
@@ -1045,13 +1062,20 @@ print(json.dumps({
 """
 
 
-def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]]:
+class EntryNameClashes(NamedTuple):
+    """What the fresh-process check found: entry names that became modules, and the imports that failed."""
+
+    imported: list[str]
+    failed: list[str]
+
+
+def imported_entry_name_clashes(package_dir: Path) -> EntryNameClashes:
     """Fresh-process check: the names of entries (of the root and of packages under it) that became modules after importing the packages under the root and all the public modules and old paths,
     and the imports that failed."""
     layout = tool.read_layout(package_dir)
     roots = [root for root in layout.roots if root.path.is_dir()]
     if not roots:
-        return [], []
+        return EntryNameClashes([], [])
     places = [str(root.path.parent) for root in roots]
     payload = {
         "first": [] if layout.maturin else places,
@@ -1072,7 +1096,7 @@ def imported_entry_name_clashes(package_dir: Path) -> tuple[list[str], list[str]
     )
     assert done.returncode == 0, f"{package_dir.name}: could not read the entry in a fresh process:\n{done.stderr[-2000:]}"
     result = json.loads(done.stdout.strip().splitlines()[-1])
-    return (
+    return EntryNameClashes(
         [
             f"{root}.{name}: after importing {after}, the entry's name became the module {module}"
             for root, name, module, after in result["found"]
@@ -1373,9 +1397,11 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
     assert forms["pinging"] == tool.PROGRAM_HELPER
     rest = ["answering", "helper", "pinging_handled", "pinging_with_handler", "pinging_wrapped"]
 
-    def tables(helpers: list[str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(helpers: list[str]) -> Tables:
         listed = sorted(set(rest) - set(helpers))
-        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), _fixture_allowed(helpers)
+        return Tables(
+            _fixture_table({FIXTURE_ROOT: listed} if listed else {}), _fixture_allowed(helpers)
+        )
 
     check_package(package, *tables(["pinging"]))
     with pytest.raises(
@@ -1461,13 +1487,13 @@ def test_only_a_conversion_can_be_put_into_the_conversion_group(tmp_path: Path) 
     assert forms["ms_of"] == tool.CONVERSION
     rest = ["ms_now", "ms_today", "pinged"]
 
-    def tables(conversions: list[str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(conversions: list[str]) -> Tables:
         listed = sorted(set(rest) - set(conversions))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): CONVERSION_GROUP for name in conversions},
             FIXTURE_DECISION,
         )
-        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+        return Tables(_fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed)
 
     check_package(package, *tables(["ms_of"]))
     with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.ms_of"):
@@ -1525,7 +1551,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
     assert forms[(FIXTURE_ROOT, "PingNote")] == "class"
     outliers = {FIXTURE_ROOT: ["PingNote"], errors: ["JSONDecodeError"], SUBMODULE: [errors]}
 
-    def tables(exceptions: list[Key]) -> tuple[KnownTable, AllowedTable]:
+    def tables(exceptions: list[Key]) -> Tables:
         listed = {
             module: [name for name in names if (module, name) not in exceptions]
             for module, names in outliers.items()
@@ -1533,7 +1559,7 @@ def test_only_an_exception_class_of_its_package_can_be_put_into_the_exception_gr
         allowed = _fixture_grouped(
             {key: EXCEPTION_GROUP for key in exceptions}, FIXTURE_DECISION
         )
-        return _fixture_table({m: n for m, n in listed.items() if n}), allowed
+        return Tables(_fixture_table({m: n for m, n in listed.items() if n}), allowed)
 
     defined = (FIXTURE_ROOT, "PingFailed")
     check_package(package, *tables([defined]))
@@ -1657,13 +1683,13 @@ def test_only_a_builder_and_the_class_it_returns_can_be_put_into_the_builder_gro
         "step_yielding",
     )
 
-    def tables(names: list[str], known: Iterable[str] = ()) -> tuple[KnownTable, AllowedTable]:
+    def tables(names: list[str], known: Iterable[str] = ()) -> Tables:
         listed = sorted((set(rest) | set(known)) - set(names))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): BUILDER_GROUP for name in names},
             FIXTURE_DECISION,
         )
-        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+        return Tables(_fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed)
 
     check_package(package, *tables(shapes))
     with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.step\("):
@@ -1763,12 +1789,12 @@ def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path
     }
     value_types = ["Hint", "Mode", "Payload"]
 
-    def tables(placed: list[str], listed: list[str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(placed: list[str], listed: list[str]) -> Tables:
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): VALUE_TYPE_GROUP for name in placed},
             FIXTURE_DECISION,
         )
-        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+        return Tables(_fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed)
 
     check_package(package, *tables(value_types, ["Unrelated"]))
     with pytest.raises(
@@ -1885,12 +1911,12 @@ def test_only_an_answer_type_can_be_put_into_the_answer_type_group(tmp_path: Pat
     answers = ["Calm", "Mood", "ReadAnswer", "Reading", "Refused"]
     rest = ["Echoed", "Event", "Listener", "Settings"]
 
-    def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(placed: list[str]) -> Tables:
         listed = sorted(set(rest) - set(placed))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FIXTURE_DECISION
         )
-        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+        return Tables(_fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed)
 
     check_package(package, *tables(answers))
     with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Reading"):
@@ -1953,12 +1979,12 @@ def test_a_bus_event_a_wait_declares_can_be_put_into_the_answer_type_group(tmp_p
     assert places == {"Fired": ["bus event of AwaitEventEffect"], "Cause": ["Fired.cause"]}
     events = ["Cause", "Fired"]
 
-    def tables(placed: list[str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(placed: list[str]) -> Tables:
         listed = sorted({"Undeclared"} - set(placed))
         allowed = _fixture_grouped(
             {(FIXTURE_ROOT, name): ANSWER_TYPE_GROUP for name in placed}, FIXTURE_DECISION
         )
-        return _fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed
+        return Tables(_fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed)
 
     check_package(package, *tables(events))
     with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Fired"):
@@ -2084,14 +2110,14 @@ def test_only_a_type_a_handler_takes_can_be_put_into_the_setting_group(tmp_path:
     ]
     rest = [(FIXTURE_ROOT, "Unrelated"), (FIXTURE_ROOT, "helper"), (rooted, "Path")]
 
-    def tables(placed: list[Key]) -> tuple[KnownTable, AllowedTable]:
+    def tables(placed: list[Key]) -> Tables:
         listed = {
             module: sorted(name for each, name in set(rest) - set(placed) if each == module)
             for module in (FIXTURE_ROOT, rooted)
         }
         allowed = _fixture_grouped(dict.fromkeys(placed, SETTING_GROUP), FIXTURE_DECISION)
         known = {module: names for module, names in listed.items() if names} | {SUBMODULE: [rooted]}
-        return _fixture_table(known), allowed
+        return Tables(_fixture_table(known), allowed)
 
     check_package(package, *tables(settings))
     with pytest.raises(AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.Settings"):
@@ -2163,13 +2189,14 @@ def test_only_a_macro_or_a_command_can_be_put_into_the_macro_and_command_groups(
     }
     outliers = {FIXTURE_ROOT: ["helper"], mixed: ["plain"], SUBMODULE: [mixed]}
 
-    def tables(moved: Mapping[Key, str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(moved: Mapping[Key, str]) -> Tables:
         listed = {
             module: [name for name in names if (module, name) not in moved]
             for module, names in outliers.items()
         }
-        return _fixture_table({m: n for m, n in listed.items() if n}), _fixture_grouped(
-            {**placed, **moved}
+        return Tables(
+            _fixture_table({m: n for m, n in listed.items() if n}),
+            _fixture_grouped({**placed, **moved}),
         )
 
     check_package(package, *tables({}), commands=FIXTURE_COMMANDS)
@@ -2317,13 +2344,14 @@ def test_only_a_plugin_registration_or_a_startup_call_can_be_put_into_their_grou
     }
     outliers = {tools: ["tool_helper"], SUBMODULE: [tools]}
 
-    def tables(moved: Mapping[Key, str]) -> tuple[KnownTable, AllowedTable]:
+    def tables(moved: Mapping[Key, str]) -> Tables:
         listed = {
             module: [name for name in names if (module, name) not in moved]
             for module, names in outliers.items()
         }
-        return _fixture_table({m: n for m, n in listed.items() if n}), _fixture_grouped(
-            {**placed, **moved}, FIXTURE_DECISION
+        return Tables(
+            _fixture_table({m: n for m, n in listed.items() if n}),
+            _fixture_grouped({**placed, **moved}, FIXTURE_DECISION),
         )
 
     check_package(package, *tables({}), repo=repo)
