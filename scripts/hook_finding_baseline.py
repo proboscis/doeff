@@ -20,7 +20,12 @@ not an "allow list" but the reference for comparison. Keys do not depend on line
                          Run and staged by the change that fixed things and the change that changed the tool version. Pairs that increased over the baseline at the current version cannot be lowered, so they are named.
                          doeff-linter uses what was passed by `--linter <binary>` (the change's own build of a modified linter) or the binary with the
                          build-input key of HEAD (stops and names it if not in the store).
+                         A +dirty build (made by hand from a tree with uncommitted linter changes) is keyed by the staged linter inputs -- this is how the commit
+                         that changes the linter writes the key staged-key expects (stops if the working tree's linter inputs differ from the index).
   init <tool>            Only when there is no baseline file, measure all files of the repo and write it with the version (refuses if it exists -- not a way to raise).
+  staged-key doeff-linter  Commit hook: a commit that touches the linter's build inputs (scripts/doeff_linter_locked.py) or the baseline file is red if the staged
+                         baseline version is not the key of the staged tree's linter inputs (no binary, no build -- a hash of git object ids). A commit that
+                         touches neither passes, so another change's drift does not stop every later commit (the daily --strict still names it).
 
 Tools = doeff-linter (severity error only -- warning and info do not stop the hook) and semgrep (.semgrep.yaml; like the hook, excludes the rule
 fixtures tests/semgrep/fixtures/). All files of the repo = the .py / .pyi tracked by git that are not symlinks (semgrep cannot measure
@@ -31,6 +36,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from collections.abc import Iterator
@@ -41,10 +47,19 @@ from pathlib import Path
 # an implicit default; under PYTHONSAFEPATH=1 (present in the worker's shell) it does not, and the commit hook failed on import.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from doeff_linter_locked import binary_key, dev_key, input_key, locate, same_key, searched
+from doeff_linter_locked import binary_key, dev_key, input_key, input_paths, locate, same_key, searched
 from semgrep_locked import locked_command, locked_version
 
 BASELINE_DIR: str = "scripts/hook_finding_baseline"
+LINTER_BASELINE: str = f"{BASELINE_DIR}/doeff-linter.json"
+#: The `--version` of a linter built by hand from a tree with uncommitted linter changes (build.rs appends +dirty to HEAD).
+DIRTY_BUILD = re.compile(r"\(doeff ([0-9a-f]{40})\+dirty\)")
+#: How the change that touched the linter recounts the baseline (named by the commit hook and by lower).
+RECOUNT: str = (
+    "build the linter from the tree (`cargo build --release --manifest-path packages/doeff-linter/Cargo.toml`), run "
+    "`uv run --no-project python scripts/hook_finding_baseline.py --linter <the built doeff-linter> lower doeff-linter`, and stage "
+    f"{LINTER_BASELINE} (fix findings above the baseline in code -- do not add them)"
+)
 TOOLS: tuple[str, ...] = ("doeff-linter", "semgrep")
 SEMGREP_FIXTURES: str = "tests/semgrep/fixtures/"
 SEMGREP_JOBS: str = "2"
@@ -209,13 +224,84 @@ def linter_for_writing(top: Path, linter: Path | None) -> Instrument:
     """Write the baseline (init, lower) linter: the binary passed in (the change that modified the linter passes its own build) or the binary with the build-input key of HEAD
     (land-arm dev build -> snapshot store). If absent, name it and stop (do not count with the search-path linter and write a different key)."""
     if linter is not None:
-        return Instrument((str(linter),), binary_key(top, linter))
+        declared: str = binary_key(top, linter)
+        dirty = DIRTY_BUILD.search(declared)
+        return Instrument((str(linter),), declared if dirty is None else _dirty_build_key(top, linter, dirty.group(1)))
     head: str | None = input_key(top, "HEAD")
     located = locate(top, head) if head is not None else None
     if located is None:
         raise SystemExit(f"No binary for the HEAD linter build-input ({head}) in {searched()} -- pass the built binary "
                          "with `--linter <path>`")
     return Instrument((str(located.binary),), binary_key(top, located.binary))
+
+
+def _git(top: Path, args: list[str]) -> subprocess.CompletedProcess[str]:
+    """Run git at the repo root (inside the commit hook git passes GIT_INDEX_FILE, so write-tree and diff --cached read the index being committed)."""
+    return subprocess.run(["git", *args], cwd=top, capture_output=True, text=True, check=False)
+
+
+def staged_tree(top: Path) -> str:
+    """The tree id of the index (stop if git cannot write it -- such as an index with conflicts)."""
+    written: subprocess.CompletedProcess[str] = _git(top, ["write-tree"])
+    if written.returncode != 0:
+        raise SystemExit(f"git write-tree failed (rc {written.returncode}): {written.stderr.strip()[:300]}")
+    return written.stdout.strip()
+
+
+def _dirty_build_key(top: Path, linter: Path, built_on: str) -> str:
+    """The key of a build made by hand from a tree with uncommitted linter changes (`<HEAD>+dirty`): the key of the staged linter inputs. Taken only when the build sits
+    on HEAD, the working tree's linter inputs equal the index (the build read the working tree), and the build is newer than every input file (not a build of
+    earlier edits) -- otherwise named and stopped. This is how the commit that changes the linter writes the key the commit hook expects (the build cannot name a commit
+    that does not exist yet)."""
+    head: str = _git(top, ["rev-parse", "HEAD"]).stdout.strip()
+    if built_on != head:
+        raise SystemExit(f"{linter} is a +dirty build on {built_on}, not on HEAD {head} -- rebuild it from this tree")
+    tree: str = staged_tree(top)
+    paths: tuple[str, ...] | None = input_paths(top, tree)
+    key: str | None = input_key(top, tree)
+    if paths is None or key is None:
+        raise SystemExit("git cannot read the linter's build inputs in the index (packages/doeff-linter/Cargo.toml is not staged)")
+    if _git(top, ["diff", "--quiet", "--", *paths]).returncode != 0:
+        raise SystemExit(f"{linter} is a +dirty build and the linter's build inputs differ between the working tree and the index -- stage the linter "
+                         "changes (git add), rebuild, and lower again (a +dirty build is keyed by the staged tree)")
+    built: float = linter.stat().st_mtime
+    newer: list[str] = [p for p in _git(top, ["ls-files", "--", *paths]).stdout.splitlines() if (top / p).stat().st_mtime > built]
+    if newer:
+        raise SystemExit(f"{linter} is older than the linter sources ({', '.join(newer[:3])}) -- rebuild it and lower again")
+    return key
+
+
+def touched_linter_inputs(top: Path, tree: str) -> list[str]:
+    """The staged paths (index against HEAD) that are linter build inputs (of the index tree or of HEAD -- a change that drops a path dependency also counts) or the baseline file."""
+    inputs: set[str] = {*(input_paths(top, tree) or ()), *(input_paths(top, "HEAD") or ())}
+    listed: subprocess.CompletedProcess[str] = _git(top, ["diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD", "--"])
+    if listed.returncode != 0:
+        # No HEAD yet (the first commit) -- every staged path is new.
+        listed = _git(top, ["ls-files", "-z"])
+    return [p for p in listed.stdout.split("\0") if p and (p == LINTER_BASELINE or any(p == i or p.startswith(f"{i}/") for i in inputs))]
+
+
+def staged_key(top: Path) -> int:
+    """Entry for the commit hook (staged-key doeff-linter): a commit that touches the linter's build inputs or its baseline file is stopped (1) when the staged baseline's
+    version is not the key of the staged tree's linter inputs. A commit that touches neither passes (another change's drift does not stop every later commit -- the daily
+    --strict still names it). No linter binary and no build are needed: the key is a hash of git object ids."""
+    tree: str = staged_tree(top)
+    touched: list[str] = touched_linter_inputs(top, tree)
+    if not touched:
+        return 0
+    key: str | None = input_key(top, tree)
+    shown: subprocess.CompletedProcess[str] = _git(top, ["show", f":{LINTER_BASELINE}"])
+    if key is None or shown.returncode != 0:
+        print(f"doeff-linter: this commit touches {', '.join(touched[:5])}, but the index has no "
+              f"{'packages/doeff-linter/Cargo.toml' if key is None else LINTER_BASELINE} -- the baseline key cannot be compared", file=sys.stderr)
+        return 1
+    version: str = parse_baseline(shown.stdout, f"the index's {LINTER_BASELINE}").version
+    if same_key(version, key):
+        return 0
+    print(f"doeff-linter: this commit touches the linter's build inputs or its baseline ({', '.join(touched[:5])}"
+          f"{', …' if len(touched) > 5 else ''}), but the staged baseline version ({version}) is not the key of the staged linter "
+          f"inputs ({key}). Recount the baseline in this commit: {RECOUNT}", file=sys.stderr)
+    return 1
 
 
 def linter_for_checking(top: Path, baseline: Baseline) -> Instrument | None:
@@ -225,12 +311,17 @@ def linter_for_checking(top: Path, baseline: Baseline) -> Instrument | None:
     return Instrument((str(located.binary),), baseline.version) if located is not None else None
 
 
-def read_baseline(file: Path) -> Baseline:
-    """Read the baseline file (stop if the shape differs -- do not default to 0)."""
-    raw = json.loads(file.read_text(encoding="utf-8"))
+def parse_baseline(text: str, source: str) -> Baseline:
+    """Parse the baseline JSON (stop if the shape differs -- do not default to 0)."""
+    raw = json.loads(text)
     if not isinstance(raw, dict) or not isinstance(raw.get("version"), str) or not isinstance(raw.get("counts"), dict):
-        raise SystemExit(f"The baseline file has the wrong shape (version and counts are required): {file}")
+        raise SystemExit(f"The baseline file has the wrong shape (version and counts are required): {source}")
     return Baseline(version=raw["version"], counts=raw["counts"])
+
+
+def read_baseline(file: Path) -> Baseline:
+    """Read the baseline file."""
+    return parse_baseline(file.read_text(encoding="utf-8"), str(file))
 
 
 def measure(top: Path, tool: str, instrument: Instrument, paths: list[str]) -> Counts:
@@ -285,7 +376,7 @@ def _unmeasured_hint(top: Path, baseline: Baseline) -> str:
 
 USAGE: str = (
     "usage: hook_finding_baseline.py [--root <dir>] [--linter <built doeff-linter>] [--strict] "
-    "check|lower|init doeff-linter|semgrep [path …]"
+    "check|lower|init doeff-linter|semgrep [path …] | staged-key doeff-linter"
 )
 #: The flag value that turns "cannot be measured" red (3) -- used by the daily stage (the hook lets it pass; daily is where already-passed commits are measured, so it does not pass).
 UNMEASURED_RC: int = 3
@@ -319,18 +410,22 @@ def parse(argv: list[str]) -> Request | None:
         else:
             linter = Path(rest[1]).resolve()
         rest = rest[2:]
-    if len(rest) < 2 or rest[0] not in ("check", "lower", "init") or rest[1] not in TOOLS:
+    if len(rest) < 2 or rest[0] not in ("check", "lower", "init", "staged-key") or rest[1] not in TOOLS:
+        return None
+    if rest[0] == "staged-key" and (rest[1] != "doeff-linter" or len(rest) > 2):
         return None
     return Request(top=top, linter=linter, unmeasured_rc=unmeasured_rc, command=rest[0], tool=rest[1], paths=rest[2:])
 
 
 def main(argv: list[str]) -> int:
-    """Three entries: check (commit hook), lower (the change that fixed things), init (one time when there is no baseline)."""
+    """Four entries: check and staged-key (commit hook), lower (the change that fixed things), init (one time when there is no baseline)."""
     request: Request | None = parse(argv)
     if request is None:
         print(USAGE, file=sys.stderr)
         return 2
     top, tool = request.top, request.tool
+    if request.command == "staged-key":
+        return staged_key(top)
     baseline_file: Path = top / BASELINE_DIR / f"{tool}.json"
     if request.command != "init" and not baseline_file.is_file():
         print(f"No baseline file: {baseline_file} (do not default to 0)", file=sys.stderr)

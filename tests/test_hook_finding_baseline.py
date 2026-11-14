@@ -313,6 +313,112 @@ def test_init_never_overwrites_a_baseline(tmp_path: Path) -> None:
     assert "init does not rewrite it" in again.stderr
 
 
+# --- staged-key: the commit hook keeps the baseline version equal to the key of the staged linter inputs -----------------------------
+# From 10-21, 74 commits changed linter inputs without recounting and 3 rewrote the baseline by hand without running the linter; the hook named only
+# "not measurable", so the drift first showed in the daily --strict. The failure cases: (a) a linter src change without a recount stops, (b) a hand edit of
+# the baseline whose version is not the tree's key stops, (c) a commit whose key matches and a commit that touches no linter input pass.
+
+BASELINE_FILE: str = "scripts/hook_finding_baseline/doeff-linter.json"
+
+
+def _stage(rig: Rig, *paths: str) -> None:
+    """Stage paths of the temp repo."""
+    subprocess.run(["git", "add", "--", *paths], cwd=rig.repo, env=rig.environment, check=True)
+
+
+def _keyed_rig(tmp_path: Path) -> Rig:
+    """A temp repo whose committed baseline names the key of HEAD's linter inputs."""
+    rig = _rig(tmp_path)
+    assert _run(rig, "init", "doeff-linter").returncode == 0
+    _commit(rig, "baseline")
+    return rig
+
+
+def _write_version(rig: Rig, version: str) -> None:
+    """Rewrite the baseline's version by hand (what 70946a9b7, 32ce6f5d3 and 3ddd1b69f did to the counts, without running the linter)."""
+    file = rig.repo / BASELINE_FILE
+    file.write_text(json.dumps({**json.loads(file.read_text()), "version": version}, indent=2, sort_keys=True) + "\n")
+
+
+def test_a_linter_change_without_a_recount_is_stopped_by_name(tmp_path: Path) -> None:
+    rig = _keyed_rig(tmp_path)
+    (rig.repo / "packages" / "doeff-linter" / "src" / "main.rs").write_text("fn main() { /* rules changed */ }\n")
+    _stage(rig, "packages/doeff-linter/src/main.rs")
+    stopped = _run(rig, "staged-key", "doeff-linter")
+    assert stopped.returncode == 1
+    assert "packages/doeff-linter/src/main.rs" in stopped.stderr
+    assert "--linter <the built doeff-linter> lower doeff-linter" in stopped.stderr
+
+
+def test_a_path_dependency_change_without_a_recount_is_stopped(tmp_path: Path) -> None:
+    rig = _keyed_rig(tmp_path)
+    (rig.repo / "packages" / "doeff-indexer" / "src" / "lib.rs").write_text("// indexer changed\n")
+    _stage(rig, "packages/doeff-indexer/src/lib.rs")
+    assert _run(rig, "staged-key", "doeff-linter").returncode == 1
+
+
+def test_a_hand_edit_of_the_baseline_with_another_key_is_stopped(tmp_path: Path) -> None:
+    rig = _keyed_rig(tmp_path)
+    _write_version(rig, LINTER_LOCKED.KEY_PREFIX + "0" * 40)
+    _stage(rig, BASELINE_FILE)
+    assert _run(rig, "staged-key", "doeff-linter").returncode == 1
+
+
+def test_a_hand_edit_of_the_baseline_on_a_drifted_tree_is_stopped(tmp_path: Path) -> None:
+    # HEAD already drifted (a linter change landed with --no-verify); a commit that edits the counts by hand and keeps the stale version stops.
+    rig = _keyed_rig(tmp_path)
+    _change_linter_source(rig, "fn main() { /* rules changed */ }\n")
+    file = rig.repo / BASELINE_FILE
+    file.write_text(json.dumps({**json.loads(file.read_text()), "counts": {}}, indent=2, sort_keys=True) + "\n")
+    _stage(rig, BASELINE_FILE)
+    stopped = _run(rig, "staged-key", "doeff-linter")
+    assert stopped.returncode == 1
+    assert BASELINE_FILE in stopped.stderr
+
+
+def test_a_baseline_edit_that_keeps_the_tree_key_passes(tmp_path: Path) -> None:
+    rig = _keyed_rig(tmp_path)
+    (rig.repo / "pkg" / "a.py").write_text("x = 1\ny = 2\n")
+    assert _run(rig, "lower", "doeff-linter").returncode == 0
+    _stage(rig, "pkg/a.py", BASELINE_FILE)
+    assert _run(rig, "staged-key", "doeff-linter").returncode == 0
+
+
+def test_commits_that_touch_no_linter_input_pass_even_on_a_drifted_tree(tmp_path: Path) -> None:
+    # Another change's drift does not stop every later commit -- the daily --strict names it.
+    rig = _keyed_rig(tmp_path)
+    _change_linter_source(rig, "fn main() { /* rules changed */ }\n")
+    (rig.repo / "pkg" / "b.py").write_text("z = 4\n")
+    (rig.repo / "packages" / "doeff-linter" / "tests" / "t.rs").write_text("// a linter test only\n")
+    _stage(rig, "pkg/b.py", "packages/doeff-linter/tests/t.rs")
+    assert _run(rig, "staged-key", "doeff-linter").returncode == 0
+
+
+def test_a_dirty_build_lowers_to_the_staged_key_and_the_commit_passes(tmp_path: Path) -> None:
+    # The commit that changes the linter cannot build a binary naming a commit that does not exist yet -- its +dirty build is keyed by the staged inputs.
+    rig = _keyed_rig(tmp_path)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=rig.repo, env=rig.environment,
+                          capture_output=True, text=True, check=True).stdout.strip()
+    (rig.repo / "packages" / "doeff-linter" / "src" / "main.rs").write_text("fn main() { /* rules changed */ }\n")
+    _stage(rig, "packages/doeff-linter/src/main.rs")
+    built = _place_linter(tmp_path / "built", f"{head}+dirty")
+    assert _run(rig, "--linter", str(built), "lower", "doeff-linter").returncode == 0
+    _stage(rig, BASELINE_FILE)
+    assert _run(rig, "staged-key", "doeff-linter").returncode == 0
+    assert LINTER_LOCKED.same_key(_baseline_version(rig), LINTER_LOCKED.input_key(rig.repo, _commit(rig, "linter and recount")))
+
+
+def test_a_dirty_build_of_unstaged_linter_edits_is_named_and_stops(tmp_path: Path) -> None:
+    rig = _keyed_rig(tmp_path)
+    head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=rig.repo, env=rig.environment,
+                          capture_output=True, text=True, check=True).stdout.strip()
+    (rig.repo / "packages" / "doeff-linter" / "src" / "main.rs").write_text("fn main() { /* rules changed */ }\n")
+    built = _place_linter(tmp_path / "built", f"{head}+dirty")
+    stopped = _run(rig, "--linter", str(built), "lower", "doeff-linter")
+    assert stopped.returncode != 0
+    assert "stage the linter changes" in stopped.stderr
+
+
 # --- semgrep calls the uv.lock version (#2906) -- the fake uv answers `tool run --python <version> --from semgrep==<version> semgrep`, and the search-path semgrep is a different version ---
 
 LOCK_TEMPLATE = (

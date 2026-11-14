@@ -488,6 +488,19 @@ def test_plain_hook_runs_the_doeff_linter_baseline_hook_of_the_config() -> None:
     assert f"run {PLAIN_HOOK_LINTER_ID}" in PLAIN_HOOK.read_text(encoding="utf-8")
 
 
+PLAIN_HOOK_KEY_ID: str = "doeff-linter-baseline-key"
+
+
+def test_both_hooks_run_the_baseline_key_entry_on_every_commit() -> None:
+    # The key entry decides from the index itself whether the commit touches the linter's inputs (they are Rust, JSON and TOML -- a file filter of
+    # the config would drop the commits that change only those), so it always runs and takes no file names; the plain hook fires it by id.
+    hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
+    key_hooks: list[dict[str, object]] = [hook for hook in hooks if "hook_finding_baseline.py staged-key doeff-linter" in hook["entry"]]
+    assert [hook["id"] for hook in key_hooks] == [PLAIN_HOOK_KEY_ID]
+    assert key_hooks[0].get("always_run") is True and key_hooks[0].get("pass_filenames") is False
+    assert f"run {PLAIN_HOOK_KEY_ID}" in PLAIN_HOOK.read_text(encoding="utf-8")
+
+
 def test_plain_hook_stops_a_staged_python_file_with_a_linter_finding_not_in_the_baseline(tmp_path: Path) -> None:
     # One error absent from the (empty) baseline is in the staged file -> the plain hook stops (failure case -- it passes if the plain hook does not fire the linter entry).
     report: str = json.dumps([{"rule": "DOEFF016", "severity": "error", "violations": [{"file": "doeff/example.py"}]}])
