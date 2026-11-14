@@ -19,6 +19,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from doeff_cluster._foundation.process_environ import child_environ
 
 #: 準備の道具(本番の準備の処理ステージが起こす script と同じ file)。
 TOOL = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster" / "_worker" / "entry" / "code_prepare.hy"
@@ -55,7 +56,7 @@ def test_the_progress_mark_never_stands_still_for_a_whole_slow_bake(tmp_path: Pa
     argv = [sys.executable, "-m", "hy", str(TOOL), "--revision", "r", "--jobs", str(jobs), "--progress", str(mark),
             "--tree", str(tree), "--roots", "."]
     log = tmp_path / "stall.log"
-    env = {**os.environ, "DOEFF_HY_CODE_STORE": "off", "STALL_LOG": str(log), "MARK_FILE": str(mark)}
+    env = {**child_environ((), ()), "DOEFF_HY_CODE_STORE": "off", "STALL_LOG": str(log), "MARK_FILE": str(mark)}
     done = subprocess.run(argv, capture_output=True, text=True, env=env, check=False)
     assert done.returncode == 0, done.stderr[-3000:]
     for name in ("slow_a", "slow_b", "slow_c", "fast"):

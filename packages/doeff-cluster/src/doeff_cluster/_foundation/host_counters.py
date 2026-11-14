@@ -19,6 +19,7 @@ wired + 圧縮 を総量から引いた物 — 使っていない頁と、捨て
 
 import ctypes
 import sys
+from dataclasses import dataclass
 from functools import cache
 
 # 層 foundation の文脈と役の名乗り(DOEFF104)— 隣の otlp_post.py と同じ。
@@ -121,7 +122,17 @@ def _sysctl_int(
     return int(value.value)
 
 
-def _cpu_ticks(host: MachHost) -> tuple[int, int, int, int] | str:
+@dataclass(frozen=True)
+class CpuTicks:
+    """起動からの CPU の刻みの和(HOST_CPU_LOAD_INFO の 4 つの欄 — 全部の CPU の和)。"""
+
+    user: int
+    system: int
+    idle: int
+    nice: int
+
+
+def _cpu_ticks(host: MachHost) -> CpuTicks | str:
     """起動からの CPU の刻みの和(user・system・idle・nice)を読むため(読めない時は訳の str)。"""
     ticks = (ctypes.c_uint32 * CPU_STATE_COUNT)()
     count = ctypes.c_uint32(CPU_STATE_COUNT)
@@ -130,11 +141,11 @@ def _cpu_ticks(host: MachHost) -> tuple[int, int, int, int] | str:
     )
     if status != KERN_SUCCESS:
         return f"host_statistics(HOST_CPU_LOAD_INFO) が {status} で断った"
-    return (
-        int(ticks[CPU_STATE_USER]),
-        int(ticks[CPU_STATE_SYSTEM]),
-        int(ticks[CPU_STATE_IDLE]),
-        int(ticks[CPU_STATE_NICE]),
+    return CpuTicks(
+        user=int(ticks[CPU_STATE_USER]),
+        system=int(ticks[CPU_STATE_SYSTEM]),
+        idle=int(ticks[CPU_STATE_IDLE]),
+        nice=int(ticks[CPU_STATE_NICE]),
     )
 
 
@@ -167,7 +178,7 @@ def read_host_counters() -> dict[str, int] | str:
         _sysctl_int(host, "hw.memsize", ctypes.c_uint64),
     )
     match reads:
-        case ((user, system, idle, nice), int(used_bytes), int(cpus), int(total_bytes)):
+        case (CpuTicks(user, system, idle, nice), int(used_bytes), int(cpus), int(total_bytes)):
             return {
                 "cpus": cpus,
                 "busy_ticks": user + system + nice,

@@ -137,16 +137,30 @@ def thread_count() -> int:
     return counted
 
 
-def _live_vm_objects() -> tuple[int, int, int]:
+@dataclass(frozen=True)
+class VmLiveCounts:
+    """doeff の VM の生きている数(segment・continuation・IR の流れ — effect ReadVmLiveCounts の答えの順)。"""
+
+    segments: int
+    continuations: int
+    streams: int
+
+
+def _live_vm_objects() -> VmLiveCounts:
     """doeff の VM の生きている数(segment・continuation・IR の流れ)を effect ReadVmLiveCounts で読むため。読む run 自身の物も数に入る。"""
-    counts: tuple[int, int, int] = run(vm_probe_handler(ReadVmLiveCounts()))
-    return counts
+    segments, continuations, streams = run(vm_probe_handler(ReadVmLiveCounts()))
+    return VmLiveCounts(segments, continuations, streams)
 
 
-def _vm_live_beyond(reading: tuple[int, int, int]) -> tuple[int, ...]:
+def _vm_live_beyond(reading: VmLiveCounts) -> tuple[int, ...]:
     """doeff の VM の生きている数のうち、読む run 自身の物(reading — VM の物がまだ無い起動の始めに読んだ数)の外の数 — 分かれる前に
     VM が作られていない(全部 0)事を印に残すため。"""
-    return tuple(now - own for now, own in zip(_live_vm_objects(), reading, strict=True))
+    now = _live_vm_objects()
+    return (
+        now.segments - reading.segments,
+        now.continuations - reading.continuations,
+        now.streams - reading.streams,
+    )
 
 
 def start_ticks(pid: int) -> int:

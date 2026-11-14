@@ -85,7 +85,8 @@ access-key-id・secret-access-key と endpoint(在れば)を Pod の ServiceAcco
 が同じ 2 つの置き場(例 Garage と nemo)は、Secret の名 1 つ(upkeep なら DOEFF_UV_CACHE_SEED_SECRET)で切り替わる。URL が http(s) なら
 その URL へ送り、Secret の endpoint は読まない。署名は SigV4(--region・既定 us-east-1・payload は UNSIGNED-PAYLOAD)。
 
-標準の library だけを使う(依存を取り込む前の cache に入れる道具なので、取り込みに頼らない)。Python 3.14 以上(zstd は 3.14 の
+標準の library だけを使う(依存を取り込む前の cache に入れる道具なので、取り込みに頼らない)。環境変数の読みは、同じ package の
+foundation の層の process_environ(標準の library だけを import する)に任せる。Python 3.14 以上(zstd は 3.14 の
 compression.zstd・型の註の前方の参照は 3.14 の遅れて読む註で解く)。
 """
 
@@ -101,6 +102,7 @@ import fcntl
 import hashlib
 import hmac
 import http.client
+import importlib.util
 import json
 import os
 import shutil
@@ -116,6 +118,7 @@ from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import BinaryIO, Self
 
 SEED_MARK = ".doeff-uv-seed.json"
@@ -174,6 +177,33 @@ PART = 64 << 20
 # PUT が落ちた時に試し直すまでの秒(並びの数 = 試し直しの回数)。object の置き場は disk の命令が詰まると数分 503(quorum に届かない)
 # を返し、組みから pack までは約 30 分かかるので、落ちた PUT 1 回で組みを捨てない — 5 回・待ちの計 15.5 分。
 PUT_RETRY_DELAYS = (30.0, 60.0, 120.0, 240.0, 480.0)
+# 生の環境変数を読む foundation の層の module(DOEFF004 — 環境変数の読みは foundation の層だけ)。この道具は doeff を import しない
+# python(boot.sh の `python -I`)でも走るので、package を通さず file の path から読む。
+PROCESS_ENVIRON = (
+    Path(__file__).resolve().parents[1] / "src/doeff_cluster/_foundation/process_environ.py"
+)
+# 環境変数のうち、置き場を解く読み(read_secret・resolve_store)が使う名。
+STORE_ENV_NAMES = (
+    "KUBERNETES_SERVICE_HOST",
+    "KUBERNETES_SERVICE_PORT",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_ENDPOINT_URL_S3",
+    "AWS_ENDPOINT_URL",
+)
+
+
+def _foundation_environ() -> ModuleType:
+    """環境変数を読む foundation の module(PROCESS_ENVIRON)を file の path から読み込むため。"""
+    spec = importlib.util.spec_from_file_location("process_environ", PROCESS_ENVIRON)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f"uv-cache: 環境変数の読み手 {PROCESS_ENVIRON} を読めない")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+ENVIRON = _foundation_environ()
 
 
 def say(line: str) -> None:
@@ -256,8 +286,9 @@ def read_secret(ref: str, keys: tuple[str, ...], sa_dir: Path = SA_DIR) -> dict[
     namespace, _, name = ref.partition("/")
     if not namespace or not name:
         raise SystemExit(f"uv-cache: --secret は <namespace>/<name>: {ref!r}")
-    host = os.environ.get("KUBERNETES_SERVICE_HOST")
-    port = os.environ.get("KUBERNETES_SERVICE_PORT", "443")
+    env = ENVIRON.named_environ(STORE_ENV_NAMES)
+    host = env.get("KUBERNETES_SERVICE_HOST")
+    port = env.get("KUBERNETES_SERVICE_PORT", "443")
     if not host:
         raise SystemExit("uv-cache: KUBERNETES_SERVICE_HOST が無い — Secret を読めない")
     token = (sa_dir / "token").read_text().strip()
@@ -301,9 +332,10 @@ def resolve_store(url: str, secret: str | None) -> Target:
             raise SystemExit(f"uv-cache: Secret {secret} に鍵 {missing} が無い") from None
         endpoint = data.get("endpoint", "")
     else:
-        key, value = os.environ.get("AWS_ACCESS_KEY_ID"), os.environ.get("AWS_SECRET_ACCESS_KEY")
+        env = ENVIRON.named_environ(STORE_ENV_NAMES)
+        key, value = env.get("AWS_ACCESS_KEY_ID"), env.get("AWS_SECRET_ACCESS_KEY")
         credentials = Credentials(key, value) if key and value else None
-        endpoint = os.environ.get("AWS_ENDPOINT_URL_S3") or os.environ.get("AWS_ENDPOINT_URL", "")
+        endpoint = env.get("AWS_ENDPOINT_URL_S3") or env.get("AWS_ENDPOINT_URL", "")
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "s3":
         return Target(url, credentials)
@@ -317,13 +349,21 @@ def resolve_store(url: str, secret: str | None) -> Target:
     return Target(f"{endpoint.rstrip('/')}/{parts.netloc}{parts.path}", credentials)
 
 
-def _connection(url: str, timeout: float) -> tuple[http.client.HTTPConnection, str]:
+@dataclass(frozen=True)
+class Connection:
+    """URL の相手への接続(conn — まだ繋いでいない)と、要求の行に書く path(target — query つき)。"""
+
+    conn: http.client.HTTPConnection
+    target: str
+
+
+def _connection(url: str, timeout: float) -> Connection:
     parts = urllib.parse.urlsplit(url)
     if parts.scheme not in ("http", "https"):
         raise SystemExit(f"uv-cache: URL は http か https: {url!r}")
     cls = http.client.HTTPSConnection if parts.scheme == "https" else http.client.HTTPConnection
     target = parts.path + (f"?{parts.query}" if parts.query else "")
-    return cls(parts.netloc, timeout=timeout), target
+    return Connection(cls(parts.netloc, timeout=timeout), target)
 
 
 class PutError(Exception):
@@ -347,7 +387,8 @@ def _put_once(
         headers = sigv4_headers(
             "PUT", url, region, credentials, datetime.datetime.now(datetime.UTC), headers=headers
         )
-    conn, target = _connection(url, timeout)
+    connection = _connection(url, timeout)
+    conn, target = connection.conn, connection.target
     try:
         with path.open("rb") as body:
             conn.request("PUT", target, body=body, headers=headers)
@@ -409,6 +450,14 @@ def _signed(
     )
 
 
+@dataclass(frozen=True)
+class Answered:
+    """要求 1 つの答え(response — 本体は読み終えた)と、本体の byte の数(count)。"""
+
+    response: http.client.HTTPResponse
+    count: int
+
+
 def _request(
     method: str,
     url: str,
@@ -417,9 +466,10 @@ def _request(
     timeout: float,
     headers: dict[str, str],
     sink: BinaryIO | None = None,
-) -> tuple[http.client.HTTPResponse, int]:
+) -> Answered:
     """要求を 1 つ送り、答えと本体の byte の数を返す(sink が在れば本体を書き、無ければ読み捨てる)。"""
-    conn, target = _connection(url, timeout)
+    connection = _connection(url, timeout)
+    conn, target = connection.conn, connection.target
     try:
         conn.request(method, target, headers=_signed(method, url, credentials, region, headers))
         response = conn.getresponse()
@@ -428,7 +478,7 @@ def _request(
             count += len(chunk)
             if sink is not None:
                 sink.write(chunk)
-        return response, count
+        return Answered(response, count)
     finally:
         conn.close()
 
@@ -445,7 +495,7 @@ def http_download(
     """url の object を dest へ、part byte ごとの Range の GET を workers 本並べて取り寄せる(object の置き場は 1 本の GET では
     disk 1 本の読みの速さしか出ない — 2026-11-01 の測りで 1 本 11.6 MB/s・8 本 39.3 MB/s)。片ごとに ETag が HEAD と同じかを確かめる
     (取り寄せの間に置き直された object を混ぜない)。"""
-    head, _ = _request("HEAD", url, credentials, region, timeout, {})
+    head = _request("HEAD", url, credentials, region, timeout, {}).response
     if head.status != 200:
         raise SystemExit(f"uv-cache: HEAD {url} が HTTP {head.status}")
     size = int(head.getheader("Content-Length", "0"))
@@ -457,7 +507,7 @@ def http_download(
         end = min(start + part, size) - 1
         with dest.open("r+b") as out:
             out.seek(start)
-            response, count = _request(
+            answered = _request(
                 "GET",
                 url,
                 credentials,
@@ -466,6 +516,7 @@ def http_download(
                 {"Range": f"bytes={start}-{end}"},
                 sink=out,
             )
+        response, count = answered.response, answered.count
         if (
             response.status != 206
             or response.getheader("ETag", "") != etag
@@ -666,7 +717,7 @@ def published(
     url: str, credentials: Credentials | None, region: str, timeout: float
 ) -> Published | None:
     """置き場の写しを HEAD で読む(無ければ None)。"""
-    head, _ = _request("HEAD", url, credentials, region, timeout, {})
+    head = _request("HEAD", url, credentials, region, timeout, {}).response
     if head.status == 404:
         return None
     if head.status != 200:
@@ -681,7 +732,7 @@ def sync_into(uv: str, project: Path, cache: Path, venv: Path, tmp: Path) -> dic
     一時 file は渡した dir tmp に書く — 外の /tmp は埋まっていることがある)。落ちれば CalledProcessError。"""
     began = time.monotonic()
     env = {
-        **{k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"},
+        **ENVIRON.child_environ(("VIRTUAL_ENV",), ()),
         "UV_PROJECT_ENVIRONMENT": str(venv),
         "TMPDIR": str(tmp),
     }
@@ -825,14 +876,28 @@ class Ledger:
         self.size: dict[int, int] = {}
         self.nlink: dict[int, int] = {}
         self.seen: dict[int, int] = {}
-        self.pinned: set[int] = set()
+        self.mut_pinned: set[int] = set()
         # venv の持ち分の置き場へ移した byte(close の linked — 予算の和に数えない)。
-        self.linked = 0
+        self.mut_linked = 0
 
-    def add(self, path: Path, dirs: list[os.stat_result], files: list[os.stat_result]) -> None:
-        own = sum(st.st_blocks * 512 for st in dirs)
+    def close(self, kept: Iterable[Path], linked: Iterable[Path] = ()) -> None:
+        """数え終えた後に 1 度: kept(残る項目)の外の持ち分を落とし、cache の外も指す inode を決める。kept の外の項目(期限の消しで
+        消した物)は hardlink の数 1 の file だけを持つので、inode の数えは変わらない。linked(残る venv が symlink で指す項目 — venv の
+        持ち分の置き場)の持ち分は予算の和から外して self.mut_linked に移す。それらと中身を分け合う項目の inode は、cache の外(venv の
+        持ち分)も指す物として予算に数えない。"""
+        keep = set(kept)
+        for path in [p for p in self.own if p not in keep]:
+            self.release(path)
+        self.mut_linked = sum(self.release(path) for path in set(linked) if path in self.own)
+        self.mut_pinned = {ino for ino, seen in self.seen.items() if self.nlink[ino] > seen}
+        self.nlink.clear()
+
+    def counted(self, path: Path, kind: str, last_used: float | None = None) -> Unit:
+        """path を測って消すかを判じる単位にし、その持ち分を数えに載せるため。"""
+        measured = measure(path)
+        own = sum(st.st_blocks * 512 for st in measured.dirs)
         inodes = array.array("q")
-        for st in files:
+        for st in measured.files:
             if st.st_nlink <= 1:
                 own += st.st_blocks * 512
                 continue
@@ -843,27 +908,16 @@ class Ledger:
         self.own[path] = own
         if inodes:
             self.inodes[path] = inodes
-
-    def close(self, kept: Iterable[Path], linked: Iterable[Path] = ()) -> None:
-        """数え終えた後に 1 度: kept(残る項目)の外の持ち分を落とし、cache の外も指す inode を決める。kept の外の項目(期限の消しで
-        消した物)は hardlink の数 1 の file だけを持つので、inode の数えは変わらない。linked(残る venv が symlink で指す項目 — venv の
-        持ち分の置き場)の持ち分は予算の和から外して self.linked に移す。それらと中身を分け合う項目の inode は、cache の外(venv の
-        持ち分)も指す物として予算に数えない。"""
-        keep = set(kept)
-        for path in [p for p in self.own if p not in keep]:
-            self.release(path)
-        self.linked = sum(self.release(path) for path in set(linked) if path in self.own)
-        self.pinned = {ino for ino, seen in self.seen.items() if self.nlink[ino] > seen}
-        self.nlink.clear()
+        return _unit_of(path, kind, measured, last_used)
 
     def holds_outside(self, path: Path) -> bool:
         """path の項目の file のどれかを cache の外(venv)も hardlink で指すか。"""
-        return any(ino in self.pinned for ino in self.inodes.get(path, ()))
+        return any(ino in self.mut_pinned for ino in self.inodes.get(path, ()))
 
     def usage(self) -> int:
         """cache だけが持つ byte の和。"""
         shared = sum(
-            self.size[ino] for ino, seen in self.seen.items() if seen and ino not in self.pinned
+            self.size[ino] for ino, seen in self.seen.items() if seen and ino not in self.mut_pinned
         )
         return sum(self.own.values()) + shared
 
@@ -872,22 +926,30 @@ class Ledger:
         freed = self.own.pop(path, 0)
         for ino in self.inodes.pop(path, ()):
             self.seen[ino] -= 1
-            if self.seen[ino] == 0 and ino not in self.pinned:
+            if self.seen[ino] == 0 and ino not in self.mut_pinned:
                 freed += self.size[ino]
         return freed
 
 
-def measure(
-    path: Path, archive_roots: tuple[str, ...] = (), ledger: Ledger | None = None
-) -> tuple[Tally, bool, float, frozenset[str]]:
+@dataclass(frozen=True)
+class Measured:
+    """measure の答え: 数え(tally)・hardlink を持つ file が在るか(shared)・最後の変更の刻(newest)・中の symlink と .pth の path が
+    指す cache の項目(links)と、予算の数え(Ledger.counted)に載せる dir と file の stat(dirs・files)。"""
+
+    tally: Tally
+    shared: bool
+    newest: float
+    links: frozenset[str]
+    dirs: list[os.stat_result]
+    files: list[os.stat_result]
+
+
+def measure(path: Path, archive_roots: tuple[str, ...] = ()) -> Measured:
     """path の下の file を数え、hardlink を持つ file が在るか・最後の変更の刻・中の symlink と .pth の path が指す cache の項目を返す
-    (link は辿らない)。archive_roots = 項目を並べる cache の dir の path(末尾の / つき — entry_roots_of)。ledger を渡すと、予算の
-    数えに path の持ち分を載せる。"""
+    (link は辿らない)。archive_roots = 項目を並べる cache の dir の path(末尾の / つき — entry_roots_of)。"""
     walked = list(os.walk(path))
     dirs = list(_lstats([path, *(Path(top, name) for top, names, _ in walked for name in names)]))
     files = list(_lstats(Path(top, name) for top, _, names in walked for name in names))
-    if ledger is not None:
-        ledger.add(path, dirs, files)
     linked = [st for st in files if st.st_nlink > 1 and not stat.S_ISLNK(st.st_mode)]
     tally = Tally(
         items=1,
@@ -904,7 +966,7 @@ def measure(
         for entry in [_archive_entry(target, archive_roots)]
         if entry
     )
-    return tally, bool(linked), (dirs[0].st_mtime if dirs else 0.0), links
+    return Measured(tally, bool(linked), (dirs[0].st_mtime if dirs else 0.0), links, dirs, files)
 
 
 def _link_target(link: Path) -> str | None:
@@ -1061,10 +1123,14 @@ def _unit(
     kind: str,
     last_used: float | None = None,
     archive_roots: tuple[str, ...] = (),
-    ledger: Ledger | None = None,
 ) -> Unit:
-    tally, shared, newest, links = measure(path, archive_roots, ledger)
-    return Unit(path, kind, tally, shared, newest if last_used is None else last_used, links)
+    return _unit_of(path, kind, measure(path, archive_roots), last_used)
+
+
+def _unit_of(path: Path, kind: str, measured: Measured, last_used: float | None = None) -> Unit:
+    """測った path を消すかを判じる単位にするため(last_used が None なら最後の変更の刻を使う)。"""
+    newest = measured.newest if last_used is None else last_used
+    return Unit(path, kind, measured.tally, measured.shared, newest, measured.links)
 
 
 def _real_dirs(path: Path) -> list[Path]:
@@ -1183,7 +1249,7 @@ def rest_bytes(cache: Path) -> int:
     repo・索引・interpreter の控え・uv の印と錠と、単位を並べる dir — 予算の数えの消せない分)。"""
     rest = [item for child in sorted(cache.iterdir()) for item in _rest_of(child)]
     return sum(st.st_blocks * 512 for st in _lstats(p for p, deep in rest if not deep)) + sum(
-        measure(p)[0].bytes for p, deep in rest if deep
+        measure(p).tally.bytes for p, deep in rest if deep
     )
 
 
@@ -1301,7 +1367,7 @@ def trim(
     return {
         "bytes": size_budget,
         "fixed": fixed,
-        "linked": ledger.linked,
+        "linked": ledger.mut_linked,
         "usage-before": start,
         "usage-after": usage,
         "freed": start - usage,
@@ -1315,13 +1381,22 @@ def linked_entries(owners: Iterable[Unit], entry_bytes: dict[str, int]) -> froze
     return frozenset(entry for unit in owners for entry in unit.links if entry in entry_bytes)
 
 
+@dataclass(frozen=True)
+class LinkTrim:
+    """trim_links の答え: 消した venv(gone)・残る venv が指す項目(entries)・答えに載せる数え(answer)。"""
+
+    gone: list[Unit]
+    entries: frozenset[str]
+    answer: dict[str, object]
+
+
 def trim_links(
     owners: list[Unit],
     entry_bytes: dict[str, int],
     limit: int | None,
     floor_cutoff: float,
     used: list[str] | None,
-) -> tuple[list[Unit], frozenset[str], dict[str, object]]:
+) -> LinkTrim:
     """venv の持ち分の置き場(頭の註 — owners = 残る venv と --links の venv が指す項目)の byte を数え、limit を越えていれば、最後に
     使った刻の古い --venvs の venv(floor_cutoff より前に使い、どの process も使っていない物)から、和が limit に収まるまで消す
     (limit が None なら数えるだけ)。返す物 = 消した venv・残る venv が指す項目・答え。"""
@@ -1340,7 +1415,7 @@ def trim_links(
             alive.remove(unit)
             entries = linked_entries(alive, entry_bytes)
             usage = sum(entry_bytes[entry] for entry in entries)
-    return (
+    return LinkTrim(
         gone,
         entries,
         {
@@ -1427,13 +1502,14 @@ def gc(
         # checkout)は消さない。
         first = {unit.path for units in gone.values() for unit in units}
         # 残る venv と --links の venv が指す項目は venv の持ち分の置き場(頭の註)— 上限を越えていれば古い venv から消す。
-        dropped, linked, links = trim_links(
+        trimmed_links = trim_links(
             [unit for unit in [*before.venvs, *before.holders] if unit.path not in first],
             {str(unit.path): unit.tally.bytes for unit in [*before.archives, *before.checkouts]},
             linked_limit,
             time.time() - floor_days * 86400,
             used,
         )
+        dropped, linked, links = trimmed_links.gone, trimmed_links.entries, trimmed_links.answer
         gone["venvs"] = [*gone["venvs"], *dropped]
         first |= {unit.path for unit in dropped}
         result["links"] = links
@@ -1452,9 +1528,8 @@ def gc(
         removed_paths = {unit.path for units in gone.values() for unit in units}
         # 予算を数える時は、venv を消して変わった hardlink の数で、残る cache の項目の持ち分を数え直す。
         ledger = Ledger() if size_budget is not None else None
-        archives = [
-            _unit(entry, "archive", ledger=ledger) for entry in children(cache, ARCHIVE_PREFIX)
-        ]
+        counted = ledger.counted if ledger is not None else _unit
+        archives = [counted(entry, "archive") for entry in children(cache, ARCHIVE_PREFIX)]
         expired = [
             unit for unit in archives if is_doomed(unit, cutoff, used, kept) and remove(unit)
         ]
@@ -1464,12 +1539,12 @@ def gc(
             survivors = [
                 *(unit for unit in archives if unit.path not in expired_paths),
                 *(
-                    _unit(unit.path, unit.kind, unit.last_used, ledger=ledger)
+                    counted(unit.path, unit.kind, unit.last_used)
                     for unit in [*before.environments, *before.temporaries, *before.checkouts]
                     if unit.path not in removed_paths
                 ),
                 *(
-                    _unit(unit.path, unit.kind, ledger=ledger)
+                    counted(unit.path, unit.kind)
                     for unit in before.sdists
                     if unit.path not in removed_paths
                 ),
@@ -1756,7 +1831,7 @@ def store_verb(args: argparse.Namespace, cache: Path, target: Target) -> dict[st
                 every_seconds=args.every_seconds,
                 min_free=int(args.min_free_gib * (1 << 30)),
                 force=args.force,
-                uv=os.environ.get("UV", "").strip() or "uv",
+                uv=ENVIRON.named_environ(("UV",)).get("UV", "").strip() or "uv",
             )
 
 
@@ -1861,6 +1936,8 @@ def main(argv: list[str] | None = None) -> int:
             )
     args = parser.parse_args(argv)
     cache: Path = args.cache.resolve()
+    # この process の環境変数の全部(drop も add も無い組 — upkeep の値は UpkeepSettings.from_env が読む)。
+    environ = ENVIRON.child_environ((), ())
     match args.verb:
         case "pack":
             answer(pack(cache, args.out))
@@ -1868,10 +1945,10 @@ def main(argv: list[str] | None = None) -> int:
             answer(store_verb(args, cache, resolve_store(args.url, args.secret)))
         case "upkeep" if args.repeat:
             say(
-                f"keep: {json.dumps(keep(cache, UpkeepSettings.from_env(dict(os.environ))), ensure_ascii=False)}"
+                f"keep: {json.dumps(keep(cache, UpkeepSettings.from_env(environ)), ensure_ascii=False)}"
             )
         case "upkeep":
-            answer(upkeep(cache, UpkeepSettings.from_env(dict(os.environ))))
+            answer(upkeep(cache, UpkeepSettings.from_env(environ)))
         case "count" | "gc":
             roots = [r.resolve() for r in args.venvs if r.is_dir()]
             answer(

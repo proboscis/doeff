@@ -23,6 +23,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from doeff_cluster._foundation.process_environ import named_environ
 from doeff_cluster._worker.core.job_cgroup import closing_argv, grouped_argv
 
 from doeff import run
@@ -47,7 +48,7 @@ SETTLE_SECONDS = 60
 
 def _delegated() -> Path | None:
     """本物の検を走らせられる書ける委ねられた cgroup(子に memory を掛けた層の根)。無ければ None。"""
-    named = os.environ.get("DOEFF_WORKER_CGROUP_DIR")
+    named = named_environ(("DOEFF_WORKER_CGROUP_DIR",)).get("DOEFF_WORKER_CGROUP_DIR")
     if not named or not os.access(os.path.join(named, "cgroup.procs"), os.W_OK):
         return None
     if "memory" not in Path(named, "cgroup.subtree_control").read_text(encoding="utf-8").split():

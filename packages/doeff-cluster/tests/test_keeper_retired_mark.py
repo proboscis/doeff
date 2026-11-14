@@ -12,10 +12,11 @@ DOEFF_WORKER_RETIRED_FILE)。
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from pathlib import Path
+
+from doeff_cluster._foundation.process_environ import child_environ, named_environ
 
 BOOT = Path(__file__).resolve().parents[1] / "deploy" / "boot.sh"
 FUNCTIONS = ("keeper_log", "keeper_short", "keeper_alive", "keeper_retire")
@@ -62,8 +63,8 @@ def test_the_keeper_puts_the_retired_mark_where_the_generation_reads_it(tmp_path
             + 'printf "%s\\n" "$DOEFF_WORKER_RETIRED_FILE"\n'
         )
         env = {
-            **os.environ,
-            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            **child_environ((), ()),
+            "PATH": f"{fake_bin}:{named_environ(('PATH',))['PATH']}",
             "WORK_DIR": str(tmp_path / "work"),
             "COORDINATOR_URL": "http://coordinator.test",
             "WORKER_NAME": "w",
@@ -84,6 +85,6 @@ def test_the_keeper_puts_the_retired_mark_where_the_generation_reads_it(tmp_path
 def test_a_generation_outside_the_keeper_gets_no_retired_mark(tmp_path: Path) -> None:
     # keeper の世代でない worker(DOEFF_WORKER_GENERATION が無い)は印を読まない — 退きの無い worker が書き続ける今までの形。
     script = f'DOEFF_WORKER_BOOT_FILE="{tmp_path}/boot"\n' + _retired_export() + 'printf "[%s]\\n" "${DOEFF_WORKER_RETIRED_FILE:-}"\n'
-    env = {key: value for key, value in os.environ.items() if key not in ("DOEFF_WORKER_GENERATION", "DOEFF_WORKER_RETIRED_FILE")}
+    env = child_environ(("DOEFF_WORKER_GENERATION", "DOEFF_WORKER_RETIRED_FILE"), ())
     done = subprocess.run(["sh", "-c", script], env=env, capture_output=True, text=True, timeout=10, check=True)
     assert done.stdout.strip() == "[]", done.stdout
