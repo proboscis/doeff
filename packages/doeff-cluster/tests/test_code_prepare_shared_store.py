@@ -103,6 +103,14 @@ class _Bucket:
             return {name: data for name, (data, _) in self.objects.items() if name.endswith(".code")}
 
 
+@dataclass(frozen=True)
+class _Target:
+    """要求が指す object の名(name — 空なら bucket の一覧)と query(query)。"""
+
+    name: str
+    query: dict[str, list[str]]
+
+
 def _handler(bucket: _Bucket) -> type[BaseHTTPRequestHandler]:
     """bucket を答える HTTP の答え手(path の形の /<bucket>/<object> の GET・PUT と /<bucket>?list-type=2 の一覧)を作るため。"""
 
@@ -118,7 +126,7 @@ def _handler(bucket: _Bucket) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
             self.wfile.write(body)
 
-        def _target(self) -> tuple[str, dict[str, list[str]]] | None:
+        def _target(self) -> _Target | None:
             """署名の鍵の id を検め(違えば 403 を答えて None)、object の名と query を返す。"""
             if f"Credential={_KEY_ID}/" not in self.headers.get("Authorization", ""):
                 self._answer(403)
@@ -128,13 +136,13 @@ def _handler(bucket: _Bucket) -> type[BaseHTTPRequestHandler]:
             if path != f"/{_BUCKET}" and not path.startswith(f"/{_BUCKET}/"):
                 self._answer(404)
                 return None
-            return path[len(f"/{_BUCKET}/"):], urllib.parse.parse_qs(parts.query)
+            return _Target(path[len(f"/{_BUCKET}/"):], urllib.parse.parse_qs(parts.query))
 
         def do_GET(self) -> None:
             target = self._target()
             if target is None:
                 return
-            name, query = target
+            name, query = target.name, target.query
             if not name:
                 prefix = query.get("prefix", [""])[0]
                 with bucket.lock:
@@ -161,7 +169,7 @@ def _handler(bucket: _Bucket) -> type[BaseHTTPRequestHandler]:
             target = self._target()
             if target is None:
                 return
-            name, _ = target
+            name = target.name
             data = self.rfile.read(int(self.headers.get("Content-Length", "0")))
             with bucket.lock:
                 bucket.requests = (*bucket.requests, ("PUT", name))

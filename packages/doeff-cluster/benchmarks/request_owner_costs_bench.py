@@ -18,7 +18,7 @@ import cProfile
 import pstats
 import time
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from functools import partial
 
 import hy  # noqa: F401 — loads the Hy modules below
@@ -71,7 +71,15 @@ def settled(queued: int, held: int, board: int) -> ClusterState:
     return run(tick(state, NOW, TIMING))
 
 
-def reply_seconds(state: ClusterState, method: str, path: str, query: dict, body: object, repeat: int) -> tuple[float, int]:
+@dataclass(frozen=True)
+class ReplyCost:
+    """One request's best time (seconds) and the reply's bytes (size)."""
+
+    seconds: float
+    size: int
+
+
+def reply_seconds(state: ClusterState, method: str, path: str, query: dict, body: object, repeat: int) -> ReplyCost:
     """One request's respond + spelling + encoding (the coordinator's work for it), and the reply's bytes."""
     request = run(http_request(method, path, query, body, actor="bench"))
 
@@ -81,7 +89,7 @@ def reply_seconds(state: ClusterState, method: str, path: str, query: dict, body
         return len(data)
 
     size = once()
-    return best_seconds(once, repeat), size
+    return ReplyCost(best_seconds(once, repeat), size)
 
 
 def heartbeat_body(name: str) -> dict:
@@ -155,16 +163,16 @@ def main() -> None:
     print("replies (respond + spell + encode) by the reply's size — queued 170, rows 1700")
     for board in (6000, 12000, 24000):
         state = settled(170, 1700, board)
-        seconds, size = reply_seconds(state, "GET", "/board", {"prefix": "semaphore/hold-node-c-"}, None, repeat)
-        print(f"  board rows {board:>6}  GET /board s {seconds:.5f}  bytes {size}")
+        cost = reply_seconds(state, "GET", "/board", {"prefix": "semaphore/hold-node-c-"}, None, repeat)
+        print(f"  board rows {board:>6}  GET /board s {cost.seconds:.5f}  bytes {cost.size}")
     for held in (1700, 3400):
         state = settled(170, held, 100)
-        seconds, size = reply_seconds(state, "GET", "/state", {}, None, repeat)
-        print(f"  task rows {len(state.tasks.rows()):>6}  GET /state s {seconds:.5f}  bytes {size}")
+        cost = reply_seconds(state, "GET", "/state", {}, None, repeat)
+        print(f"  task rows {len(state.tasks.rows()):>6}  GET /state s {cost.seconds:.5f}  bytes {cost.size}")
     for queued in (170, 340):
         state = settled(queued, 1700, 100)
-        seconds, size = reply_seconds(state, "POST", "/heartbeat", {}, heartbeat_body("node-c"), repeat)
-        print(f"  queued {queued:>5}  POST /heartbeat s {seconds:.5f}  bytes {size}")
+        cost = reply_seconds(state, "POST", "/heartbeat", {}, heartbeat_body("node-c"), repeat)
+        print(f"  queued {queued:>5}  POST /heartbeat s {cost.seconds:.5f}  bytes {cost.size}")
 
     if args.profile:
         state = settled(170, 1700, 24000)
