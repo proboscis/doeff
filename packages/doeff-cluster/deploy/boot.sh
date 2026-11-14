@@ -15,7 +15,8 @@
 #                      import の根(`,` で並べる・既定 .)・
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
 #                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す)・
-#                      WORKER_ENV_ROOTS_GIB / WORKER_ENV_MIN_FREE_GIB = 実行環境の root の置き場の 2 つの量(GiB の整数・下の既定の註))
+#                      WORKER_ENV_ROOTS_GIB / WORKER_ENV_MIN_FREE_GIB = 実行環境の root の置き場の 2 つの量(GiB の整数・下の既定の註)・
+#                      WORKER_ROOT_LINK_DIRS = 掃除が link の先の root を消さない dir(下の註))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
 #   ROLE=prepare     … WORKER_DOEFF_COMMIT の自己起動の root を展開して準備する(.pyc の焼きまで)だけで、何も起こさずに root の path を
@@ -1304,6 +1305,11 @@ esac
 #   WORKER_ENV_MIN_FREE_GIB 共有の disk の空きの最低(既定 25)— 割った時も同じ候補の root を古い順に、空きが最低へ戻るまで消す
 #                           (#4051)。戻るまでは準備を disk-full で断り、heartbeat で exhausted を名乗る(coordinator は準備済みでない
 #                           env の task を置かない)。
+# 掃除は、同じ Pod の中で worker の外の使い手(worker が起こしていない process — /proc で読む)が今使う root も消さない。process の
+# 無い間も残す root は、その root を指す symlink を置いた dir で渡す:
+#   WORKER_ROOT_LINK_DIRS   下に置いた symlink の先の root を消さない dir(`,` で並べる・既定は空 = 読まない)。機体の配備が root の
+#                           venv の bin を link で指す設定の dir の木を置く時に、その木の dir を書く(link の先の root を消すと、次に
+#                           その木から起きる物が起動のたびに落ちる)。
 env_roots_gib=${WORKER_ENV_ROOTS_GIB:-20}
 env_min_free_gib=${WORKER_ENV_MIN_FREE_GIB:-25}
 for amount in "WORKER_ENV_ROOTS_GIB=$env_roots_gib" "WORKER_ENV_MIN_FREE_GIB=$env_min_free_gib"; do
@@ -1335,4 +1341,5 @@ exec hy -m doeff_cluster._worker.entry.main --coordinator "$COORDINATOR_URL" --n
   --import-roots "${CODE_IMPORT_ROOTS:-.}" \
   --repo-keys "$repo_keys" --repo-access "$repo_access_script" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
   --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \
+  --root-link-dirs "${WORKER_ROOT_LINK_DIRS:-}" \
   --code-store "$DOEFF_HY_CODE_STORE" --uv-cache "$DOEFF_UV_CACHE_DIR"

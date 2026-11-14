@@ -22,7 +22,8 @@
 ;;;     worker が自分で job を止めた)。task の中でも同期の effect は scheduler の thread を占めるので、木を相手にする effect(MeasureTree・
 ;;;     RemoveTree・bytecode の保存先の様子つきの歩き StatTree)は本番の offloaded-tree-handler が thread で待つ(
 ;;;     保存先を WalkTree と file ごとの StatPath で歩いた掃除が node-h で scheduler を 10〜19 秒止めた)。
-;;;     選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)で行い、
+;;;     選びは数えの答えが届いた拍で、その時の固定(宣言の root・走り中の process・準備中・温める表)と、同じ Pod の中の worker の外の
+;;;     使い手(/proc の走っている process の作業 dir・引数・maps と、settings.link-dirs の下の link の先 — root-users)の root で行い、
 ;;;     選んだ root はその拍で . で始まる脇の名へ退けてから消す(消している間は選びにも完成品の観測にも出ない)。走っている掃除は同時に 1 つ。
 ;;;     固定は世代ごとに分け合う dir の root-pins/ へ file で知らせ合い、掃除はまだ走っている他の世代(状態の dir が在る)の固定も消さない
 ;;;     (AL-D2g)。
@@ -39,7 +40,7 @@
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_time [WaitWithin])
-(import doeff_core_effects [PathKind FileFailed StatPath ReadText WriteText ListDirectory StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree
+(import doeff_core_effects [PathKind PathStat FileFailed StatPath ReadText WriteText ListDirectory WalkTree StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree
                            TryLock LockHeld LockBusy ReleaseLock]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
@@ -59,7 +60,7 @@
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MIRROR-UNUSED-SECONDS unused-mirror-names MemoryUse LayerMemoryUse MemoryUnread WarmRoom
                                               LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal
-                                              DEFAULT-BUILD-MEMORY-BYTES layer-need])
+                                              DEFAULT-BUILD-MEMORY-BYTES layer-need used-root-keys ROOT-NAME-PATTERN])
 (import doeff_cluster._worker.core.env_rules [ReadyAnswer PrepareRoom launch-order prepare-request prepare-argv answer-of-text prepare-outcome
                                              overdue-failure root-project declared-project oom-kills-of memory-killed-failure])
 (import doeff_cluster._worker.core.worker_due [due-after])
@@ -68,10 +69,9 @@
 
 
 (val ENV-TOOL "doeff_cluster._worker.entry.env_tool")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
-(val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 (val PRUNE-EVERY-MS 1800000)    ; uv の cache の prune を起こし直す間隔の下限(node の disk を他の物が使うと掃除では下限に戻らず、拍ごとに起き続けるため)
 ;; 掃除の頭の行の名(#3713 — 名 + 欄の形: free-bytes = 共有の disk の空き・roots-bytes = roots の合計(hardlink を重ねて数える)・
-;; cap-bytes = roots の合計の上限・pinned = 固定の数・candidates = 消してよい root の数・chosen = 選んだ数 — #3732・walked = この数えで
+;; cap-bytes = roots の合計の上限・pinned = 固定の数(worker の外の使い手の root も入る)・in-use = worker の外の使い手の root の数(root-users)・candidates = 消してよい root の数・chosen = 選んだ数 — #3732・walked = この数えで
 ;; 木を歩いた root の数 — 前の数えから大きさを使い回した root は数えない)。
 (val SWEEP-LOG "worker: 掃除の選び")
 ;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
@@ -149,7 +149,11 @@
   (setv #^ (| str None) shared None)
   (setv #^ (| str None) prepare-procs None)
   (setv #^ (| str None) prepare-layer-dir None)
-  (setv #^ (| str None) service-procs None))
+  (setv #^ (| str None) service-procs None)
+  ;; root の worker の外の使い手の読み(掃除の選びの拍 — root-users): proc-dir = 走っている process を読む /proc の置き場・link-dirs =
+  ;; 下に置いた symlink の先の root を消さない dir の列(機体の配備が置く設定の dir の木 — 値は main の --root-link-dirs・空 = 読まない)。
+  (setv #^ str proc-dir "/proc")
+  (setv #^ (get tuple #(str ...)) link-dirs #()))
 
 
 (defrecord PendingEnv
@@ -893,22 +897,75 @@
   (not (isinstance moved FileFailed)))
 
 
+(defk process-paths [proc-dir pid]
+  {:pre [(: proc-dir str) (: pid str)] :post [(: % tuple)]}
+  "走っている process 1 つが使う path(作業 dir の実の path・引数の絶対 path・maps の file の path)を読むため。venv の bin/python は
+   uv の Python への link なので、実行 file は数えず、引数と maps で見る。読めない物(終わった process・別の uid の maps)は飛ばす。"
+  (val base (+ proc-dir "/" pid))
+  (<- cwd (StatPath (+ base "/cwd")))
+  (<- argv (ReadText (+ base "/cmdline")))
+  (<- maps (ReadText (+ base "/maps")))
+  (tuple (+ (if (and (isinstance cwd PathStat) (!= cwd.kind PathKind.MISSING)) [cwd.real-path] [])
+            (if (isinstance argv str) (lfor arg (.split argv "\x00") :if (.startswith arg "/") arg) [])
+            (if (isinstance maps str)
+                (lfor line (.splitlines maps) :if (in " /" line) (.removesuffix (cut line (+ (.find line " /") 1) None) " (deleted)"))
+                []))))
+
+
+(defk link-targets [place]
+  {:pre [(: place str)] :post [(: % tuple)]}
+  "dir place の下の symlink の先の実の path を読むため(link の先の dir へは降りない・先の無い link と読めない dir は飛ばす)。"
+  (<- entries (WalkTree place))
+  (var targets #())
+  (when (not (isinstance entries FileFailed))
+    (for [entry entries]
+      (when (= entry.kind PathKind.SYMLINK)
+        (<- seen (StatPath (+ place "/" entry.name)))
+        (when (and (isinstance seen PathStat) (!= seen.kind PathKind.MISSING))
+          (:= targets (+ targets #(seen.real-path)))))))
+  targets)
+
+
+(defk root-users [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % frozenset)]}
+  "掃除の選びの拍で、worker の外の使い手が今使っている root のキーを読むため: 同じ Pod の中の走っている process(settings.proc-dir の
+   数字の名の dir — worker が起こしていない長い命令の監督・CLI・hook も入る)と、settings.link-dirs の下の symlink の先。判じは
+   env_upkeep.used-root-keys。/proc が読めなければ process の分は空(link の分は読む)。"
+  (<- roots str (roots-dir settings))
+  (<- real (StatPath roots))
+  (val places (if (isinstance real PathStat) #(roots real.real-path) #(roots)))
+  (<- listed (ListDirectory settings.proc-dir))
+  (var paths #())
+  (when (not (isinstance listed FileFailed))
+    (for [entry listed]
+      (when (.isdigit entry.name)
+        (<- used tuple (process-paths settings.proc-dir entry.name))
+        (:= paths (+ paths used)))))
+  (for [place settings.link-dirs]
+    (<- linked tuple (link-targets place))
+    (:= paths (+ paths linked)))
+  (<- keys frozenset (used-root-keys places paths))
+  keys)
+
+
 (defk start-removing [settings measured busy free started-ms]
   {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int) (: started-ms int)] :post [(: % SweepRemoving)]}
-  "数えの答えが届いた時に、その時の固定(busy — 数えの間に固定になった root も入る・root の置き場を分け合う他の世代の固定 — AL-D2g)と、roots の合計の上限・共有の disk の空き free と
+  "数えの答えが届いた時に、その時の固定(busy — 数えの間に固定になった root も入る・root の置き場を分け合う他の世代の固定 — AL-D2g・Pod の中の worker の外の使い手の root — root-users)と、roots の合計の上限・共有の disk の空き free と
    その最低で消す root を選び(#4051)、脇へ退け、消しをループの外の task として起こすため。答え = 走っている消しの記録。"
   (<- total int (roots-bytes measured.infos))
   (val cap settings.roots-cap-bytes)
   (val min-free settings.min-free-bytes)
   ;; root の置き場を分け合う他の世代の固定も消さない(AL-D2g)。
   (<- others frozenset (others-pins settings))
-  (val held (| busy others))
+  ;; worker の外の使い手(同じ Pod の走っている process・設定の dir の link)が今使う root も消さない — 選ぶこの拍で読む。
+  (<- users frozenset (root-users settings))
+  (val held (| busy others users))
   (<- candidates tuple (sweep-candidates measured.infos held))
   (<- chosen tuple (sweep-choice measured.infos held cap free min-free))
   ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・空きの最低・roots の合計・上限・固定の数・候補の数・選んだ数・木を歩いた
   ;; root の数。
   (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len held)
-            :candidates (len candidates) :chosen (len chosen) :walked measured.walked))
+            :in-use (len users) :candidates (len candidates) :chosen (len chosen) :walked measured.walked))
   (<- now-ms int (now-epoch-ms))
   (var aside #())
   (for [key chosen]

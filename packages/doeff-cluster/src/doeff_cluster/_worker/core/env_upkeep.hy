@@ -5,6 +5,8 @@
 ;;;   sweep-candidates 掃除で消してよい root の列(古い順 — 選びと掃除の頭の行が読む)
 ;;;   sweep-choice     roots の合計が上限を越えた時か、共有の disk の空きが最低を割った時に消す root の列(固定・project ごとの新しい 2 つ・
 ;;;                    worker が作っていない dir は消さない・上限を越えた時は上限の SWEEP-TARGET-RATIO まで下げる)
+;;;   used-root-keys   Pod の中の worker の外の使い手(走っている process の作業 dir・引数・読み込んだ file と、設定の dir の link の先)が
+;;;                    指す root のキー(掃除の固定に足す — worker が起こしていない使い手の root を消さない)
 ;;;   sweep-wanted     掃除の係が拍を求めているか(heartbeat の観測 EnvDisk に載せる — worker の判断はこれで SweepEnvs を撃つ)
 ;;;   sweep-due        新しい掃除(数え)を始める時か(まだ数えていない・完成した root の集合が変わった・空きが最低を割っているかが数えた時と
 ;;;                    違う・空きが割ったままで固定が変わった・上限を越えたままで固定が変わったか前の掃除の終わりから SWEEP-EVERY-MS —
@@ -34,6 +36,7 @@
 (import re)
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
 (import doeff_cluster._worker.core.eviction_rules [stat-bytes])
+(import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 
 ;; 既定の値(設計 U10 — 実測で直す)。
 (val WHEEL-UNUSED-SECONDS (* 7 24 3600)) ; どの root からも使われず 7 日経った native の wheel を消す
@@ -51,6 +54,8 @@
 ;; root 1 つですぐ越え、「1 つ消す → 越える」の往復のたびに数えと消しが node の共有の disk を取り合った(node-h 2026-10-16 — 24 時間の約 36% が
 ;; 掃除中・20〜60 秒おきに全 root を数え直した)。95% まで下げて、次に越えるまで root 数個分(上限 20 GiB で約 1 GiB)の余白を置く。
 (val SWEEP-TARGET-RATIO 0.95)
+;; worker の作る root の dir の名の形(24 字の 16 進 — env-<名> のキーの <名>)。
+(val ROOT-NAME-PATTERN (re.compile r"[0-9a-f]{24}"))
 
 
 (defrecord RootInfo
@@ -127,6 +132,23 @@
   {:pre [(: cap int)] :post [(: % int)] :tags {:context "worker" :role "judgment"}}
   "roots の合計が上限 cap を越えた時に、消して下げる先(byte — 上限の SWEEP-TARGET-RATIO)を返すため。"
   (int (* cap SWEEP-TARGET-RATIO)))
+
+
+(defk used-root-keys [places paths]
+  {:pre [(: places tuple) (: paths tuple)] :post [(: % frozenset)] :tags {:context "worker" :role "judgment"}}
+  "worker の外の使い手が今使っている root のキー(env-<名>)の集合を求めるため(掃除が消してはいけない — 掃除の固定の集合
+   policy.pinned-env-keys は worker の起こした process と宣言しか知らず、同じ Pod の中で root の venv を使う worker の起こしていない
+   process〔長い命令の監督・CLI・hook〕と設定の dir の link が指す root を消した — 2026-11-13、監督が終わりの知らせの前の遅い import で
+   ModuleNotFoundError で落ちた)。places = root の置き場の dir の綴り(書いたままの綴りと実の path — 引数は書いたまま、作業 dir と
+   link の先は実の path で出る)・paths = 使い手の path(process の作業 dir・引数の絶対 path・maps の file の path・link の先)。
+   置き場の直下の名が root の名の形(ROOT-NAME-PATTERN)の物だけを数え、脇へ退けた名(. で始まる)は数えない。"
+  (val prefixes (tuple (gfor place (frozenset places) :if place (+ (.rstrip place "/") "/"))))
+  (frozenset (gfor path paths
+                   prefix prefixes
+                   :if (.startswith path prefix)
+                   :setv name (get (.split (cut path (len prefix) None) "/" 1) 0)
+                   :if (.fullmatch ROOT-NAME-PATTERN name)
+                   (+ ENV-KEY-PREFIX name))))
 
 
 (defk sweep-candidates [roots pinned]
