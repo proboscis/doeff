@@ -486,10 +486,12 @@ fn the_hook_lints_only_the_staged_paths_with_the_rules_judged_from_one_file() {
     }
 }
 
-/// Whole-repo rules stay deferred for source-only commits. Changing a declaration can introduce
-/// findings in untouched sources, so both an architecture edit and a layer ban must stop.
+/// Failure case (2026-11-15): a declaration change measured the whole repo on both trees in the hook (about 7 CPU minutes and 2.9 GB per child in agora-controllers;
+/// commits waited 46-57 minutes for memory on a shared machine). The hook measures only the staged paths for a declaration change too: an architecture edit and a layer
+/// ban whose hits are in untouched sources pass the hook (the merge gate's `--split-rules` promotes them to the whole-repo comparison -- declaration_changed is true there),
+/// and the layer ban still stops once the commit stages the file it hits.
 #[test]
-fn declaration_changes_check_the_whole_repo_but_source_changes_stay_focused() {
+fn declaration_changes_measure_only_the_staged_paths() {
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"Fencing clause.\"\n  #())\n", JUDGED));
@@ -503,7 +505,8 @@ fn declaration_changes_check_the_whole_repo_but_source_changes_stay_focused() {
     write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 1, "{}", stderr);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(!stderr.contains("lease_invariants"), "measured an untouched file: {}", stderr);
 
     let dir = baseline_repo();
     let root = dir.path();
@@ -515,13 +518,17 @@ fn declaration_changes_check_the_whole_repo_but_source_changes_stay_focused() {
     write(root, "architecture.hy", &forbidding);
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &[]);
+    assert_eq!(code, 0, "{}", stderr);
+    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #(1))\n", JUDGED));
+    git(root, &["add", "app/queue/core/rule.hy"]);
+    let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("app/queue/core/rule.hy"), "{}", stderr);
 }
 
-/// Failure case (2026-11-13): a declaration change measures the whole repo, and an error outside the registry that main already has in a file the commit does not touch
-/// (DOEFF016 here; DOEFF004 and DOEFF119 in agora-controllers) stopped every declaration change, even a comment-only one -- the errors were not compared with the HEAD version.
-/// It passes now; the same error still stops once the commit touches its file, and an error the declaration itself makes in an untouched file still stops
-/// (declaration_changes_check_the_whole_repo_but_source_changes_stay_focused).
+/// Failure case (2026-11-13): when a declaration change measured the whole repo, an error outside the registry that main already has in a file the commit does not touch
+/// (DOEFF016 here; DOEFF004 and DOEFF119 in agora-controllers) stopped every declaration change, even a comment-only one. It passes; the same error still stops once the
+/// commit touches its file (declaration_changes_measure_only_the_staged_paths).
 #[test]
 fn a_declaration_change_does_not_stop_on_errors_main_already_has_in_untouched_files() {
     let dir = baseline_repo();
@@ -539,7 +546,7 @@ fn a_declaration_change_does_not_stop_on_errors_main_already_has_in_untouched_fi
     git(root, &["add", "app/queue/tool.py"]);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("violation in repo after declaration change: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
+    assert!(stderr.contains("violation in staged file: app/queue/tool.py:1: DOEFF016"), "{}", stderr);
 }
 
 /// A repo `repo` next to a path dependency `lib` (`[tool.uv.sources] lib = { path = "../lib" }`) whose effect `lib.Op` is re-exported from `lib._effects`, a lower-layer module;

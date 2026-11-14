@@ -139,7 +139,8 @@ pub struct CommitHookSection {
     /// Upper limit per child linter run (seconds, default 20). If exceeded, it is treated as unmeasurable and does not block.
     #[serde(default)]
     pub timeout_s: Option<u64>,
-    /// Upper limit per child linter run of a declaration change (seconds; the whole repo with every enabled rule on both trees). If absent, the same as timeout_s.
+    /// A retired key -- formerly the limit for a declaration change, when the hook measured the whole repo on both trees. It is no longer read, and if left in place the
+    /// hook announces it in one line (a declaration change is measured on the staged paths under timeout_s). Only the shape is kept so that old configs do not become unreadable.
     #[serde(default)]
     pub declaration_timeout_s: Option<u64>,
 }
