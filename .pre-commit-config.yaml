@@ -89,6 +89,18 @@ repos:
         types: [text]
         pass_filenames: true
 
+      # Do not put tracker ids (kind 2), provenance lines such as `maintainer <date>` or `decision <date>` (kind 1) or personal
+      # paths and secrets (kind 4) into the public repo. The same check the daily `leftovers` stage runs on the whole tree
+      # (scripts/find_internal_leftovers.py --fail-on 1,2,4), applied here to the staged files only, so that the commit that writes
+      # such a line is stopped instead of the next daily run turning red. Rewrite the line, or add a KEEP row with the reason it stays.
+      # The plain commit hook (scripts/git-hooks/pre-commit) fires this item by id.
+      - id: internal-leftovers
+        name: no tracker ids, provenance lines or personal paths (kinds 1, 2, 4 of find_internal_leftovers)
+        entry: uv run --no-project --python 3.12 python scripts/find_internal_leftovers.py --jobs 1 --fail-on 1,2,4 --files
+        language: system
+        types: [text]
+        pass_filenames: true
+
       # ADR-DOE-ENFORCE-001 R5/R7/R9: enforcement assets and the ledger move in the same commit.
       # Home of the count = scripts/check_enforcement_ledger.py (stdlib only). The ledger is generated —
       # if this fails, rebuild it with `make enforcement-ledger`, check the removed items, and stage it.

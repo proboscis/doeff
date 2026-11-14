@@ -75,6 +75,18 @@ if [ -f "$TOP/scripts/check_no_operator_quotes.py" ]; then
   }
 fi
 
+# (3c) Tracker ids, provenance lines (`maintainer <date>`, `decision <date>`) and personal paths -- kinds 1, 2 and 4 of
+# scripts/find_internal_leftovers.py, which the daily leftovers stage checks on the whole tree. The entry is the single id
+# internal-leftovers of .pre-commit-config.yaml, and it looks only at the staged files, so the commit that writes such a line is
+# stopped here instead of turning the next daily run red. Old snapshots without the entry are not blocked.
+if [ -f "$RULES" ] && grep -q 'id: internal-leftovers' "$TOP/.pre-commit-config.yaml" 2>/dev/null; then
+  (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run internal-leftovers) || {
+    echo "doeff commit hook: a staged file carries a tracker id, a provenance line or a personal path (see the output above)." \
+      "Rewrite the line, or add a KEEP row in scripts/find_internal_leftovers.py with the reason it stays, and stage again." >&2
+    exit 1
+  }
+fi
+
 # (3) Authoring-time reconciliation of the enforcement ledger.
 CHECK="$TOP/scripts/check_enforcement_ledger.py"
 # Old snapshots lack the mechanism -- not blocked.

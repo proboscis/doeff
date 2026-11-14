@@ -34,7 +34,7 @@ addresses, measurement logs a README relies on) are marked as kept and left out 
 Usage::
 
     uv run --script scripts/find_internal_leftovers.py [ROOT] [--table FILE] [--format tsv|md]
-        [--top N] [--jobs N] [--fail-on KINDS]
+        [--top N] [--jobs N] [--fail-on KINDS] [--files PATH ...]
 
 The summary (counts per kind, per sub-kind, per area and per directory) is written to stdout as
 markdown. ``--table FILE`` writes every hit (kind, sub-kind, file, line, matched part, kept) to
@@ -46,6 +46,12 @@ every hit of those kinds that ``KEEP`` does not keep is written to stderr, and t
 when there is one. The daily verification of main runs ``--fail-on 1,2,4`` as its ``leftovers``
 stage (declared outside this repository), so that a quote, a tracker id or a personal path that comes
 back into the tree turns that run red.
+
+``--files PATH ...`` reads only the named files (paths relative to ROOT) instead of the whole tree,
+and writes no summary. The commit hook (the ``internal-leftovers`` hook of ``.pre-commit-config.yaml``
+and the plain hook ``scripts/git-hooks/pre-commit``) runs ``--fail-on 1,2,4 --files`` on the staged
+files, so that the commit that writes such a hit is stopped where it is written; the daily stage
+still reads the whole tree.
 """
 
 from __future__ import annotations
@@ -720,9 +726,24 @@ def file_scan(root: Path, site: tuple[str, ...], rel: str) -> list[Hit]:
     return [kept(h) for h in (*file_hits(rel, text, site), *(line_hits(rel, text) if text else ()))]
 
 
-def scan(root: Path, jobs: int) -> tuple[list[str], list[Hit]]:
-    """Return the files looked at and every hit on them, reading files in ``jobs`` processes."""
-    files = tree_files(root)
+def named_files(root: Path, names: list[str]) -> list[str]:
+    """Return the named files as POSIX paths relative to ``root``, outside the excluded directories."""
+    base = root.resolve()
+    rels = (
+        (Path(n).resolve().relative_to(base) if Path(n).is_absolute() else Path(n)).as_posix()
+        for n in names
+    )
+    return sorted({r for r in rels if not set(r.split("/")[:-1]) & EXCLUDED_DIRS})
+
+
+def scan(
+    root: Path, jobs: int, names: list[str] | None = None
+) -> tuple[list[str], list[Hit]]:
+    """Return the files looked at and every hit on them, reading files in ``jobs`` processes.
+
+    ``names`` limits the reading to those files; without it every file of the tree is read.
+    """
+    files = tree_files(root) if names is None else named_files(root, names)
     one = partial(file_scan, root, site_pages(root))
     if jobs <= 1:
         return files, [h for rel in files for h in one(rel)]
@@ -963,14 +984,21 @@ def main(argv: list[str] | None = None) -> int:
         default=(),
         help="exit 1 when a hit of these kinds (comma-separated, e.g. 1,2,4) is not kept",
     )
+    parser.add_argument(
+        "--files",
+        metavar="PATH",
+        nargs="+",
+        help="read only these files (relative to ROOT) and write no summary - the commit hook's form",
+    )
     args = parser.parse_args(argv)
-    files, hits = scan(args.root, args.jobs)
+    files, hits = scan(args.root, args.jobs, args.files)
     if args.table == "-":
         sys.stdout.write(table(hits, args.format))
     else:
         if args.table:
             Path(args.table).write_text(table(hits, args.format), encoding="utf-8")
-        sys.stdout.write(summary(args.root, files, hits, args.top))
+        if args.files is None:
+            sys.stdout.write(summary(args.root, files, hits, args.top))
     failing = [h for h in hits if h.kind in args.fail_on and not h.kept]
     if failing:
         sys.stdout.flush()

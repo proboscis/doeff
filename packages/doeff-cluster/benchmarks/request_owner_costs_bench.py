@@ -1,6 +1,6 @@
 """What one coordinator request costs in the three owners left after the task index (2026-11-13).
 
-The coordinator's main thread stayed at 95-99% after the task table index (card ki-9990cc7adcff). The cpu-samples
+The coordinator's main thread stayed at 95-99% after the task table index. The cpu-samples
 owners left were the reply encoding (inbox:encoded_reply and replies:spelled_each), the placement class hash
 (cluster_model:__hash__ and __init__ under place-tasks) and program_policy:program_refs. This measures one request's
 cost in each owner while one size of the state grows, so the column shows what the cost is proportional to:

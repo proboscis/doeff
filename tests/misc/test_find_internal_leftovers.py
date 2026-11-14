@@ -14,6 +14,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "find_internal_leftovers.py"
@@ -79,3 +80,60 @@ def test_fail_on_rejects_a_value_that_is_not_kind_keys(tmp_path: Path, value: st
         leftovers.main([str(tmp_path), "--jobs", "1", "--fail-on", value])
 
     assert stopped.value.code == 2
+
+
+# ---- the commit hook's form: --files reads only the named files -------------------------------
+
+
+def test_files_stops_a_named_file_with_a_tracker_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "staged.py").write_text("# moved here (ki-0123456789ab)\n", encoding="utf-8")
+
+    status = leftovers.main([str(tmp_path), "--fail-on", "1,2,4", "--files", "staged.py"])
+
+    captured = capsys.readouterr()
+    assert status == 1
+    assert "staged.py:1  kind 2 (ki- (card))  ki-0123456789ab" in captured.err
+    assert "add a KEEP row with the reason" in captured.err
+    assert captured.out == ""
+
+
+def test_files_stops_a_dated_decision_mark(tmp_path: Path) -> None:
+    (tmp_path / "staged.md").write_text("Kept on purpose (decision 2026-10-02).\n", encoding="utf-8")
+
+    assert leftovers.main([str(tmp_path), "--fail-on", "1,2,4", "--files", "staged.md"]) == 1
+
+
+def test_files_passes_a_file_without_hits(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "staged.py").write_text("value = 1\n", encoding="utf-8")
+
+    assert leftovers.main([str(tmp_path), "--fail-on", "1,2,4", "--files", "staged.py"]) == 0
+    assert capsys.readouterr() == ("", "")
+
+
+def test_files_passes_a_kept_hit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "staged.py").write_text("FAKE = 'ki-0123456789ab'\n", encoding="utf-8")
+    monkeypatch.setattr(
+        leftovers, "KEEP", (leftovers.Keep("staged.py", "2", "ki- (card)", "a test fake"),)
+    )
+
+    assert leftovers.main([str(tmp_path), "--fail-on", "2", "--files", "staged.py"]) == 0
+
+
+def test_files_does_not_read_the_rest_of_the_tree(tmp_path: Path) -> None:
+    (tmp_path / "other.md").write_text("see ki-0123456789ab\n", encoding="utf-8")
+    (tmp_path / "staged.py").write_text("value = 1\n", encoding="utf-8")
+
+    assert leftovers.main([str(tmp_path), "--fail-on", "2", "--files", "staged.py"]) == 0
+
+
+def test_commit_hooks_run_the_check_on_the_staged_files() -> None:
+    hooks = yaml.safe_load((ROOT / ".pre-commit-config.yaml").read_text())["repos"][0]["hooks"]
+    found = [hook for hook in hooks if "find_internal_leftovers.py" in hook["entry"]]
+    assert [hook["id"] for hook in found] == ["internal-leftovers"]
+    assert found[0]["pass_filenames"] is True
+    assert found[0]["entry"].endswith("--fail-on 1,2,4 --files")
+    assert "run internal-leftovers" in (ROOT / "scripts" / "git-hooks" / "pre-commit").read_text()

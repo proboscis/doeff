@@ -181,8 +181,9 @@ def _repository(directory: Path, changed: str, source: str) -> Path:
     shutil.copyfile(ROOT / ".python-version", repository / ".python-version")
     # The Python semgrep and doeff-linter entries go through the baseline-comparison script (#2848) -- place the script and an empty baseline matching the fake tools' versions.
     (repository / "scripts" / "hook_finding_baseline").mkdir(parents=True)
-    # The entry that quotes the owner's chat words (no-chat-quotes) applies to any text file -- place that script too.
-    for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py", "check_no_operator_quotes.py"):
+    # The entries for quotations of the owner's chat words (no-chat-quotes) and for leftovers (internal-leftovers) apply to any text file -- place those scripts too.
+    for script in ("hook_finding_baseline.py", "semgrep_locked.py", "doeff_linter_locked.py", "check_no_operator_quotes.py",
+                   "find_internal_leftovers.py"):
         shutil.copyfile(ROOT / "scripts" / script, repository / "scripts" / script)
     # The semgrep version is decided by uv.lock (#2906) -- match the fake tools' version (the line is a version installed from an index; the reader stops at lines outside an index).
     (repository / "uv.lock").write_text(
