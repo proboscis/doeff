@@ -56,6 +56,16 @@ if [ -f "$RULES" ]; then
   }
 fi
 
+# (2b) A commit that touches the linter's build inputs or the baseline file keeps the baseline version equal to the key of the staged linter
+# inputs (the single id doeff-linter-baseline-key of .pre-commit-config.yaml -- no binary, no build). Old snapshots without the entry are not blocked.
+if [ -f "$RULES" ] && grep -q 'id: doeff-linter-baseline-key' "$TOP/.pre-commit-config.yaml" 2>/dev/null; then
+  (cd "$TOP" && uv run --no-project --python 3.12 python "$RULES" run doeff-linter-baseline-key) || {
+    echo "doeff commit hook: the doeff-linter baseline does not name the key of the staged linter inputs (see the output above)." \
+      "Recount it with the linter built from this tree and stage it in the same commit." >&2
+    exit 1
+  }
+fi
+
 # (3a) Forgetting to rebuild the .pyi next to a .hy. The entry is the single alias hy-stubs of .pre-commit-config.yaml.
 # It calls doeff_hy in the tree's environment (uv run), so old snapshots without the entry are not blocked.
 if [ -f "$TOP/scripts/check_hy_stubs.py" ]; then

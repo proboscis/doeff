@@ -86,12 +86,19 @@ def crates(top: Path, commit: str) -> tuple[str, ...] | None:
     return (CRATE, *sorted(posixpath.normpath(posixpath.join(CRATE, path)) for path in paths))
 
 
-def input_key(top: Path, commit: str) -> str | None:
-    """The key of a commit's build inputs. None if git does not know the commit (not made a key -- never silently compared against a different key)."""
+def input_paths(top: Path, commit: str) -> tuple[str, ...] | None:
+    """The build-input paths of a commit (or a tree id -- the commit hook passes the index tree): every INPUT_ENTRIES path of every crate (from the repo root).
+    None if git does not know the commit or the linter's Cargo.toml."""
     found: tuple[str, ...] | None = crates(top, commit)
+    return None if found is None else tuple(f"{crate}/{entry}" for crate in found for entry in INPUT_ENTRIES)
+
+
+def input_key(top: Path, commit: str) -> str | None:
+    """The key of a commit's (or a tree's) build inputs. None if git does not know the commit (not made a key -- never silently compared against a different key)."""
+    found: tuple[str, ...] | None = input_paths(top, commit)
     if found is None:
         return None
-    specs: list[str] = [f"{crate}/{entry}" for crate in found for entry in INPUT_ENTRIES]
+    specs: list[str] = list(found)
     checked: subprocess.CompletedProcess[str] = _git(
         top, ["cat-file", "--batch-check=%(objectname)"], stdin="".join(f"{commit}:{spec}\n" for spec in specs),
     )

@@ -68,6 +68,19 @@ repos:
         pass_filenames: true
         verbose: true
 
+      # A commit that touches the linter's build inputs (packages/doeff-linter and its path dependencies: src, data, Cargo.toml, Cargo.lock,
+      # build.rs) or the baseline file is stopped when the staged baseline version is not the key of the staged linter inputs -- the change that
+      # modifies the linter recounts the baseline in the same commit. Without it, the item above names only "not measurable", and from 10-21
+      # 74 commits changed linter inputs without a recount and 3 rewrote the baseline by hand; the drift first showed in the daily --strict, whose
+      # stage could then not even build a linter matching the baseline. It needs no binary and no build (a hash of git object ids), so it always
+      # runs and decides from the index itself; a commit that touches neither passes. The plain hook fires it by id doeff-linter-baseline-key.
+      - id: doeff-linter-baseline-key
+        name: doeff-linter baseline names the key of the staged linter inputs
+        entry: uv run --no-project --python 3.12 python scripts/hook_finding_baseline.py staged-key doeff-linter
+        language: system
+        always_run: true
+        pass_filenames: false
+
       # packages/doeff-cluster has its own settings ([tool.doeff-linter] in pyproject.toml) and service and invariant declarations
       # (architecture.hy). The root doeff-linter above does not read them, so this enters the package dir to apply them (Hy files are passed too).
       # The script always adds architecture.hy, so a commit that removes :invariants is stopped by DOEFF163. The test dir (tests/) is passed
