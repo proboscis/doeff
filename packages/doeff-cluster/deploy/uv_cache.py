@@ -725,7 +725,13 @@ def refresh(
                 say(
                     f"refresh: 置いてから {round(age)} 秒で {round(every_seconds)} 秒が経っていない — 組まない"
                 )
-                return {"verb": "refresh", "refreshed": False, "reason": "recent", "locks": digest}
+                return {
+                    "verb": "refresh",
+                    "refreshed": False,
+                    "reason": "recent",
+                    "locks": digest,
+                    "due_in": every_seconds - age,
+                }
         if disk_free(cache) < min_free:
             say(f"refresh: 空き {disk_free(cache)} byte が下限 {min_free} byte を下回る — 組まない")
             return {"verb": "refresh", "refreshed": False, "reason": "low-free"}
@@ -1383,10 +1389,11 @@ def gc(
         not dry_run
         and every_seconds is not None
         and mark.exists()
-        and time.time() - mark.stat().st_mtime < every_seconds
+        and (age := time.time() - mark.stat().st_mtime) < every_seconds
     ):
         say(f"gc: 前の gc から {every_seconds:.0f} 秒が経っていない — 消さない")
-        return {"verb": verb, "ran": False, "reason": "recent"}
+        # due_in = 前の gc の印から every_seconds が経つまでの残りの秒(常駐の upkeep はこの秒だけ眠って次の回を撃つ)。
+        return {"verb": verb, "ran": False, "reason": "recent", "due_in": every_seconds - age}
     started = time.monotonic()
     with held(cache / GC_LOCK, wait=False) as got:
         if not got:
@@ -1684,6 +1691,19 @@ def keeper_token(cache: Path) -> str | None:
     return value
 
 
+def round_wake(result: dict[str, object], wake: float) -> float:
+    """回の後に眠る秒 — 回が間隔の内(recent)で飛ばした仕事(gc・refresh)が在れば、その仕事の残りの秒(due_in)と wake の短い方。
+    飛ばした回の後に wake を丸ごと眠ると、回の間が前の回からの秒 + wake に延びる(2026-11-11 — 版の入れ替えの後の最初の回が recent で
+    飛び、gc の回の間が約 2 時間になり、cache が予算の外で育つ見込みになった)。下限は 1 秒(印の時刻が揺れても回を詰めて撃ち続けない)。"""
+    dues = [
+        float(due)
+        for key in ("gc", "refresh")
+        if isinstance(part := result.get(key), dict) and part.get("reason") == "recent"
+        if isinstance(due := part.get("due_in"), (int, float))
+    ]
+    return max(1.0, min([wake, *dues]))
+
+
 def keep(
     cache: Path,
     settings: UpkeepSettings,
@@ -1704,11 +1724,13 @@ def keep(
     token = claim_keeper(cache)
     rounds = 0
     while True:
-        emit(run(cache, settings))
+        result = run(cache, settings)
+        emit(result)
         rounds += 1
+        nap = round_wake(result, wake)
         slept = 0.0
-        while slept < wake:
-            step = min(KEEP_POLL_SECONDS, wake - slept)
+        while slept < nap:
+            step = min(KEEP_POLL_SECONDS, nap - slept)
             sleep(step)
             slept += step
             holder = keeper_token(cache)

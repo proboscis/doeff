@@ -330,11 +330,15 @@ def test_count_removes_nothing(tmp_path: Path, busy: Path) -> None:
 def test_gc_waits_out_the_interval(tmp_path: Path, busy: Path) -> None:
     cache, worktrees = _cache_for_gc(tmp_path, busy)
     assert uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=3600)["ran"] is True
-    assert uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=3600) == {
+    os.utime(cache / uv_cache.GC_MARK, (time.time() - 600, time.time() - 600))
+    skipped = uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=3600)
+    assert {k: v for k, v in skipped.items() if k != "due_in"} == {
         "verb": "gc",
         "ran": False,
         "reason": "recent",
     }
+    # 残りの秒は前の gc の印から数える(600 秒前の印なら約 3000 秒)。
+    assert 2990 < skipped["due_in"] <= 3000
 
 
 def _symlinked_venv(venv: Path, entry: Path, *, relative: bool = False) -> Path:
@@ -885,6 +889,45 @@ def test_keep_runs_upkeep_every_gc_period_until_a_later_keeper_claims(tmp_path: 
     assert result == {"verb": "keep", "rounds": 4, "reason": "superseded"}
     # 退いた持ち手は、印を読む間隔(60 秒)より長く眠り続けない。
     assert clock.slept == 3 * 3600 + 60
+
+
+def test_keep_after_a_recent_gc_sleeps_only_until_the_gc_is_due(tmp_path: Path) -> None:
+    """版の入れ替えで起きた常駐の upkeep の最初の回が、前の gc から間隔が経たず(recent)gc を飛ばしても、眠るのは前の gc の印から
+    間隔が経つまでの残りだけ — 間隔を丸ごと眠ると、gc の回の間が前の回からの秒 + 間隔(最大で約 2 倍)に延びる。"""
+    cache = tmp_path / "cache"
+    settings = uv_cache.UpkeepSettings(gc_days=7.0, gc_every_seconds=3600.0)
+    answers = [
+        {"gc": {"verb": "gc", "ran": False, "reason": "recent", "due_in": 420.0}},
+        {"gc": {"verb": "gc", "ran": True}},
+        {"gc": {"verb": "gc", "ran": True}},
+    ]
+    clock = _Clock(after=420 + 3600 + 30, on_wake=lambda: uv_cache.claim_keeper(cache))
+    runs: tuple[float, ...] = ()
+
+    def run(*_: object) -> dict[str, object]:
+        nonlocal runs
+        runs = (*runs, clock.slept)
+        return answers[len(runs) - 1]
+
+    result = uv_cache.keep(cache, settings, run=run, sleep=clock, emit=lambda _: None)
+    assert runs == (0.0, 420.0, 4020.0)
+    assert result["reason"] == "superseded"
+
+
+def test_round_wake_takes_the_shortest_due_skip_and_never_less_than_a_second() -> None:
+    wake = 3600.0
+    assert uv_cache.round_wake({"gc": {"ran": True}}, wake) == wake
+    # 間隔の内で飛ばした仕事が 2 つ在れば、早く来る方の残りまで眠る。
+    both = {
+        "gc": {"reason": "recent", "due_in": 900.0},
+        "refresh": {"reason": "recent", "due_in": 300.0},
+    }
+    assert uv_cache.round_wake(both, wake) == 300.0
+    # 残りが wake より長い(印の時刻が先に在る)時も wake より長く眠らない・残りが 0 でも 1 秒は眠る。
+    assert uv_cache.round_wake({"gc": {"reason": "recent", "due_in": 9000.0}}, wake) == wake
+    assert uv_cache.round_wake({"gc": {"reason": "recent", "due_in": -2.0}}, wake) == 1.0
+    # 飛ばした訳が recent でなければ(locked など)残りを読まない。
+    assert uv_cache.round_wake({"gc": {"reason": "locked", "due_in": 5.0}}, wake) == wake
 
 
 def test_keep_wakes_at_the_shorter_of_gc_and_refresh_periods_and_runs_once_without_one(
