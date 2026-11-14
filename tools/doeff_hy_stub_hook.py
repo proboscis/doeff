@@ -41,7 +41,8 @@ class HyStubHook(BuildHookInterface):
 
     def initialize(self, version: str, build_data: dict[str, object]) -> None:
         """Make the package's .pyi before hatchling collects the files, so the editable install and the wheel both see what the .hy declare."""
-        if os.environ.get(STUBS_ENV) == "off":
+        inherited = dict(os.environ)  # the one place that reads the environment
+        if inherited.get(STUBS_ENV) == "off":
             return
         package = Path(self.root)
         checkout = package.parents[1]
@@ -52,7 +53,7 @@ class HyStubHook(BuildHookInterface):
         root = package / str(self.config["stub-root"])
         dirs = [str(package / str(d)) for d in self.config["stub-dirs"]]
         environment = {
-            **os.environ,
+            **inherited,
             "PYTHONPATH": os.pathsep.join(str(checkout / p) for p in SOURCE_PATHS),
             # The sources are the shared checkout's: compiling them must not leave __pycache__ there.
             "PYTHONDONTWRITEBYTECODE": "1",
