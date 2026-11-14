@@ -1,7 +1,7 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster._worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
-;;;     [--room-file FILE] [--prepare-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES --code-store DIR --uv-cache DIR
+;;;     [--room-file FILE] [--prepare-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES [--root-link-dirs DIRS] --code-store DIR --uv-cache DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -679,6 +679,9 @@
                  :help "実行環境の roots の合計の上限(byte・hardlink を重ねて数える)— 越えた時は固定されていない root を古い順に消す")
   (.add-argument parser "--env-min-free" :type int :required True
                  :help "root の dir の在る共有の disk の空きの最低(byte)— 割った時は固定されていない root を古い順に消し、戻らなければ準備を disk-full で断る")
+  ;; 掃除が消さない root の、worker の外の使い手の置き場(値は deploy/boot.sh の WORKER_ROOT_LINK_DIRS)。
+  (.add-argument parser "--root-link-dirs" :default ""
+                 :help "下に置いた symlink の先の root を掃除が消さない dir(`,` で並べる — 機体の配備が置く設定の dir の木など・空 = 読まない)")
   ;; bytecode の保存先の dir(#3858 — 値は deploy/boot.sh の DOEFF_HY_CODE_STORE の 1 か所・焼く道具は同じ値を環境変数で読む)。
   (.add-argument parser "--code-store" :required True
                  :help "source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・`off` = 保存先を使わない)")
@@ -790,6 +793,8 @@
         envs (EnvSettings :state (str state-dir) :hy-command hy-command :platform (current-platform) :code-prepare PREPARE-TOOL
                           :repo-keys args.repo-keys :repo-access args.repo-access :uv args.uv :uv-cache args.uv-cache :roots-cap-bytes args.env-roots-cap
                           :min-free-bytes args.env-min-free
+                          ;; 下の symlink の先の root を掃除が消さない dir(worker の外の使い手 — env_store の root-users)。
+                          :link-dirs (tuple (gfor d (.split args.root-link-dirs ",") :if d d))
                           ;; bytecode の保存先の dir(掃除が 7 日使われない entry を消す — `off` は保存先を使わない設定)。
                           :code-store (if (= args.code-store "off") None args.code-store)
                           ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
