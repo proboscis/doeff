@@ -17,6 +17,9 @@
 ;;;   doeff_worker_worker_heartbeat_age_seconds{worker}(worker ごとの最後の heartbeat の古さ — coordinator 自身の alert の材料)。
 ;;;   2026-10-22 に足した: doeff_worker_handover_pending_seconds{worker}・doeff_worker_handover_stalled{worker}
 ;;;   (世代をまたぐ受け渡しの待ちの長さと、上限 cluster_policy.HANDOVER-STALL-MS を越えたか)。
+;;;   2026-11-15 に足した: doeff_worker_tasks_claimed_mib{worker}(置いた task の memory の申告の和 — tasks 区画の和・ADR-DOE-CLUSTER-005 R5)・
+;;;   doeff_worker_tasks_used_mib{worker}(同じ task の測った今の使いの和 — task の使いを測れた worker だけ)。申告の和が使いの和から
+;;;   離れた事を外の見張りの警報が読む(式と閾は見張りの設定が持つ — GET /state の claimedMiB・usedMiB と同じ値)。
 (require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
@@ -28,7 +31,8 @@
 (import doeff_cluster._coordinator.intent.request_bodies [MetricsBody MetricsPayload])
 (import doeff_cluster._coordinator.core.resource_policy [refuse running-process current-report keep-report placed-senders report-origin service-readiness
                                                         handover-of])
-(import doeff_cluster._coordinator.core.cluster_policy [unplaced-jobs board-usage scan-rows])
+(import doeff_cluster._coordinator.core.cluster_policy [unplaced-jobs board-usage scan-rows claimed-sums placed-uses])
+(import doeff_cluster._coordinator.core.task_claims [shape-peaks-of tasks-compartments-of])
 
 (setv METRICS-STALE-MS 180000)   ; これより古い報告は出さない(書き手の拍は 5〜15 秒 + 読みの時間)
 (setv MAX-NAMES 1000)            ; 1 回の報告の名の数の上限(大きすぎる報告を断る)
@@ -207,6 +211,15 @@
                   (/ (max 0 (- now (get h "sinceMs"))) 1000.0))
       (add-sample families "doeff_worker_handover_stalled" "gauge" "doeff_worker_handover_stalled" {"worker" w.name}
                   (if (get h "stalled") 1.0 0.0))))
+  ;; tasks 区画の申告の和と、同じ task の測った使いの和(2026-11-15 — 頭の註)。使いを測れない worker は使いの系列を出さない(0 と読ませない)。
+  (setv sums (run (claimed-sums state (tasks-compartments-of state) (run (shape-peaks-of state.tasks state.shape-families))))
+        uses (run (placed-uses state)))
+  (for [w (sorted (.rows state.workers) :key (fn [w] w.name))]
+    (add-sample families "doeff_worker_tasks_claimed_mib" "gauge" "doeff_worker_tasks_claimed_mib" {"worker" w.name}
+                (float (. (get sums w.name) memory-mib)))
+    (when (in w.name uses)
+      (add-sample families "doeff_worker_tasks_used_mib" "gauge" "doeff_worker_tasks_used_mib" {"worker" w.name}
+                  (float (get uses w.name)))))
   ;; 盤の容量(2026-09-25): 行の数・値の合計と、その上限(cluster_policy の BOARD-MAX-*)。alert は合計が上限の 8 割を越えた時。
   (setv usage (board-usage state))
   (for [#(metric amount) #(#("doeff_worker_board_rows" usage.rows) #("doeff_worker_board_max_rows" usage.max-rows)

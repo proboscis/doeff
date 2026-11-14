@@ -79,7 +79,7 @@
     #("Worker: stop tasks over their need when the keep line breaks" "2026-11-10" "keep"
       "triggered by the tasks compartment nearing its memory.max, in kubelet's eviction order (R7)")
     #("Watch: a worker's claim sum far above the measured use of the same placed tasks (GET /state claimedMiB and usedMiB)" "2026-11-15"
-      "keep" "outside placement: GET /state shows both sums and the alert's ratio and duration live in the monitoring settings; placement still reads only claims (R5)")))
+      "keep" "outside placement: GET /state (claimedMiB, usedMiB) and GET /metrics (doeff_worker_tasks_claimed_mib, doeff_worker_tasks_used_mib) show both sums and the alert's ratio and duration live in the monitoring settings; placement still reads only claims (R5)")))
 
 ;; The destination of every member of the closed wait-reason type TaskUnplacedKind (R8, R10) — new = added by the switch.
 (val WAIT-REASON-DESTINATIONS

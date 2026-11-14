@@ -4,7 +4,8 @@
 ;;;   (2) 近い回: 形の山は近い RECENT-PEAK-RUNS 本の終わった行の山で、保持の間の古い外れ値の 1 本に縛られない。
 ;;;   (3) 止められた回: 要りの越えで止められた回(lost)は近い回に数え、次の置き直しはその山で申告される(同じ小さい申告を繰り返さない)。
 ;;;   (4) 族の行: 積んだ拍に書き、その形の行が無くなった歩で外し、state file と耐久の鍵を往復する。形の無い族は断る。
-;;;   (5) GET /state の worker の行は、置いた task の申告の和 claimedMiB と測った使いの和 usedMiB を出す。
+;;;   (5) GET /state の worker の行と GET /metrics は、置いた task の申告の和(claimedMiB・doeff_worker_tasks_claimed_mib)と測った使いの和
+;;;       (usedMiB・doeff_worker_tasks_used_mib)を出す — 外の見張りの警報の材料。
 ;;; 失敗ケース = 形が命令の全体の digest を含むので、ほとんどの回が初めての形として送り手の見当(中央の値 3,584 MiB)で申告された形と、
 ;;; 日次の回の申告が古い 1 本の山 20,804 MiB に保持の間ずっと縛られた形(近い回の山は 614〜7,025 MiB)。
 (require doeff-hy.macros [defk deftest <- val var])
@@ -22,6 +23,7 @@
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json shape-family-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
+(import doeff_cluster._coordinator.core.metrics_policy [metrics-text])
 (import doeff_cluster._shared.core.detached_rules [task-family-refusal task-placing-json])
 (import doeff_hy._table [Table TableWrite])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM program-placed task-body-of])
@@ -199,4 +201,10 @@
   (val b (get (get body "workers") "b"))
   (assert (= #((get a "claimedMiB") (get a "usedMiB")) #(4096 800)) a)
   (assert (= (get b "claimedMiB") 0) b)
-  (assert (not-in "usedMiB" b) b))
+  (assert (not-in "usedMiB" b) b)
+  ;; GET /metrics にも同じ和を出す(使いを測れない worker b は使いの系列を出さない)。
+  (val text (metrics-text state 0 T))
+  (assert (in "doeff_worker_tasks_claimed_mib{worker=\"a\"} 4096" text) text)
+  (assert (in "doeff_worker_tasks_used_mib{worker=\"a\"} 800" text) text)
+  (assert (in "doeff_worker_tasks_claimed_mib{worker=\"b\"} 0" text) text)
+  (assert (not-in "doeff_worker_tasks_used_mib{worker=\"b\"}" text) text))
