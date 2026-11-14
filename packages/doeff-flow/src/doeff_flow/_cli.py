@@ -42,21 +42,29 @@ _T = TypeVar("_T")
 _FINISHED = ("completed", "failed")
 
 
-def _status_style(status: str) -> tuple[str, str]:
+@dataclass(frozen=True)
+class _StatusStyle:
+    """How a status is shown: its icon and its color."""
+
+    icon: str
+    color: str
+
+
+def _status_style(status: str) -> _StatusStyle:
     """The icon and the color a status is shown with."""
     match status:
         case "running":
-            return ("▶", "yellow")
+            return _StatusStyle("▶", "yellow")
         case "pending":
-            return ("○", "dim")
+            return _StatusStyle("○", "dim")
         case "paused":
-            return ("⏸", "blue")
+            return _StatusStyle("⏸", "blue")
         case "completed":
-            return ("✓", "green")
+            return _StatusStyle("✓", "green")
         case "failed":
-            return ("✗", "red")
+            return _StatusStyle("✗", "red")
         case _:
-            return ("?", "white")
+            return _StatusStyle("?", "white")
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -265,7 +273,7 @@ def _render_trace_panel(data: LiveTrace, status_only: bool = False) -> Panel:
         data: The workflow's latest trace entry.
         status_only: If True, show only slog status updates (simplified display).
     """
-    icon, color = _status_style(data.status)
+    shown = _status_style(data.status)
     is_failed = data.status == "failed"
     is_completed = data.status == "completed"
 
@@ -305,7 +313,10 @@ def _render_trace_panel(data: LiveTrace, status_only: bool = False) -> Panel:
 
     # Format timestamp
     updated = data.updated_at.split("T")[1][:12] if "T" in data.updated_at else data.updated_at
-    title = f"[{color}]{icon}[/] {data.workflow_id} [{color}]{data.status}[/] step {data.step}"
+    title = (
+        f"[{shown.color}]{shown.icon}[/] {data.workflow_id} "
+        f"[{shown.color}]{data.status}[/] step {data.step}"
+    )
     subtitle = f"[dim]Updated: {updated}[/dim]"
 
     # For status_only mode, show simplified display
@@ -315,7 +326,7 @@ def _render_trace_panel(data: LiveTrace, status_only: bool = False) -> Panel:
             if data.last_slog
             else Text(f"Step {data.step}: {data.current_effect or '-'}", style="dim")
         )
-        return Panel(body, title=title, subtitle=subtitle, border_style=color)
+        return Panel(body, title=title, subtitle=subtitle, border_style=shown.color)
 
     # Show slog status prominently at the top if available
     slog_part = (_slog_text(data.last_slog, "\n\n"),) if data.last_slog else ()
@@ -339,7 +350,7 @@ def _render_trace_panel(data: LiveTrace, status_only: bool = False) -> Panel:
         Group(*slog_part, tree, *result_part, *error_part),
         title=title,
         subtitle=subtitle,
-        border_style=color,
+        border_style=shown.color,
     )
 
 
@@ -367,7 +378,7 @@ def _render_all_workflows_table(workflows: tuple[LiveTrace, ...]) -> Panel:
     table.add_column("Result / Error", max_width=40)
 
     for data in sorted(workflows, key=lambda data: data.workflow_id):
-        icon, color = _status_style(data.status)
+        shown = _status_style(data.status)
 
         # Show result for completed, error for failed, call stack for running
         if data.status == "completed" and data.result:
@@ -386,7 +397,7 @@ def _render_all_workflows_table(workflows: tuple[LiveTrace, ...]) -> Panel:
 
         table.add_row(
             data.workflow_id,
-            Text(f"{icon} {data.status}", style=color),
+            Text(f"{shown.icon} {data.status}", style=shown.color),
             str(data.step),
             result_cell,
         )
@@ -422,12 +433,12 @@ def _ps_table(trace_dir: Path):
     table.add_column("Last Updated", style="dim")
 
     for data in (workflow.latest for workflow in workflows):
-        icon, color = _status_style(data.status)
+        shown = _status_style(data.status)
         # Format timestamp
         updated = data.updated_at.split("T")[1][:8] if "T" in data.updated_at else data.updated_at
         table.add_row(
             data.workflow_id,
-            Text(f"{icon} {data.status}", style=color),
+            Text(f"{shown.icon} {data.status}", style=shown.color),
             str(data.step),
             updated,
         )
@@ -466,11 +477,13 @@ def _history_table(trace_dir: Path, workflow_id: str, last: int):
     table.add_column("Effect", style="dim", max_width=50)
 
     for data in entries[-last:]:
-        icon, color = _status_style(data.status)
+        shown = _status_style(data.status)
         effect = data.current_effect or "-"
         if len(effect) > 50:
             effect = effect[:47] + "..."
-        table.add_row(str(data.step), Text(f"{icon} {data.status}", style=color), effect)
+        table.add_row(
+            str(data.step), Text(f"{shown.icon} {data.status}", style=shown.color), effect
+        )
     return table
 
 
