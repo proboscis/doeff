@@ -372,13 +372,18 @@
 (defrecord WorkerView
   "状態の画面の worker 1 つ: info = 名乗り・silent-ms = 最後の連絡からの長さ・live = heartbeat が lease の内か・draining = 期限の内の drain
    か(担い手の名簿の読み ReadRunners の正本 — 2026-09-26)・task-room = いま task を置ける空き(cluster_policy.task-room-of の答え)・
-   task-memory-room-mib = いま置ける task の memory の要りの最大(MiB — cluster_policy.task-memory-room-of の答え・2026-11-02)。"
+   task-memory-room-mib = いま置ける task の memory の要りの最大(MiB — cluster_policy.task-memory-room-of の答え・2026-11-02)・
+   claimed-mib = 置いた task の memory の申告の和(MiB — cluster_policy.claimed-sums・ADR-DOE-CLUSTER-005 R5 の和)・used-mib = 同じ task の
+   測った今の使いの和(MiB — 測りの task-memory-MiB。測りの無い・task の使いを名乗らない worker は None)。申告の和と測った使いの和の
+   離れを外の見張りが読むため(2026-11-15 — 見張りの式と閾は監視の設定が持つ)。"
   (#^ WorkerInfo info)
   (#^ int silent-ms)
   (#^ bool live)
   (#^ bool draining)
   (#^ int task-room)
-  (setv #^ int task-memory-room-mib 0))
+  (setv #^ int task-memory-room-mib 0)
+  (setv #^ int claimed-mib 0)
+  (setv #^ (| int None) used-mib None))
 
 
 (defrecord StatusView
@@ -438,6 +443,16 @@
   (#^ str task)
   (#^ int memory-mib)
   (#^ int cpu-millis))
+
+
+(defrecord ShapeFamily
+  "仕事の形 1 つの族(ADR-DOE-CLUSTER-005 R4 の改め 2026-11-15): 送り手が SubmitDetached の family で名乗る、同じ程の memory を使う仕事の
+   形の集まりの名(不透明な文字列 — 系は意味を読まない)。形に近い回の finished の行が無い task の申告は、同じ族の形の近い回の山から
+   数える(task_table.family-peaks-of)。族は形から決まる事実(同じ形はいつも同じ族)なので、task の行にも申告の表にも持たず、形 → 族の
+   別の表(ClusterState.shape-families — 形で引く)に持つ。shape = 形(表の鍵と同じ)・family = 族の名。保存する(durable_kv の family/<形>)。"
+  {:tags {:context "coordinator" :role "type"} :check [(> (len shape) 0) (> (len family) 0)]}
+  (#^ str shape)
+  (#^ str family))
 
 
 (defrecord SupersededRun
@@ -1451,7 +1466,11 @@
   ;; machine の用途の区画の宣言(ADR-DOE-CLUSTER-005 R1): machine の名 → MachineCompartments(資源 MachineCompartments — site の宣言の
   ;; 手順が書く)。heartbeat の返事は worker の持つ区画をここから写す(R2)。置き方はまだ読まない(置き方の切り替えの card)。保存する
   ;; (durable_kv の compartments/<名>)。位置の引数の呼び手のため最後に置く。
-  (setv #^ (get Table MachineCompartments) machine-compartments (field :default-factory (partial table-of #()))))
+  (setv #^ (get Table MachineCompartments) machine-compartments (field :default-factory (partial table-of #())))
+  ;; 仕事の形 → 族(2026-11-15 — ADR-DOE-CLUSTER-005 R4 の改め・ShapeFamily): 族を名乗る切り離した task を積んだ拍に 1 行書き
+  ;; (detached_policy.submit-detached)、その形の task の行が 1 本も無くなった歩で外す(task_claims.families-noted)。保存する(durable_kv の
+  ;; family/<形>)。位置の引数の呼び手のため最後に置く。
+  (setv #^ (get Table ShapeFamily) shape-families (field :default-factory (partial table-of #()))))
 
 
 (defclass [(dataclass :frozen True)] Fault []

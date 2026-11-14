@@ -89,6 +89,21 @@
       (.format "shape は {} 字以下の表示できる字の文字列(仕事の形): {!r}" TASK-SHAPE-MAX-LENGTH value)))
 
 
+(deff task-family-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value #^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) shape]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
+  {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))
+         (: shape (| (get Mapping #(str object)) (get Sequence object) str int float bool None))]
+   :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "task の本文の欄 family(仕事の形の族 — SubmitDetached の family の註)が受けられない理由(None = 欄が無いか、TASK-SHAPE-MAX-LENGTH 字
+   以下の表示できる字だけの文字列 — 空は名乗らない)。空でない族は、空でない形 shape と一緒にだけ名乗れる(族は形の集まりの名)。"
+  (cond
+    (not (or (is value None)
+             (and (isinstance value str) (<= (len value) TASK-SHAPE-MAX-LENGTH) (or (= value "") (.isprintable value)))))
+      (.format "family は {} 字以下の表示できる字の文字列(仕事の形の族): {!r}" TASK-SHAPE-MAX-LENGTH value)
+    (and value (not (and (isinstance shape str) shape)))
+      (.format "family {!r} は shape(仕事の形)と一緒にだけ名乗れる" value)
+    True None))
+
+
 (deff task-memory-refusal [#^ (| (get Mapping #(str object)) (get Sequence object) str int float bool None) value]  ; cannot be a defk: coordinator の本文の読み(Program の外)と構築関数が呼ぶ純粋な判断
   {:pre [(: value (| (get Mapping #(str object)) (get Sequence object) str int float bool None))] :post [(: % (| str None))] :tags {:context "doeff-cluster" :role "judgment"}}
   "task の本文の欄 memoryMiB(memory の要り — 1 本の山の MiB)が受けられない理由(None = 欄が無いか、1 以上 TASK-MEMORY-MAX-MIB
@@ -234,14 +249,15 @@
   (| {"scope" limit.scope "limit" limit.limit} (if limit.per-part {"perPart" True} {}) (if limit.system {"system" limit.system} {})))
 
 
-(deff task-placing-json [#^ int priority #^ (get tuple #(TaskLimit ...)) limits #^ (| int None) [memory-mib None] #^ str [shape ""]]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
-  {:pre [(: priority int) (: limits (get tuple #(TaskLimit ...))) (: memory-mib (| int None)) (: shape str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
-  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・memory の要りを名乗らない・形を名乗らないの欄は置かない — 旧い coordinator は
+(deff task-placing-json [#^ int priority #^ (get tuple #(TaskLimit ...)) limits #^ (| int None) [memory-mib None] #^ str [shape ""] #^ str [family ""]]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: priority int) (: limits (get tuple #(TaskLimit ...))) (: memory-mib (| int None)) (: shape str) (: family str)] :post [(: % (get dict #(str object)))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "置き方の名乗りの本文の欄(既定の値 = 優先 0・上限なし・memory の要りを名乗らない・形と族を名乗らないの欄は置かない — 旧い coordinator は
    知らない欄を捨てる)。"
   (| (if priority {"priority" priority} {})
      (if limits {"limits" (task-limits-json limits)} {})
      (if (is memory-mib None) {} {"memoryMiB" memory-mib})
-     (if shape {"shape" shape} {})))
+     (if shape {"shape" shape} {})
+     (if family {"family" family} {})))
 
 
 (deff task-ungated-json [#^ bool ungated]  ; cannot be a defk: 本文の綴り(handler と模擬の宿 — Program の外)が呼ぶ純粋な綴り
@@ -258,10 +274,10 @@
 
 (defk submit-detached-task [program key * memory-mib [needs (frozenset)] [name ""] [lease-seconds DETACHED-DEFAULT-LEASE-SECONDS]
                            [retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS] [environ #()] [priority 0] [limits #()] [notify ""] [rerun False] [shape ""]
-                           [ungated False] [preemptible False] [queue-limit-seconds None]]
+                           [family ""] [ungated False] [preemptible False] [queue-limit-seconds None]]
   {:pre [(: program Program) (: key str) (: needs (| (get frozenset str) (get tuple #(object ...)) (get list object) (get set object) (get dict #(object object)) str None)) (: name str) (: lease-seconds float)
          (: retain-seconds float) (: environ (| (get tuple #(EnvVar ...)) (get dict #(str str)))) (: priority int) (: limits (get tuple #(TaskLimit ...))) (: notify str) (: rerun bool)
-         (: memory-mib (| int None)) (: shape str) (: ungated bool) (: preemptible bool)
+         (: memory-mib (| int None)) (: shape str) (: family str) (: ungated bool) (: preemptible bool)
          (: queue-limit-seconds (| int None))]
    :post [(: % DetachedSubmitAnswer)]
    :tags {:context "doeff-cluster" :role "judgment"}}
@@ -289,6 +305,8 @@
                    (task-room-claim-refusal ungated memory-mib (len limits))
                    ;; 仕事の形も受け口と同じ規則で、送る前に断る(2026-11-10)。
                    (task-shape-refusal shape)
+                   ;; 形の族も受け口と同じ規則で、送る前に断る(2026-11-15 — 形を名乗らない task は族を名乗れない)。
+                   (task-family-refusal family shape)
                    ;; 場所を譲る名乗りも受け口と同じ規則で、送る前に断る(走らせ直しを名乗らない task は名乗れない)。
                    (task-preemptible-refusal preemptible rerun)
                    ;; 待ちの期限も受け口と同じ規則で、送る前に断る(2026-11-12)。
@@ -297,5 +315,5 @@
   (<- answer DetachedSubmitAnswer
       (SubmitDetached program key :needs needs :name name :lease-seconds lease-seconds :retain-seconds retain-seconds :environ environ
                       :priority priority :limits limits :notify notify :memory-mib memory-mib :rerun rerun :shape shape
-                      :ungated ungated :preemptible preemptible :queue-limit-seconds queue-limit-seconds))
+                      :family family :ungated ungated :preemptible preemptible :queue-limit-seconds queue-limit-seconds))
   answer)

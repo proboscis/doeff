@@ -6,7 +6,7 @@
 (import collections.abc [Callable])
 (import dataclasses [asdict])
 (import doeff_cluster._coordinator.intent.cluster_model [WorkerInfo AuditEvent RolloutRow BoardRow ClusterState WarmEntry RefusedJob ProgramRow ResourceMeta Placement Drain KnownExit
-                                                       NeedsOverride TaskClaim])
+                                                       NeedsOverride TaskClaim ShapeFamily])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster._coordinator.core.cluster_rules [component-versions-of])
 (import doeff_hy._wire [parse Malformed])
@@ -66,7 +66,8 @@
    "warms" (dfor #(k v) (.items state.warms) k (warm-entry-to-json v))
    "handoffs" (dfor #(k w) (.items state.handoffs) k (.to-json w))
    "outbox" (dfor #(k e) (.items state.outbox) k (ended-to-json e))
-   "claims" (dfor #(k c) (.items state.claims) k (task-claim-spec c))})
+   "claims" (dfor #(k c) (.items state.claims) k (task-claim-spec c))
+   "shapeFamilies" (dfor #(k f) (.items state.shape-families) k (shape-family-spec f))})
 
 
 (deff worker-generations-json [#^ WorkerInfo worker]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
@@ -171,6 +172,24 @@
   {:pre [(: claim TaskClaim)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "置いた task の申告 1 つ → 保存と見せる JSON の形 {memoryMiB cpuMillis}(鍵は task の id)。"
   {"memoryMiB" claim.memory-mib "cpuMillis" claim.cpu-millis})
+
+
+(deff shape-family-spec [#^ ShapeFamily row]  ; cannot be a defk: 保存の綴り(state file と durable の KV の書き手 — Program の外)が呼ぶ純粋な綴り
+  {:pre [(: row ShapeFamily)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "形 1 つの族 → 保存の JSON の形 {family}(鍵は形)。"
+  {"family" row.family})
+
+
+(deff shape-family-from-json [#^ str shape #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
+  {:pre [(: shape str) (: spec (| dict list str int float bool None))] :post [(: % ShapeFamily)] :tags {:context "coordinator" :role "protocol" :reads "json"}}
+  "保存の形の族 1 つ(形と shape-family-spec の形)→ ShapeFamily を読み直すため。object でない・族が空でない文字列でない値は理由つきの
+   ValueError(保存の行の壊れ — 黙って既定の値で読まない)。"
+  (when (not (isinstance spec dict))
+    (raise (ValueError (.format "保存の形の族 {} が object でない: {!r}" shape spec))))
+  (setv family (.get spec "family"))
+  (when (not (and (isinstance family str) family shape))
+    (raise (ValueError (.format "保存の形の族 {} の family が空でない文字列でない: {!r}" shape family))))
+  (ShapeFamily :shape shape :family family))
 
 
 (deff task-claim-from-json [#^ str task #^ (| dict list str int float bool None) spec]  ; cannot be a defk: 保存の読み直し(state file・durable KV — Program の外)が呼ぶ純粋な読み
@@ -309,6 +328,8 @@
     :outbox (table-of (tuple (gfor #(k e) outbox (TableWrite k e))))
     ;; 置いた task の申告(2026-11-12)は、それより前の file には無い(空として読む — 申告の無い置いた task は task_claims.claim-mib-of が数える)。
     :claims (table-of (tuple (gfor #(k v) (.items (.get data "claims" {})) (TableWrite k (task-claim-from-json k v)))))
+    ;; 形の族(2026-11-15)は、それより前の file には無い(空として読む — 族で補わない)。
+    :shape-families (table-of (tuple (gfor #(k v) (.items (.get data "shapeFamilies" {})) (TableWrite k (shape-family-from-json k v)))))
     :started-ms now))
 
 

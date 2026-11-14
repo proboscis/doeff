@@ -21,20 +21,31 @@
 
 
 (defrecord ShapePeak
-  "形 1 つの測った山(measured_room の頭の註の測った山で数える要り — cluster_policy.shape-peaks-of): mib = 形を名乗り山を測った行(保持の間の
-   終わった行を含む)の山の最大・settled = そのうち終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限に
-   しない)。"
+  "形 1 つの測った山(measured_room の頭の註の測った山で数える要り — task_claims.shape-peaks-of): mib = 形を名乗り山を測った行のうち、
+   まだ終わっていない行と、近い回の終わった行(終わった刻の新しい順に RECENT-PEAK-RUNS 本 — 保持の間の全部ではない)の山の最大・
+   settled = その近い回に終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限にしない)。"
   {:check [(>= mib 0)]}
   (#^ int mib)
   (#^ bool settled))
 
 
+;; 形の山に数える近い回の終わった行の数(ADR-DOE-CLUSTER-005 R4 の改め 2026-11-15)。以前は保持の間(約 24 時間)の終わった行の全部の
+;; 最大で数え、外れ値の 1 本が保持の間ずっと形の申告を縛った(日次の回の申告 20,804 MiB — 同じ形の近い回の山は 614・3,751・5,610・
+;; 7,025 MiB)。要りの越えで止められた回も終わった行(lost・failed)としてこの数に入るので、止められた直後の置き直しは止められた回の山で
+;; 数える(同じ小さい申告で止めと置き直しを繰り返さない)。
+(setv RECENT-PEAK-RUNS 5)
+
+
 (defrecord ShapeTally
-  "形 1 つの測った山の数え(TaskIndex の中だけの値): peaks = 山の値 → その山を持つ行の数(行が消えても最大を求め直せるよう値ごとに数える)・
-   finished = そのうち finished の行の数。"
-  {:check [(>= finished 0)]}
-  (#^ dict peaks)
-  (#^ int finished))
+  "形 1 つの測った山の数え(TaskIndex の中だけの値 — 族の山を数える family-peaks-of も読む): rows = 形を名乗る行の数(山の無い行を含む —
+   形の族の行を、形の行が無くなった時に外すため)・live = まだ終わっていない行の山の値 → その山を持つ行の数(行が消えても最大を求め直せる
+   よう値ごとに数える)・ended = 終わった行(ENDED-PHASES)のうち山を測った行の id → #(終わった刻 山 finished か)・recent = ended のうち
+   終わった刻の新しい順(同じ刻は id の大きい順)に RECENT-PEAK-RUNS 本の #(終わった刻 id 山 finished か)。"
+  {:check [(>= rows 0)]}
+  (#^ int rows)
+  (#^ dict live)
+  (#^ dict ended)
+  (#^ tuple recent))
 
 
 (defrecord TaskIndex
@@ -61,16 +72,52 @@
   (if (is task.finished-ms None) None (+ task.finished-ms task.retain-ms 1)))
 
 
-(defn #^ (| ShapePeak None) peak-of-tally [#^ ShapeTally tally]
-  "形 1 つの数えから ShapePeak(数える行が無ければ None — 形を peaks から外す)。"
-  (if tally.peaks
-      (ShapePeak :mib (max tally.peaks) :settled (> tally.finished 0))
+(defn #^ tuple recent-runs [#^ (get tuple #(tuple ...)) runs]
+  "終わった行の列 runs(#(終わった刻 id 山 finished か) — 順は問わない)の、終わった刻の新しい順(同じ刻は id の大きい順)に RECENT-PEAK-RUNS 本。"
+  (tuple (cut (sorted runs :key (fn [r] #((get r 0) (get r 1))) :reverse True) 0 RECENT-PEAK-RUNS)))
+
+
+(defn #^ (| ShapePeak None) peak-of-runs [#^ tuple live-peaks #^ tuple recent]
+  "まだ終わっていない行の山の列 live-peaks と近い回の終わった行 recent(recent-runs の答え)から ShapePeak(山が 1 つも無ければ None)。"
+  (setv values (+ (tuple live-peaks) (tuple (gfor r recent (get r 2)))))
+  (if values
+      (ShapePeak :mib (max values) :settled (any (gfor r recent (get r 3))))
       None))
+
+
+(defn #^ (| ShapePeak None) peak-of-tally [#^ ShapeTally tally]
+  "形 1 つの数えから ShapePeak(数える山が無ければ None — 形を peaks から外す)。"
+  (peak-of-runs (tuple tally.live) tally.recent))
+
+
+(defn #^ (| ShapeTally None) tally-of [#^ list parts]
+  "形 1 つの数えの部品 parts([rows live ended])から ShapeTally(形を名乗る行が無ければ None — 形を tallies から外す)。recent は ended から
+   求める。"
+  (setv [rows running ended] parts)
+  (if (> rows 0)
+      (ShapeTally :rows rows :live running :ended ended
+                  :recent (recent-runs (tuple (gfor #(id #(at peak done)) (.items ended) #(at id peak done)))))
+      None))
+
+
+(defn #^ None tally-count [#^ list parts #^ object row #^ int sign]
+  "形の数えの部品 parts([rows live ended] — 呼び手の写し)に行 row を sign(1 = 足す・−1 = 引く)で数える。"
+  (setv (get parts 0) (+ (get parts 0) sign))
+  (when (is-not row.peak-mib None)
+    (if (in row.phase ENDED-PHASES)
+        (if (> sign 0)
+            (setv (get (get parts 2) row.id) #((or row.finished-ms 0) row.peak-mib (= row.phase "finished")))
+            (.pop (get parts 2) row.id None))
+        (do (setv running (get parts 1)
+                  count (+ (.get running row.peak-mib 0) sign))
+            (if (> count 0)
+                (setv (get running row.peak-mib) count)
+                (.pop running row.peak-mib None))))))
 
 
 (defn #^ TaskIndex index-of-rows [#^ tuple rows]
   "全部の行から作った索引(最初の読み・照らしの test の正解)。"
-  (setv live {} held {} tallies {} programs {})
+  (setv live {} held {} parts {} programs {})
   (for [task rows]
     (when task.program
       (setv (get programs task.program) (+ (.get programs task.program 0) 1)))
@@ -79,22 +126,21 @@
             (when (is-not lapse None)
               (setv (get held task.id) lapse)))
         (setv (get live task.id) task))
-    (when (and task.shape (is-not task.peak-mib None))
-      (setv before (.get tallies task.shape))
-      (setv peaks (if (is before None) {} before.peaks))
-      (setv (get peaks task.peak-mib) (+ (.get peaks task.peak-mib 0) 1))
-      (setv (get tallies task.shape) (ShapeTally :peaks peaks
-                                                 :finished (+ (if (is before None) 0 before.finished)
-                                                              (if (= task.phase "finished") 1 0))))))
+    (when task.shape
+      (when (not-in task.shape parts)
+        (setv (get parts task.shape) [0 {} {}]))
+      (tally-count (get parts task.shape) task 1)))
+  (setv tallies (dfor #(shape part) (.items parts) shape (tally-of part)))
   (TaskIndex :live live :held held :earliest (if held (min (.values held)) None) :tallies tallies
-             :peaks (dfor #(shape tally) (.items tallies) shape (peak-of-tally tally)) :programs programs))
+             :peaks (dfor #(shape tally) (.items tallies) :setv peak (peak-of-tally tally) :if (is-not peak None) shape peak)
+             :programs programs))
 
 
 (defn #^ TaskIndex index-after [#^ TaskIndex index #^ dict changes]
   "index に書き changes(task の id → #(前の行か None 書いた後の行か None))を当てた次の索引(index は変えない)。費用は書いた行の数と、
    変わった dict の写し(live は走査の対象の行の数・held は保持の行の数 — どちらも書きの在った時だけ・C の写し)に比例し、保持の行を回らない。"
   (setv live index.live held index.held earliest index.earliest tallies index.tallies programs index.programs
-        live-copied False held-copied False tallies-copied False programs-copied False touched (set))
+        live-copied False held-copied False programs-copied False touched {})
   (for [#(id #(old new)) (.items changes)]
     ;; 走査の対象の行。
     (setv was-live (and (is-not old None) (not (held-row? old))))
@@ -126,34 +172,27 @@
             (.pop programs old-program)))
       (when new-program
         (setv (get programs new-program) (+ (.get programs new-program 0) 1))))
-    ;; 形ごとの山(形を名乗り山を測った行だけ)。
+    ;; 形ごとの数え(形を名乗る行 — 山の無い行は行の数だけ)。形ごとの部品は、この呼びの中で初めて触る時だけ写す(前の索引の値を書き換えない)。
     (for [#(row sign) #(#(old -1) #(new 1))]
-      (when (and (is-not row None) row.shape (is-not row.peak-mib None))
-        (when (not tallies-copied)
-          (setv tallies (dict tallies) tallies-copied True))
-        (setv before (.get tallies row.shape))
-        ;; 形ごとの山の数えは、この呼びの中で初めて触る時だけ写す(前の索引の値を書き換えない)。
-        (setv peaks (if (is before None) {} (if (in row.shape touched) before.peaks (dict before.peaks))))
-        (.add touched row.shape)
-        (setv count (+ (.get peaks row.peak-mib 0) sign))
-        (if (> count 0)
-            (setv (get peaks row.peak-mib) count)
-            (.pop peaks row.peak-mib None))
-        (setv (get tallies row.shape)
-              (ShapeTally :peaks peaks
-                          :finished (+ (if (is before None) 0 before.finished) (if (= row.phase "finished") sign 0)))))))
+      (when (and (is-not row None) row.shape)
+        (when (not-in row.shape touched)
+          (setv before (.get tallies row.shape))
+          (setv (get touched row.shape) (if (is before None) [0 {} {}] [before.rows (dict before.live) (dict before.ended)])))
+        (tally-count (get touched row.shape) row sign))))
   ;; 最小の期限は、最小の行が消えた・延びた時だけ求め直す(足した行は比べるだけ)。
   (when held-copied
     (setv earliest (if held (min (.values held)) None)))
   (setv peaks index.peaks)
   (when touched
-    (setv peaks (dict peaks))
-    (for [shape touched]
-      (setv tally (get tallies shape))
-      (setv peak (peak-of-tally tally))
+    (setv tallies (dict tallies) peaks (dict peaks))
+    (for [#(shape part) (.items touched)]
+      (setv tally (tally-of part))
+      (if (is tally None)
+          (.pop tallies shape None)
+          (setv (get tallies shape) tally))
+      (setv peak (if (is tally None) None (peak-of-tally tally)))
       (if (is peak None)
-          (do (.pop peaks shape None)
-              (.pop tallies shape None))
+          (.pop peaks shape None)
           (setv (get peaks shape) peak))))
   (TaskIndex :live live :held held :earliest earliest :tallies tallies :peaks peaks :programs programs))
 
@@ -161,11 +200,12 @@
 (defclass TaskTable [Table]
   "task の id → TaskRecord の表(頭の註)。Table と同じに読み書きし、加えて索引を task-index で引く。with-writes は書いた行の前と後で索引を
    進めた新しい TaskTable を返す(索引をまだ作っていない表は、子も作らずに最初の読みを待つ)。"
-  (setv __slots__ #("_index"))
+  (setv __slots__ #("_index" "_families"))
 
   (defn #^ None __init__ [self #^ dict base #^ dict delta #^ frozenset removed]
     (.__init__ (super) base delta removed)
-    (object.__setattr__ self "_index" None))
+    (object.__setattr__ self "_index" None)
+    (object.__setattr__ self "_families" None))
 
   (defn #^ "TaskTable" with-writes [self #^ tuple writes]
     "書きの列を当てた新しい TaskTable(この表は変わらない)。何も変わらなければこの表そのもの。"
@@ -200,6 +240,7 @@
   (for [slot #("_base" "_delta" "_removed" "_size" "_flat" "_line" "_at")]
     (object.__setattr__ made slot (getattr table slot)))
   (object.__setattr__ made "_index" index)
+  (object.__setattr__ made "_families" None)
   made)
 
 
@@ -216,3 +257,47 @@
             (object.__setattr__ tasks "_index" (index-of-rows (.rows tasks))))
           tasks._index)
       (index-of-rows (.rows tasks))))
+
+
+(defn #^ dict family-peaks-of [#^ TaskIndex index #^ Table families]
+  "形ごとの測った山を、形の族の近い回の山で補った値(形 → ShapePeak — ADR-DOE-CLUSTER-005 R4 の改め 2026-11-15)を全部の行から知るため:
+   families = 形 → 族の関係(ClusterState.shape-families — 行は shape と family を持つ)。形そのものに近い回の finished の行が在れば
+   形の山のまま。無い形のうち族を持つ形は、族の山(族の全部の形のまだ終わっていない行の山と、族の全部の形の終わった行の近い
+   RECENT-PEAK-RUNS 本 — peak-of-runs)と形の山の大きい方を山にし、settled は族の近い回に finished が在るか。族の山も無ければ形の山のまま。"
+  (when (= (.size families) 0)
+    (return index.peaks))
+  (setv members {})
+  (for [row (.rows families)]
+    (.append (.setdefault members row.family []) row.shape))
+  (setv by-family {})
+  (for [#(family shapes) (.items members)]
+    (setv running [] runs [])
+    (for [shape shapes]
+      (setv tally (.get index.tallies shape))
+      (when (is-not tally None)
+        (.extend running tally.live)
+        (.extend runs tally.recent)))
+    (setv peak (peak-of-runs (tuple running) (recent-runs (tuple runs))))
+    (when (is-not peak None)
+      (setv (get by-family family) peak)))
+  (setv peaks (dict index.peaks))
+  (for [row (.rows families)]
+    (setv own (.get peaks row.shape) family (.get by-family row.family))
+    (when (and (is-not family None) (or (is own None) (not own.settled)))
+      (setv (get peaks row.shape) (ShapePeak :mib (max family.mib (if (is own None) 0 own.mib)) :settled family.settled))))
+  peaks)
+
+
+(defn #^ dict shape-family-peaks [#^ Table tasks #^ Table families]
+  "task の表 tasks と形 → 族の関係 families から family-peaks-of の値を知るため。TaskTable は、同じ families の object に対する答えを
+   表に覚える(表も families も書きのたびに新しい object になるので、覚えた値は同じ 2 つの object の間でだけ使う — 置く判断は 1 歩に
+   何度もこの値を読む)。素の Table は覚えずに毎回求める。"
+  (setv index (task-index tasks))
+  (when (not (isinstance tasks TaskTable))
+    (return (family-peaks-of index families)))
+  (setv kept tasks._families)
+  (when (and (is-not kept None) (is (get kept 0) families))
+    (return (get kept 1)))
+  (setv peaks (family-peaks-of index families))
+  (object.__setattr__ tasks "_families" #(families peaks))
+  peaks)

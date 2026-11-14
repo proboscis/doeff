@@ -2001,11 +2001,11 @@
   (RemoteJob [program needs name environ]
     (<- outcome (remote-outcome link program needs name environ))
     (resume (settled-value outcome)))
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib rerun shape ungated preemptible queue-limit-seconds]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib rerun shape ungated preemptible queue-limit-seconds family]
     ;; 本番の detached-cluster と同じく、effect の EnvVar の tuple を本文の形(名 → 値の object)へ綴ってから送る(#2179)。
     (<- environ-body dict (env-mapping environ))
     (<- submitted (submit-detached link program key needs name (float lease-seconds) (float retain-seconds) environ-body
-                                   (| (task-placing-json priority limits memory-mib shape) (task-notify-json notify) (task-rerun-json rerun)
+                                   (| (task-placing-json priority limits memory-mib shape family) (task-notify-json notify) (task-rerun-json rerun)
                                          (task-ungated-json ungated) (task-preemptible-json preemptible) (task-queue-limit-json queue-limit-seconds))))
     (resume submitted))
   (AwaitDetachedOutbox [prefix timeout-seconds kinds]
