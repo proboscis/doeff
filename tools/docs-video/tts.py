@@ -25,8 +25,6 @@ import wave
 from pathlib import Path
 
 ENDPOINT = "https://api.openai.com/v1/audio/speech"
-# A relay of the speech endpoint (OPENAI_BASE_URL, e.g. ending in /v1) replaces the host and the version.
-BASE_URL = os.environ.get("OPENAI_BASE_URL")
 MODEL = "gpt-4o-mini-tts"
 VOICE = "marin"
 INSTRUCTIONS = (
@@ -53,7 +51,7 @@ def spoken(text: str) -> str:
     return text
 
 
-def say(key: str, text: str) -> bytes:
+def say(key: str, base_url: str | None, text: str) -> bytes:
     """Get one line of narration as WAV bytes from the speech endpoint."""
     body = json.dumps(
         {
@@ -65,7 +63,7 @@ def say(key: str, text: str) -> bytes:
         }
     ).encode()
     request = urllib.request.Request(
-        f"{BASE_URL.rstrip('/')}/audio/speech" if BASE_URL else ENDPOINT,
+        f"{base_url.rstrip('/')}/audio/speech" if base_url else ENDPOINT,
         data=body,
         headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
     )
@@ -93,7 +91,10 @@ def main() -> None:
     """Say the lines of one page and record how long each one lasts."""
     if len(sys.argv) < 2:
         raise SystemExit(__doc__)
-    key = os.environ.get("OPENAI_API_KEY")
+    environment = dict(os.environ)  # the one place that reads the environment
+    key = environment.get("OPENAI_API_KEY")
+    # A relay of the speech endpoint (OPENAI_BASE_URL, e.g. ending in /v1) replaces the host and the version.
+    base_url = environment.get("OPENAI_BASE_URL")
     if not key:
         raise SystemExit("OPENAI_API_KEY is not set")
     page, only = sys.argv[1], set(sys.argv[2:])
@@ -109,7 +110,7 @@ def main() -> None:
         if not only or line["id"] in only
     ]
     with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
-        audios = list(pool.map(lambda line: say(key, line["text"]), lines))
+        audios = list(pool.map(lambda line: say(key, base_url, line["text"]), lines))
     for line, audio in zip(lines, audios, strict=True):
         (out / f"{line['id']}.wav").write_bytes(audio)
         seconds[line["id"]] = seconds_of(audio)

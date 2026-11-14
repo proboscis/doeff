@@ -720,14 +720,22 @@ def file_scan(root: Path, site: tuple[str, ...], rel: str) -> list[Hit]:
     return [kept(h) for h in (*file_hits(rel, text, site), *(line_hits(rel, text) if text else ()))]
 
 
-def scan(root: Path, jobs: int) -> tuple[list[str], list[Hit]]:
+@dataclass(frozen=True)
+class Scan:
+    """The files looked at and every hit on them."""
+
+    files: list[str]
+    hits: list[Hit]
+
+
+def scan(root: Path, jobs: int) -> Scan:
     """Return the files looked at and every hit on them, reading files in ``jobs`` processes."""
     files = tree_files(root)
     one = partial(file_scan, root, site_pages(root))
     if jobs <= 1:
-        return files, [h for rel in files for h in one(rel)]
+        return Scan(files, [h for rel in files for h in one(rel)])
     with ProcessPoolExecutor(jobs) as pool:
-        return files, [h for hits in pool.map(one, files, chunksize=32) for h in hits]
+        return Scan(files, [h for hits in pool.map(one, files, chunksize=32) for h in hits])
 
 
 # ---- grouping ---------------------------------------------------------------------------------
@@ -964,7 +972,8 @@ def main(argv: list[str] | None = None) -> int:
         help="exit 1 when a hit of these kinds (comma-separated, e.g. 1,2,4) is not kept",
     )
     args = parser.parse_args(argv)
-    files, hits = scan(args.root, args.jobs)
+    scanned = scan(args.root, args.jobs)
+    files, hits = scanned.files, scanned.hits
     if args.table == "-":
         sys.stdout.write(table(hits, args.format))
     else:
