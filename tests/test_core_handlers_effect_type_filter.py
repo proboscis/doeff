@@ -117,13 +117,21 @@ def test_an_effect_outside_the_types_does_not_enter_the_handler() -> None:
     # The last in the list is the innermost: Ask skips state and reaches the outer reader. state is a Rust handler inside the VM
     # with no Python body, so count by the number of times the VM called a handler.
     stack = [reader({"a": 1, "b": 2, "c": 3}), state()]
-    result, calls = _handler_calls_of(with_handlers(stack, _asks_then_state()))
-    _, reading = _handler_calls_of(Pure(None))  # the part where the later reading effect calls vm_probe_handler
-    assert result == 6
-    assert calls - reading == 5, "handlers are called only for the reader's 3 Asks and state's Put and Get (2 times) (Ask skips state)"
+    counted = _handler_calls_of(with_handlers(stack, _asks_then_state()))
+    reading = _handler_calls_of(Pure(None)).calls  # the part where the later reading effect calls vm_probe_handler
+    assert counted.result == 6
+    assert counted.calls - reading == 5, "handlers are called only for the reader's 3 Asks and state's Put and Get (2 times) (Ask skips state)"
 
 
-def _handler_calls_of(program: object) -> tuple[object, int]:
+@dataclass(frozen=True)
+class _HandlerCalls:
+    """The answer of a program, and the number of times the VM called a handler while it ran."""
+
+    result: object
+    calls: int
+
+
+def _handler_calls_of(program: object) -> _HandlerCalls:
     """The answer of the program, and the number of times the VM called a handler while it ran (the difference of ReadVmWorkCounts before and after -- including the 1 call of the later reading)."""
 
     @do
@@ -131,7 +139,7 @@ def _handler_calls_of(program: object) -> tuple[object, int]:
         _, before = yield ReadVmWorkCounts()
         value = yield program
         _, after = yield ReadVmWorkCounts()
-        return value, after - before
+        return _HandlerCalls(value, after - before)
 
     return doeff_run(vm_probe_handler(counted()))
 

@@ -40,10 +40,10 @@ from doeff import Pass, Resume, Spawn, handler, run
 class Heard:
     """What a listening handler heard, in order."""
 
-    events: tuple[str, ...] = ()
+    mut_events: tuple[str, ...] = ()
 
     def add(self, event: str) -> None:
-        self.events = (*self.events, event)
+        self.mut_events = (*self.mut_events, event)
 
 
 def answers(where: str, heard: Heard):
@@ -100,12 +100,12 @@ if __name__ == "__main__":
             )
         )
     )
-    for event in heard.events[:4]:
+    for event in heard.mut_events[:4]:
         print(" ", event)
-    print(" ", next(event for event in heard.events if "Order" in event))
+    print(" ", next(event for event in heard.mut_events if "Order" in event))
     print(
         "  an Order outside paper:",
-        any(e.startswith("outside") and "Order" in e for e in heard.events),
+        any(e.startswith("outside") and "Order" in e for e in heard.mut_events),
     )
     print(f"  the close of bar 20: {BARS[20].close}, the fill: {BARS[20].close * 1.0005}")
 
@@ -119,9 +119,9 @@ if __name__ == "__main__":
     )
     print(f"  pnl {pnl} at {ended:%H:%M}, after {time.monotonic() - started:.3f} s")
     print(
-        f"  {seen.events.count('Delay')} Delay, {seen.events.count('Tick')} Tick; the clock spawned {len(spawned.events)} task"
+        f"  {seen.mut_events.count('Delay')} Delay, {seen.mut_events.count('Tick')} Tick; the clock spawned {len(spawned.mut_events)} task"
     )
-    print("  the first effects:", seen.events[:4])
+    print("  the first effects:", seen.mut_events[:4])
 
     print("-- wall-clock-waits: the same 60 bars, 10 ms apart, on each clock")
     on_wall, on_virtual = Heard(), Heard()
@@ -137,5 +137,5 @@ if __name__ == "__main__":
     print(
         f"  virtual clock: pnl {virtual}, {(clock_end - OPEN).total_seconds():.2f} s on its clock"
     )
-    counts = {name: on_wall.events.count(name) for name in ("Delay", "Tick", "Order", "Log")}
-    print(f"  the same effects in the same order: {on_wall.events == on_virtual.events}; {counts}")
+    counts = {name: on_wall.mut_events.count(name) for name in ("Delay", "Tick", "Order", "Log")}
+    print(f"  the same effects in the same order: {on_wall.mut_events == on_virtual.mut_events}; {counts}")

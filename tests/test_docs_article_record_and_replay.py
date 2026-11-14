@@ -33,14 +33,15 @@ replacing I/O); the article links to the first three posts.
 from __future__ import annotations
 
 import itertools
-import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
 import pytest
+from doeff_core_effects import ReadEnvironment, subprocess_handler
 
+from doeff import run, with_handlers
 from tests.cli.cli_child import with_settings
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,7 +89,8 @@ def _source(name: str) -> str:
 
 def _python() -> str:
     """The interpreter that runs the examples: the repository's doeff, or DOEFF_ARTICLE_PYTHON's environment."""
-    return os.environ.get("DOEFF_ARTICLE_PYTHON") or sys.executable
+    entries = run(with_handlers([subprocess_handler], ReadEnvironment(("DOEFF_ARTICLE_PYTHON",))))
+    return next((entry.value for entry in entries if entry.value), sys.executable)
 
 
 def _child(arguments: list[str], deadline_scale_factor: float) -> str:
