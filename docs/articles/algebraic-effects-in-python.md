@@ -176,14 +176,20 @@ def draw_hand(s: Fight, n: int = 5):
     return s, tuple(hand)
 
 
-def hit(s: Fight, card: str) -> tuple[Fight, int]:
+@dataclass(frozen=True)
+class Hit:
+    state: Fight
+    damage: int
+
+
+def hit(s: Fight, card: str) -> Hit:
     """Play one card on the state: returns the new state and the damage dealt (a pure function)."""
     cost, dmg, blk = CARDS[card]
     dmg = dmg * 3 // 2 if s.vulnerable else dmg
     s = replace(s, enemy_hp=s.enemy_hp - dmg, block=s.block + blk)
     if card == "Bash":
         s = replace(s, vulnerable=2)
-    return s, dmg
+    return Hit(s, dmg)
 
 
 @do
@@ -201,9 +207,9 @@ def battle(s: Fight = Fight()):
             card = hand[pick]
             hand = hand[:pick] + hand[pick + 1 :]
             energy -= CARDS[card][0]
-            s, dmg = hit(s, card)
-            s = replace(s, discard=s.discard + (card,))
-            yield Played(card, dmg)
+            dealt = hit(s, card)
+            s = replace(dealt.state, discard=dealt.state.discard + (card,))
+            yield Played(card, dealt.damage)
             if s.enemy_hp <= 0:
                 return "win", s.turn
         s = replace(s, discard=s.discard + hand)
@@ -410,7 +416,7 @@ def monte_carlo(playouts: int):
         for i in [*affordable(effect), None]:
             wins = 0
             for n in range(playouts):
-                s = effect.state if i is None else hit(effect.state, effect.hand[i])[0]
+                s = effect.state if i is None else hit(effect.state, effect.hand[i]).state
                 if s.enemy_hp <= 0:
                     wins += 1
                     continue

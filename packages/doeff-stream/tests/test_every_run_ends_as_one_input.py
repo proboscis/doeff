@@ -88,7 +88,7 @@ def recording(first_effects: tuple, on_started: dict | None = None, expected_end
     return step
 
 
-def run_case(step) -> tuple:
+def run_case(step) -> tuple[object, ...]:
     return simulate_fold(
         step, (), merge(subscribe(Kick, Started), timers()), events=(Kick(),), start_time=T0
     )

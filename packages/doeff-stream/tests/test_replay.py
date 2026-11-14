@@ -45,7 +45,7 @@ def fetch(item: str) -> Run:
     return Run(("fetch", item), Pure(item))
 
 
-def shape(effects: tuple) -> tuple:
+def shape(effects: tuple) -> tuple[object, ...]:
     """The effects with each ``Run`` as its key: a program is not compared by value (two ``Pure`` are not equal)."""
     return tuple(("run", effect.key) if isinstance(effect, Run) else effect for effect in effects)
 

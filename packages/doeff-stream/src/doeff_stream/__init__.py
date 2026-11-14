@@ -14,48 +14,26 @@
   inputs and the caller's (simulated) handlers in, the fold's value out.
 """
 
-from doeff_stream._fold import fold
-from doeff_stream._harness import Replay, Stepped, replay
-from doeff_stream._measure import FoldMeasured
-from doeff_stream._sim import simulate_fold
-from doeff_stream._source import Inputs, Source, merge, subscribe, timers
-from doeff_stream._step import (
-    Answered,
-    Arm,
-    Cancelled,
-    CancelRun,
-    Disarm,
-    Finish,
-    Next,
-    Raised,
-    Run,
-    RunEnd,
-    StepEffect,
-    StepYieldedEffectError,
-)
-
-__all__ = [
-    "Answered",
-    "Arm",
-    "CancelRun",
-    "Cancelled",
-    "Disarm",
-    "Finish",
-    "FoldMeasured",
-    "Inputs",
-    "Next",
-    "Raised",
-    "Replay",
-    "Run",
-    "RunEnd",
-    "Source",
-    "StepEffect",
-    "StepYieldedEffectError",
-    "Stepped",
-    "fold",
-    "merge",
-    "replay",
-    "simulate_fold",
-    "subscribe",
-    "timers",
-]
+from doeff_stream._fold import fold as fold
+from doeff_stream._harness import Replay as Replay
+from doeff_stream._harness import Stepped as Stepped
+from doeff_stream._harness import replay as replay
+from doeff_stream._measure import FoldMeasured as FoldMeasured
+from doeff_stream._sim import simulate_fold as simulate_fold
+from doeff_stream._source import Inputs as Inputs
+from doeff_stream._source import Source as Source
+from doeff_stream._source import merge as merge
+from doeff_stream._source import subscribe as subscribe
+from doeff_stream._source import timers as timers
+from doeff_stream._step import Answered as Answered
+from doeff_stream._step import Arm as Arm
+from doeff_stream._step import Cancelled as Cancelled
+from doeff_stream._step import CancelRun as CancelRun
+from doeff_stream._step import Disarm as Disarm
+from doeff_stream._step import Finish as Finish
+from doeff_stream._step import Next as Next
+from doeff_stream._step import Raised as Raised
+from doeff_stream._step import Run as Run
+from doeff_stream._step import RunEnd as RunEnd
+from doeff_stream._step import StepEffect as StepEffect
+from doeff_stream._step import StepYieldedEffectError as StepYieldedEffectError

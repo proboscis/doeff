@@ -195,38 +195,38 @@ class _KeptReader:
     """What the handler keeps for one reader name: the id read up to in each kept channel's stream and the notices
     handed out without an acknowledgement, oldest first."""
 
-    __slots__ = ("handed", "positions")
+    __slots__ = ("_mut_handed", "positions")
 
     def __init__(self) -> None:
         """Start a reader that has read nothing (its first subscription sets the positions at the streams' ends)."""
         self.positions: dict[str, str] = {}
-        self.handed: tuple[_Handed, ...] = ()
+        self._mut_handed: tuple[_Handed, ...] = ()
 
     def due(self, now: float, redeliver_seconds: float) -> _Handed | None:
         """The oldest unacknowledged notice whose time to be handed out again has come, or ``None``."""
-        return next((held for held in self.handed if now - held.at >= redeliver_seconds), None)
+        return next((held for held in self._mut_handed if now - held.at >= redeliver_seconds), None)
 
     def seconds_to_due(self, now: float, redeliver_seconds: float) -> float | None:
         """How long until the oldest unacknowledged notice is due (``None`` = none is held)."""
-        if not self.handed:
+        if not self._mut_handed:
             return None
-        return max(0.0, redeliver_seconds - (now - self.handed[0].at))
+        return max(0.0, redeliver_seconds - (now - self._mut_handed[0].at))
 
     def hand(self, notice: Announcement, now: float) -> Announcement:
         """Hand ``notice`` out (again) at ``now``: it is the newest unacknowledged one from now on."""
-        kept = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
-        self.handed = (*kept, _Handed(notice, now))
+        kept = tuple(held for held in self._mut_handed if not _same_notice(held.notice, notice))
+        self._mut_handed = (*kept, _Handed(notice, now))
         return notice
 
     def hand_all(self, notices: tuple[Announcement, ...], now: float) -> tuple[Announcement, ...]:
         """Hand every one of ``notices`` out at ``now``, in order (``hand`` for one read's entries at once)."""
-        kept = tuple(held for held in self.handed if not any(_same_notice(held.notice, one) for one in notices))
-        self.handed = (*kept, *(_Handed(notice, now) for notice in notices))
+        kept = tuple(held for held in self._mut_handed if not any(_same_notice(held.notice, one) for one in notices))
+        self._mut_handed = (*kept, *(_Handed(notice, now) for notice in notices))
         return notices
 
     def acknowledged(self, notice: Announcement) -> None:
         """Forget ``notice``: it is not handed out again (nothing changes if it is not held)."""
-        self.handed = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
+        self._mut_handed = tuple(held for held in self._mut_handed if not _same_notice(held.notice, notice))
 
 
 def _same_notice(one: Announcement, other: Announcement) -> bool:
@@ -248,11 +248,21 @@ class _Listening:
     """The client's side of one ``ChannelSubscription``: redis-py's ``PubSub`` connection for its Pub/Sub channels
     (``None`` when it reads kept channels only), its reader's state for the kept ones, the reads in flight
     between two ``NextAnnouncement``s of a subscription that reads kept channels — the Pub/Sub read and the kept
-    streams' read ahead, with the entries it took and has not handed out (``ahead`` — oldest first; the module's
-    notes on the read ahead) — and the notices the last read took that are not handed out yet (``taken`` — oldest
+    streams' read ahead, with the entries it took and has not handed out (``mut_ahead`` — oldest first; the module's
+    notes on the read ahead) — and the notices the last read took that are not handed out yet (``mut_taken`` — oldest
     first). Matched by identity."""
 
-    __slots__ = ("ahead", "came", "drained", "pubsub", "pubsub_read", "reader", "stream_read", "subscription", "taken")
+    __slots__ = (
+        "came",
+        "drained",
+        "mut_ahead",
+        "mut_pubsub_read",
+        "mut_stream_read",
+        "mut_taken",
+        "pubsub",
+        "reader",
+        "subscription",
+    )
 
     def __init__(
         self, subscription: ChannelSubscription, pubsub: "PubSub | None", reader: _KeptReader | None
@@ -261,24 +271,24 @@ class _Listening:
         self.subscription: Final = subscription
         self.pubsub: Final = pubsub
         self.reader: Final = reader
-        self.pubsub_read: asyncio.Task[tuple[Announcement, ...]] | None = None
-        self.stream_read: asyncio.Task[None] | None = None
-        self.ahead: tuple[_ReadAhead, ...] = ()
-        # ``came`` is set while ``ahead`` holds entries (a waiting ask wakes on it); ``drained`` is set by each
+        self.mut_pubsub_read: asyncio.Task[tuple[Announcement, ...]] | None = None
+        self.mut_stream_read: asyncio.Task[None] | None = None
+        self.mut_ahead: tuple[_ReadAhead, ...] = ()
+        # ``came`` is set while ``mut_ahead`` holds entries (a waiting ask wakes on it); ``drained`` is set by each
         # hand-out (a read ahead that holds ``_READ_BATCH`` entries waits for it).
         self.came: Final = asyncio.Event()
         self.drained: Final = asyncio.Event()
-        self.taken: tuple[Announcement, ...] = ()
+        self.mut_taken: tuple[Announcement, ...] = ()
 
     def took_ahead(self, entries: tuple[Announcement, ...]) -> None:
         """Keep the entries one ``XREAD`` of the read ahead took, with when they came (the read ahead's side)."""
         at = time.time()
-        self.ahead = (*self.ahead, *(_ReadAhead(entry, at) for entry in entries))
+        self.mut_ahead = (*self.mut_ahead, *(_ReadAhead(entry, at) for entry in entries))
         self.came.set()
 
     def hand_ahead(self) -> tuple[Announcement, ...]:
         """Take every entry the read ahead holds, to hand out now (empty when it holds none); a late one is logged."""
-        ahead, self.ahead = self.ahead, ()
+        ahead, self.mut_ahead = self.mut_ahead, ()
         self.came.clear()
         self.drained.set()
         if ahead:
@@ -287,26 +297,26 @@ class _Listening:
 
     def handed_from_taken(self) -> Announcement | None:
         """The oldest notice the last read took and has not handed out yet (it is handed out now), or ``None``."""
-        if not self.taken:
+        if not self.mut_taken:
             return None
-        first, self.taken = self.taken[0], self.taken[1:]
+        first, self.mut_taken = self.mut_taken[0], self.mut_taken[1:]
         return first
 
     def took(self, notices: tuple[Announcement, ...]) -> Announcement:
         """Keep what one read took (never empty) and hand out its first notice."""
-        first, self.taken = notices[0], notices[1:]
+        first, self.mut_taken = notices[0], notices[1:]
         return first
 
     def stop_reads(self) -> None:
         """Cancel the reads in flight and drop what was taken and not handed out (the subscription is closed — its
         connection goes with it)."""
-        for read in (self.pubsub_read, self.stream_read):
+        for read in (self.mut_pubsub_read, self.mut_stream_read):
             if read is not None:
                 read.cancel()
-        self.pubsub_read = None
-        self.stream_read = None
-        self.ahead = ()
-        self.taken = ()
+        self.mut_pubsub_read = None
+        self.mut_stream_read = None
+        self.mut_ahead = ()
+        self.mut_taken = ()
 
 
 def _added_at(receipt: str) -> float:
@@ -571,7 +581,7 @@ async def _read_ahead(client: "Redis", listening: _Listening, silence_seconds: f
         raise LookupError(f"{listening.subscription!r} reads no kept channel")
     cursor = {channel: reader.positions[channel] for channel in listening.subscription.kept}
     while True:
-        room = _READ_BATCH - len(listening.ahead)
+        room = _READ_BATCH - len(listening.mut_ahead)
         if room <= 0:
             listening.drained.clear()
             await listening.drained.wait()
@@ -599,27 +609,27 @@ async def _next_with_kept(
         due = reader.due(now, redeliver_seconds)
         if due is not None:
             return (reader.hand(due.notice, now),)
-        if listening.pubsub is not None and listening.pubsub_read is None:
-            listening.pubsub_read = asyncio.ensure_future(_next_notices(listening.pubsub, silence_seconds))
-        if listening.stream_read is None:
-            listening.stream_read = asyncio.ensure_future(_read_ahead(receiving, listening, silence_seconds))
-        if not listening.ahead and not listening.stream_read.done():
+        if listening.pubsub is not None and listening.mut_pubsub_read is None:
+            listening.mut_pubsub_read = asyncio.ensure_future(_next_notices(listening.pubsub, silence_seconds))
+        if listening.mut_stream_read is None:
+            listening.mut_stream_read = asyncio.ensure_future(_read_ahead(receiving, listening, silence_seconds))
+        if not listening.mut_ahead and not listening.mut_stream_read.done():
             came = asyncio.ensure_future(listening.came.wait())
-            reads = {read for read in (listening.pubsub_read, listening.stream_read, came) if read is not None}
+            reads = {read for read in (listening.mut_pubsub_read, listening.mut_stream_read, came) if read is not None}
             try:
                 await asyncio.wait(
                     reads, timeout=reader.seconds_to_due(now, redeliver_seconds), return_when=asyncio.FIRST_COMPLETED
                 )
             finally:
                 came.cancel()
-        if listening.stream_read.done():
+        if listening.mut_stream_read.done():
             # The read ahead ends only by failing: its lost connection is this call's (what it held is read again
             # by the next subscription — the positions did not move past it).
-            failed, listening.stream_read = listening.stream_read, None
+            failed, listening.mut_stream_read = listening.mut_stream_read, None
             failed.result()
         notices: tuple[Announcement, ...] = ()
-        if listening.pubsub_read is not None and listening.pubsub_read.done():
-            read_notices, listening.pubsub_read = listening.pubsub_read, None
+        if listening.mut_pubsub_read is not None and listening.mut_pubsub_read.done():
+            read_notices, listening.mut_pubsub_read = listening.mut_pubsub_read, None
             notices = read_notices.result()
         entries = listening.hand_ahead()
         if entries:
