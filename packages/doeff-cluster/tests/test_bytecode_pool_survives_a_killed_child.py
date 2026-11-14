@@ -11,10 +11,11 @@
 
 from __future__ import annotations
 
-import os
 import subprocess
 import sys
 from pathlib import Path
+
+from doeff_cluster._foundation.process_environ import child_environ
 
 #: 焼く道具(本番の準備が worker 自身のコードから起こす file)と、worker の版の保存先の入口。
 SRC = Path(__file__).resolve().parents[1] / "src" / "doeff_cluster"
@@ -51,7 +52,7 @@ def test_a_child_killed_mid_bake_does_not_fail_the_bake(tmp_path: Path) -> None:
     mark = tmp_path / "killed"
     lines = "".join(f"{tree}\t{rel}\t{rel.removesuffix('.py').removesuffix('.hy').replace('/', '.')}\n" for rel in rels)
     argv = [sys.executable, "-m", "hy", str(TOOL), "--jobs", "2", "--store-module", str(STORE_MODULE), "--path", str(tree)]
-    env = {**os.environ, "KILL_MARK": str(mark), "PYTHONDONTWRITEBYTECODE": "1"}
+    env = {**child_environ((), ()), "KILL_MARK": str(mark), "PYTHONDONTWRITEBYTECODE": "1"}
     done = subprocess.run(argv, input=lines, capture_output=True, text=True, env=env, check=False)
 
     assert mark.exists(), "模擬の子が殺されていない(模擬が効いていない)"

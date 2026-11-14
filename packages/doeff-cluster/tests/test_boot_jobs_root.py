@@ -5,10 +5,11 @@ boot.sh の全部は走らせず(worker を起こす)、3 つの関数の本文�
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 from pathlib import Path
+
+from doeff_cluster._foundation.process_environ import named_environ
 
 BOOT = Path(__file__).resolve().parents[1] / "deploy" / "boot.sh"
 FUNCTIONS = ("jobs_root_link", "generation_dir_drop", "jobs_root_sweep")
@@ -22,7 +23,7 @@ def _functions() -> str:
 
 
 def _run(call: str, jobs_root: Path | None) -> subprocess.CompletedProcess[str]:
-    env = {"PATH": os.environ["PATH"]}
+    env = {"PATH": named_environ(("PATH",))["PATH"]}
     if jobs_root is not None:
         env["WORKER_JOBS_ROOT"] = str(jobs_root)
     done = subprocess.run(["sh", "-c", f"{_functions()}\n{call}"], env=env, capture_output=True, text=True, timeout=30)

@@ -40,6 +40,7 @@ import sys
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
 
@@ -248,7 +249,15 @@ def busy(tmp_path: Path) -> Iterator[Path]:
         child.wait()
 
 
-def _cache_for_gc(tmp_path: Path, busy: Path) -> tuple[Path, Path]:
+@dataclass(frozen=True)
+class _GcPlace:
+    """gc の検の置き場: uv の cache と、venv を持つ作業木を並べる dir。"""
+
+    cache: Path
+    worktrees: Path
+
+
+def _cache_for_gc(tmp_path: Path, busy: Path) -> _GcPlace:
     cache = tmp_path / "cache"
     worktrees = tmp_path / "worktrees"
     _write(cache / "archive-v0" / "OLD" / "m.py", "old\n")
@@ -276,13 +285,14 @@ def _cache_for_gc(tmp_path: Path, busy: Path) -> tuple[Path, Path]:
     ]:
         _age(path)
     os.utime(young.parent, None)
-    return cache, worktrees
+    return _GcPlace(cache, worktrees)
 
 
 def test_gc_removes_only_old_unshared_and_unused_units(
     tmp_path: Path, busy: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    cache, worktrees = _cache_for_gc(tmp_path, busy)
+    place = _cache_for_gc(tmp_path, busy)
+    cache, worktrees = place.cache, place.worktrees
     real = uv_cache.process_paths()
     assert real is not None
     assert str(busy) in real
@@ -316,7 +326,8 @@ def test_gc_removes_only_old_unshared_and_unused_units(
 
 
 def test_count_removes_nothing(tmp_path: Path, busy: Path) -> None:
-    cache, worktrees = _cache_for_gc(tmp_path, busy)
+    place = _cache_for_gc(tmp_path, busy)
+    cache, worktrees = place.cache, place.worktrees
     before = sorted(str(p) for p in tmp_path.rglob("*"))
     result = uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=True, every_seconds=None)
     # 足すのは錠の file だけ(同じ cache の gc と並ばない)。
@@ -328,7 +339,8 @@ def test_count_removes_nothing(tmp_path: Path, busy: Path) -> None:
 
 
 def test_gc_waits_out_the_interval(tmp_path: Path, busy: Path) -> None:
-    cache, worktrees = _cache_for_gc(tmp_path, busy)
+    place = _cache_for_gc(tmp_path, busy)
+    cache, worktrees = place.cache, place.worktrees
     assert uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=3600)["ran"] is True
     assert uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=3600) == {
         "verb": "gc",
@@ -400,7 +412,7 @@ def test_gc_keeps_entries_a_running_process_has_loaded(
 DAY = 86400
 
 
-def _cache_for_size_budget(tmp_path: Path) -> tuple[Path, Path]:
+def _cache_for_size_budget(tmp_path: Path) -> _GcPlace:
     """予算の消しの cache: 期限(7 日)の内で floor(1 日)を過ぎた項目と、守る項目。
 
     OLDEST(5 日)・OLDER(4 日)・OLD(3 日)は cache だけが持つ展開済みの wheel。ENVLINK(3 日)は環境 env(3 日)と同じ中身を
@@ -433,7 +445,7 @@ def _cache_for_size_budget(tmp_path: Path) -> tuple[Path, Path]:
     ]:
         _age(archive / name, now - days * DAY)
     _age(env, now - 3 * DAY)
-    return cache, worktrees
+    return _GcPlace(cache, worktrees)
 
 
 def _size_budget_gc(cache: Path, worktrees: Path, size_budget: int) -> dict:
@@ -459,7 +471,8 @@ def test_gc_size_budget_counts_only_bytes_the_cache_alone_holds(
     tmp_path: Path, loaded: None
 ) -> None:
     """venv が hardlink で持つ PINNED の 4 MiB は数えず、展開済みの wheel と環境が共に持つ中身は 1 度だけ数える。予算の内なら消さない。"""
-    cache, worktrees = _cache_for_size_budget(tmp_path)
+    place = _cache_for_size_budget(tmp_path)
+    cache, worktrees = place.cache, place.worktrees
 
     result = _size_budget_gc(cache, worktrees, 1 << 40)
 
@@ -476,7 +489,8 @@ def test_gc_size_budget_counts_only_bytes_the_cache_alone_holds(
 
 def test_gc_size_budget_removes_the_oldest_first_until_within(tmp_path: Path, loaded: None) -> None:
     """和が予算を 1 byte 越えるだけなら、最も古い消せる項目(OLDEST — 消せない PINNED・SYMLINKED・LOADED はより古い)だけを消す。"""
-    cache, worktrees = _cache_for_size_budget(tmp_path)
+    place = _cache_for_size_budget(tmp_path)
+    cache, worktrees = place.cache, place.worktrees
     usage = _size_budget_gc(cache, worktrees, 1 << 40)["size-budget"]["usage-before"]
 
     size_budget = _size_budget_gc(cache, worktrees, usage - 1)["size-budget"]
@@ -499,7 +513,8 @@ def test_gc_size_budget_removes_the_oldest_first_until_within(tmp_path: Path, lo
 def test_gc_size_budget_never_removes_held_or_young_units(tmp_path: Path, loaded: None) -> None:
     """予算 0 でも、venv が hardlink か symlink で指す項目・走っている process が読み込んだ項目・floor の内の項目は消さない。
     展開済みの wheel と環境が共に持つ中身は、両方を消して戻った byte に数える。"""
-    cache, worktrees = _cache_for_size_budget(tmp_path)
+    place = _cache_for_size_budget(tmp_path)
+    cache, worktrees = place.cache, place.worktrees
 
     result = _size_budget_gc(cache, worktrees, 0)
 
@@ -524,8 +539,9 @@ def test_gc_linked_limit_counts_symlinked_bytes_in_the_venv_store_not_the_cache_
 ) -> None:
     """残る venv が symlink で指す SYMLINKED は venv の持ち分の置き場に数え(答えの links)、置き場の上限を渡すと予算の和から外す。
     上限を渡さなければ、置き場を数えるだけで、その byte は予算の和に入ったまま。"""
-    cache, worktrees = _cache_for_size_budget(tmp_path)
-    symlinked = uv_cache.measure(cache / "archive-v0" / "SYMLINKED")[0].bytes
+    place = _cache_for_size_budget(tmp_path)
+    cache, worktrees = place.cache, place.worktrees
+    symlinked = uv_cache.measure(cache / "archive-v0" / "SYMLINKED").tally.bytes
 
     counted = _size_budget_gc(cache, worktrees, 1 << 40)
     held = uv_cache.gc(
@@ -575,7 +591,7 @@ def test_gc_linked_limit_removes_the_oldest_idle_symlink_venvs_until_within(
     holder = _symlinked_venv(held / "c-1" / ".venv", entries["HELD"])
     for path, days in [(aged, 3), (brief, 2), (holder, 3), *((e, 3) for e in entries.values())]:
         _age(path, now - days * DAY)
-    each = uv_cache.measure(entries["AGED"])[0].bytes
+    each = uv_cache.measure(entries["AGED"]).tally.bytes
 
     def run(linked_limit: int) -> dict:
         return uv_cache.gc(
@@ -620,14 +636,16 @@ def test_gc_linked_limit_removes_the_oldest_idle_symlink_venvs_until_within(
 
 
 def test_gc_without_a_size_budget_only_expires(tmp_path: Path, loaded: None) -> None:
-    cache, worktrees = _cache_for_size_budget(tmp_path)
+    place = _cache_for_size_budget(tmp_path)
+    cache, worktrees = place.cache, place.worktrees
     result = uv_cache.gc(cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=None)
     assert "size_budget" not in result
     assert len(list((cache / "archive-v0").iterdir())) == 8
 
 
 def test_gc_keeps_venvs_when_processes_are_unreadable(tmp_path: Path, busy: Path) -> None:
-    cache, worktrees = _cache_for_gc(tmp_path, busy)
+    place = _cache_for_gc(tmp_path, busy)
+    cache, worktrees = place.cache, place.worktrees
     uv_cache.gc(
         cache, [worktrees], 7.0, 3, dry_run=False, every_seconds=None, proc=tmp_path / "no-proc"
     )
@@ -854,14 +872,14 @@ class _Clock:
     """keep の眠りを数える偽の時計 — 眠った秒を足し、after 秒を越えたら on_wake を 1 度撃つ。"""
 
     def __init__(self, after: float = float("inf"), on_wake=None) -> None:
-        self.slept = 0.0
+        self.mut_slept = 0.0
         self.after = after
-        self.on_wake = on_wake
+        self.mut_on_wake = on_wake
 
     def __call__(self, seconds: float) -> None:
-        self.slept += seconds
-        if self.on_wake is not None and self.slept >= self.after:
-            wake, self.on_wake = self.on_wake, None
+        self.mut_slept += seconds
+        if self.mut_on_wake is not None and self.mut_slept >= self.after:
+            wake, self.mut_on_wake = self.mut_on_wake, None
             wake()
 
 
@@ -876,7 +894,7 @@ def test_keep_runs_upkeep_every_gc_period_until_a_later_keeper_claims(tmp_path: 
 
     def run(where: Path, got: object) -> dict[str, object]:
         assert (where, got) == (cache, settings)
-        runs.append(clock.slept)
+        runs.append(clock.mut_slept)
         return {"verb": "upkeep"}
 
     result = uv_cache.keep(cache, settings, run=run, sleep=clock, emit=emitted.append)
@@ -884,7 +902,7 @@ def test_keep_runs_upkeep_every_gc_period_until_a_later_keeper_claims(tmp_path: 
     assert emitted == [{"verb": "upkeep"}] * 4
     assert result == {"verb": "keep", "rounds": 4, "reason": "superseded"}
     # 退いた持ち手は、印を読む間隔(60 秒)より長く眠り続けない。
-    assert clock.slept == 3 * 3600 + 60
+    assert clock.mut_slept == 3 * 3600 + 60
 
 
 def test_keep_wakes_at_the_shorter_of_gc_and_refresh_periods_and_runs_once_without_one(
@@ -923,7 +941,7 @@ def test_keep_reclaims_when_its_claim_vanishes(tmp_path: Path) -> None:
     runs: list[float] = []
 
     def run(*_: object) -> dict[str, object]:
-        runs.append(clock.slept)
+        runs.append(clock.mut_slept)
         if len(runs) == 3:
             uv_cache.claim_keeper(cache)
         return {}

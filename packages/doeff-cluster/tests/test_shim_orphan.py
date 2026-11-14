@@ -15,6 +15,7 @@ job は知らせの pipe から 1 行を読むまで止まり、読んだ行を 
 
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -55,17 +56,26 @@ def shim(tmp: Path, flags: list[str], script: str) -> subprocess.Popen[bytes]:
     )
 
 
-def worker_vanished(process: subprocess.Popen[bytes]) -> tuple[int, str]:
-    """worker の kill -9 と同じ EOF を shim の標準入力に作り、shim の終わりを待って (終了コード, 標準エラー) を返すため。"""
+@dataclass(frozen=True)
+class Ended:
+    """終わった shim の終了コード(code)と標準エラー(stderr)。"""
+
+    code: int
+    stderr: str
+
+
+def worker_vanished(process: subprocess.Popen[bytes]) -> Ended:
+    """worker の kill -9 と同じ EOF を shim の標準入力に作り、shim の終わりを待って終了コードと標準エラーを返すため。"""
     assert process.stdin is not None
     process.stdin.close()
     _, stderr = process.communicate(timeout=END_LIMIT_SECONDS)
-    return process.returncode, stderr.decode("utf-8", "replace")
+    return Ended(process.returncode, stderr.decode("utf-8", "replace"))
 
 
 def test_an_orphaned_job_gets_the_retirement_and_ends_by_itself(tmp_path: Path) -> None:
     """旗の在る shim: EOF の後も job は止められず、退く知らせを受けて自分で終わり、shim は job の終了コード 0 で終わる。"""
-    code, stderr = worker_vanished(shim(tmp_path, ["--orphan-seconds", "30"], READS_NOTICE))
+    ended = worker_vanished(shim(tmp_path, ["--orphan-seconds", "30"], READS_NOTICE))
+    code, stderr = ended.code, ended.stderr
     assert code == 0, stderr
     assert (tmp_path / "notice").read_bytes() == RETIRED_LINE
     assert "退いた job として" in stderr
@@ -73,7 +83,8 @@ def test_an_orphaned_job_gets_the_retirement_and_ends_by_itself(tmp_path: Path) 
 
 def test_without_the_flag_the_job_is_stopped_before_it_hears_anything(tmp_path: Path) -> None:
     """失敗ケース: 旗の無い shim は EOF で止めの合図を送り、job は知らせを受けずに止まる(file を書かない)。"""
-    code, stderr = worker_vanished(shim(tmp_path, [], READS_NOTICE))
+    ended = worker_vanished(shim(tmp_path, [], READS_NOTICE))
+    code, stderr = ended.code, ended.stderr
     assert code == 128 + 15, stderr
     assert not (tmp_path / "notice").exists()
     assert "worker が消えたので job を止めます" in stderr
@@ -81,7 +92,8 @@ def test_without_the_flag_the_job_is_stopped_before_it_hears_anything(tmp_path: 
 
 def test_a_job_past_the_orphan_lifetime_is_stopped(tmp_path: Path) -> None:
     """寿命の上限: 待つ秒を越えても終わらない job は止めの合図で止まり、shim はその終了コードで終わる。"""
-    code, stderr = worker_vanished(shim(tmp_path, ["--orphan-seconds", "0.5"], SLEEPS))
+    ended = worker_vanished(shim(tmp_path, ["--orphan-seconds", "0.5"], SLEEPS))
+    code, stderr = ended.code, ended.stderr
     assert code == 128 + 15, stderr
     assert "秒を越えた — job を止めます" in stderr
 
