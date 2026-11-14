@@ -350,10 +350,72 @@
 (deftest test-handoff-retires-the-current-process-beside-a-retired-one
   ;; 失敗ケース(#4072 の D-3): 退いた旧が居る間に次の版が来ると、今の process を止めて(SpecChanged)から新を起こしていた — 今の process が
   ;; 回している仕事が切れる。退いた process が上限 R(WorkerPolicy.retired-limit)未満なら、今の process も退かせて新を並べる。旧は動かし続ける。
-  (val H3 (replace A1 :revision "rev3" :handoff True))
+  ;; 寿命の上限(retired-ms)の在る宣言の形 — 上限の無い宣言は下の test-handoff-stops-a-current-process-that-never-became-ready。
+  (val H3 (replace A1 :revision "rev3" :handoff True :retired-ms 600000))
   (val old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
   (val w (! (world old (! (proc H2 11 "2-new")) :codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))))
   (assert (= (! (plan 0 #(H3) w {} POLICY)) #((RetireJob "a" 11 (retired-name "a" "2-new"))))))
+
+(deftest test-handoff-stops-a-current-process-that-never-became-ready
+  ;; 失敗ケース(2026-11-13 の本番 — 10 分の内に 3 回の宣言し直し): 寿命の上限の無い宣言で、今の process が Ready と数えられる前に次の版が
+  ;; 来ると、今の process を退かせていた。Ready にならない途中の版が退いた process として上限 R(既定 3)まで積み上がり、どれも同期を
+  ;; 続けて機体の CPU を埋めた(退いた 3 個と今の process・新しい世代の process の 5 個)。退いた前の版がまだ答えている(止め始めて
+  ;; いない)間は、今の process を退かせずに止める — 次の拍に名が空いて新を起こす。同時に動くのは退いた前の版と今の process の 2 個まで。
+  (val H3 (replace A1 :revision "rev3" :handoff True))
+  (val old (! (proc H1 10 "1-old" :retired-from "a" :name (retired-name "a" "1-old"))))
+  (val current (! (proc H2 11 "2-new")))
+  (val codes #(READY1 READY2 (CodeView "rev3" CodeState.READY "/c/rev3")))
+  (assert (= (! (plan 0 #(H3) (! (world old current :codes codes)) {} POLICY))
+             #((SignalJob "a" 11 StopStage.TERM (SpecChanged))))
+          "今の process を止める(退かせない)")
+  (val stopping {"a" (JobRecord "a" :attempts 1
+                                :stopping (JobStop :requested-ms 0 :stage StopStage.TERM :signalled-ms 0 :reason (SpecChanged)))})
+  (assert (= (! (plan 100 #(H3) (! (world old current :codes codes)) stopping POLICY)) #())
+          "止め始めた今の process は猶予の内は待つ(退いた前の版は止めない)")
+  (assert (= (! (plan 200 #(H3) (! (world old :codes codes)) {"a" (JobRecord "a" :attempts 1)} POLICY))
+             #((StartJob H3 2 "/c/rev3")))
+          "今の process が終われば新を起こす — 退いた前の版は新が Ready と数えられるまで動く")
+  ;; 上限 R = 1 でも詰まらない(以前は退いた process が今の宣言の版の Ready を待ち、今の process が空きを待って、どちらも動けなかった)。
+  (assert (= (! (plan 0 #(H3) (! (world old current :codes codes)) {} (replace POLICY :retired-limit 1)))
+             #((SignalJob "a" 11 StopStage.TERM (SpecChanged)))))
+  ;; 退いた前の版を止め始めた拍(今の process が Ready と数えられた後)は、今の process は答えているので今どおり退かせる。
+  (val retiring {(retired-name "a" "1-old")
+                 (JobRecord (retired-name "a" "1-old")
+                            :stopping (JobStop :requested-ms 0 :stage StopStage.TERM :signalled-ms 0 :reason (Retired)))})
+  (assert (= (! (plan 0 #(H3) (! (world old current :codes codes)) retiring POLICY))
+             #((RetireJob "a" 11 (retired-name "a" "2-new"))))))
+
+(deftest test-three-quick-redeclarations-keep-at-most-two-processes
+  ;; 受入(10 分の内に 3 回の宣言し直し): rev1 が Ready で動く所へ rev2・rev3・rev4 を続けて宣言し、どの版も Ready と数えられないまま
+  ;; 拍を回す。worker の action を観測へ返す小さな世界で、同時に動く process が 2 個を越えない事と、最後に rev4 が動く事を見る。
+  (val revs #("rev2" "rev3" "rev4"))
+  (val codes (+ #(READY1) (tuple (gfor r revs (CodeView r CodeState.READY (+ "/c/" r))))))
+  (var procs #((! (proc H1 10 "1-old"))))
+  (var records {"a" (JobRecord "a" :attempts 1)})
+  (var peak 1)
+  (var next-pid 11)
+  (for [#(i rev) (enumerate revs)]
+    (val want (replace A1 :revision rev :handoff True))
+    (for [step (range 6)]
+      (val now (+ (* i 200000) (* step 1000)))
+      (val actions (! (plan now #(want) (! (world #* procs :codes codes)) records POLICY)))
+      (:= records (! (records-after now records actions)))
+      (for [a actions]
+        (cond
+          (isinstance a RetireJob)
+            (:= procs (tuple (gfor p procs (if (= p.name a.name) (replace p :name a.new-name :retired-from a.name :retired-at-ms now) p))))
+          (isinstance a SignalJob)
+            (:= procs (tuple (gfor p procs (if (= p.name a.name) (replace p :exit-code -15) p))))
+          (isinstance a ReapJob)
+            (:= procs (tuple (gfor p procs :if (!= p.name a.name) p)))
+          (isinstance a StartJob)
+            (do (:= procs (+ procs #((! (proc a.spec next-pid (.format "{}-p{}" a.spec.revision next-pid))))))
+                (:= next-pid (+ next-pid 1)))))
+      (:= peak (max peak (len (tuple (gfor p procs :if (is p.exit-code None) p)))))))
+  (assert (<= peak 2) (.format "同時に動いた process は {} 個: {}" peak procs))
+  (assert (= (sorted (gfor p procs (if (is p.retired-from None) p.spec.revision (+ "retired:" p.spec.revision))))
+             ["retired:rev1" "rev4"])
+          procs))
 
 (deftest test-handoff-waits-without-stopping-a-retired-process-at-the-retired-limit
   ;; 失敗ケース(#4072 の D-3 の改め): 退いた process が上限 R に達している間に次の版が来ると、いちばん古く退いた process を止めて

@@ -2,7 +2,9 @@
 ;;
 ;; 入れ替え(handoff・2026-09-24): spec の変わった job が handoff を宣言していれば、旧を止めずに名から外し(RetireJob)、新を同じ名で
 ;; 起こす。退いた旧は、coordinator が新の process を Ready と数えた(宣言の ready-instance = 新の世代の名)後に止める。新のコードの
-;; 準備の間も旧は動かし続ける。並べるのは 1 つまで(退いた process が既に在る間の次の変更は、止めてから起こす)。
+;; 準備の間も旧は動かし続ける。退いた process が既に在る間の次の変更は、寿命の上限(retiredSeconds)の無い宣言では今の process を
+;; 止めてから起こし(まだ Ready でない途中の版を退かせて積まない — handoff-actions)、寿命の上限の在る宣言では上限 R まで今の process も
+;; 退かせて並べる(#4072 の D-3)。
 ;; 退きの知らせ(#3672): 名から外す RetireJob が旧へ「退く」(Retired)を送る — 新の起動・新の Ready・旧の止めのどれよりも前。その後に
 ;; 入れ替えが諦められたら(旧は動き続ける)同じ旧へ「退きを取り消した」(HandoffAbandoned)、諦めが解けたらもう一度「退く」を NoticeJob で
 ;; 送る(notice-actions — 観測の notice と今の知らせの食い違いだけ)。
@@ -415,17 +417,25 @@
     (= (warm-start want world policy warm-keys) WarmStart.WAIT) (StartStep :actions #() :hold StartHold.WARM-CHILD)
     True (StartStep :actions (stop-actions now process record policy (SpecChanged)) :hold None)))
 
-(defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy]
+(defn #^ tuple handoff-actions [#^ int now #^ JobSpec want #^ ProcessView process #^ WorldView world #^ WorkerPolicy policy
+                                #^ tuple [stopping #()]]
   "入れ替え: 新のコードが揃い、新の入口の検めが通るまでは旧を動かしたまま準備と検めだけ進め、通ったら旧を名から外す
    (次の拍で新を同じ名で起こす)。検めが FAILED の間と、新の Program の file が手元に無い間(program-waits)は旧を外さない(書き手の空白を作らない)。退いた process が既に上限 R
    (retired-limit-for — 宣言の retiredLimit か policy.retired-limit)だけ居れば、外さずに待つ — 退いた process が自分で終わるか寿命の
-   上限で止まった拍で外す(同時に動くのは R + 1 まで・退いた process が回している仕事は切らない・#4072 の D-3 の改め)。"
+   上限で止まった拍で外す(同時に動くのは R + 1 まで・退いた process が回している仕事は切らない・#4072 の D-3 の改め)。
+   前の版がまだ答えている間(predecessor-serves — 今の process が Ready と数えられる前に次の版が来た)は、今の process を退かせずに止める
+   (SpecChanged): 今の process は一度も Ready になっておらず、答えているのは退いた前の版なので、止めても書き手の空白は出来ない。
+   退かせると、Ready にならない途中の版が退いた process として上限 R まで積み上がり、どれも同期を続けて機体の CPU を埋めた(2026-11-13
+   の本番 — 10 分の内の 3 回の宣言し直しで退いた process 3 個と今の process・新しい世代の process の 5 個)。上限に達すると、退いた
+   process は今の宣言の版の Ready を待ち、今の process は空きを待って、どちらも動けなかった。stopping = 止め始めた process の名。"
   (setv tree (ready-path (code-of world (code-key want))))
   (if (is-not tree None)
       (do (setv gate (probe-actions now want tree world policy))
           (cond
             (is-not gate None) gate
             (program-waits world want) #()
+            (predecessor-serves want process.name world stopping)
+              #((SignalJob process.name process.pid StopStage.TERM (SpecChanged)))
             (retired-room-full want process.name world policy) #()
             True #((RetireJob process.name process.pid (retired-name process.name (or process.instance (str process.pid)))))))
       ;; 焼く道具の並べる数は絞らない(絞るのは recreate の job の replace-step だけ — 2026-10-08)。
@@ -464,6 +474,16 @@
       #()))
 
 
+(defn #^ bool predecessor-serves [#^ JobSpec want #^ str name #^ WorldView world #^ tuple stopping]
+  ;; cannot be a defk: worker の純粋な判断(handoff-actions — defn の中)が呼ぶ
+  "入れ替えの job name の今の process が Ready と数えられる前で、退いた前の版がまだ答えているか — 今の process を退かせずに止めてよいかの
+   判断(handoff-actions)。寿命の上限の無い宣言(want.retired-ms が None)の退いた process は、今の process が Ready と数えられた拍に
+   止め始める(retired-actions)ので、止め始めていない退いた process(名が stopping に無い)が動いていれば、今の process はまだ Ready に
+   なっていない。寿命の上限の在る宣言は、退いた process が今の process の Ready の後も動くので、ここでは判じない(今どおり上限 R)。"
+  (and (is want.retired-ms None)
+       (any (gfor p (retired-of world name) (not-in p.name stopping)))))
+
+
 (defn #^ int retired-limit-for [#^ JobSpec want #^ WorkerPolicy policy]  ; cannot be a defk: worker の純粋な判断(handoff-actions — defn)が呼ぶ
   "入れ替えの job want が同時に残す退いた process の数の上限 R を決めるため: 宣言の readiness の retiredLimit(JobSpec.retired-limit)が
    在ればそれ、無ければ worker の既定 policy.retired-limit(#4072 の D-3 の改め)。"
@@ -500,11 +520,12 @@
   (if (is record.last-stop-reason None) "" (+ " — " record.last-stop-reason)))
 
 
-(defk plan-job [now name desired world record policy absent]
-  {:pre [(: now int) (: name str) (: desired tuple) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: absent StopReason)]
+(defk plan-job [now name desired world record policy absent [stopping #()]]
+  {:pre [(: now int) (: name str) (: desired tuple) (: world WorldView) (: record JobRecord) (: policy WorkerPolicy) (: absent StopReason)
+         (: stopping tuple)]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
-  "job 1 つの action(absent = 宣言に無い job を止める訳 — 宣言から外れた・途絶で絞った・worker の停止。#3713)。plan が名ごとに
-   sequence で呼ぶ。"
+  "job 1 つの action(absent = 宣言に無い job を止める訳 — 宣言から外れた・途絶で絞った・worker の停止。#3713。stopping = 止め始めた
+   process の名 — 入れ替えの handoff-actions が退いた前の版の止めを読む)。plan が名ごとに sequence で呼ぶ。"
   (val want (desired-of desired name))
   (val process (process-of world name))
   ;; 入れ替えの諦め(2026-09-26 — coordinator の handoff_policy が期限で決め、heartbeat の返事で運ぶ)。
@@ -554,7 +575,7 @@
     ;; spec が変わった handoff の job: 旧を止めずに新を並べる(退いた process が既に在っても、今の process を退かせて並べる — 退いた
     ;; process の上限 R は handoff-actions と retired-actions が守る・#4072 の D-3)。
     (and (is-not want None) want.handoff (is record.stopping None))
-      (handoff-actions now want process world policy)
+      (handoff-actions now want process world policy stopping)
     ;; spec が変わった recreate の job: 旧を動かしたまま新しい版の準備と入口の検めを進め、両方が済んでから旧を止める(2026-10-08 —
     ;; 新旧の本体を同時に動かさない・判断は replace-step)。
     (and (is-not want None) (! (recreating? want process record)))
@@ -750,7 +771,9 @@
    宣言を分けない)。job ごとの判断 plan-job は名ごとに sequence で順に走らせる(最初の失敗で止まる — 黙って落とさない)。
    absent = 宣言に無い job を止める訳(既定 = 宣言から外れた・拍の Program が途絶の絞りと worker の停止を渡す — #3713)。"
   (<- names tuple (job-names desired world))
-  (<- per-job tuple (sequence (gfor name names (plan-job now name desired world (.get records name (JobRecord name)) policy absent))))
+  (val stopping (tuple (gfor #(n r) (.items records) :if (is-not r.stopping None) n)))
+  (<- per-job tuple (sequence (gfor name names (plan-job now name desired world (.get records name (JobRecord name)) policy absent
+                                                         :stopping stopping))))
   (val jobs (tuple (gfor actions per-job action actions action)))
   (<- warming tuple (warm-actions now warm world jobs policy))
   (<- children tuple (warm-child-actions now desired world warm policy :records records))
