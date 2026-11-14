@@ -207,6 +207,12 @@
       (raise (ValueError (.format "MoveBulkFields.limit は 1 以上の数: {!r}" self.limit))))))
 
 
+;; 手入れの effect の組 = この module の effect の全部。記録の handler の組(memory・PostgreSQL)はどれにも答える。使い手の閉じの検は、
+;; 実行時に選ぶ手入れの係の handler(解析器が読めない)が答える effect をこの組から組み、手で写さない(手入れの effect を足すと、写しが
+;; ずれて使い手の閉じの検が赤になった — MoveBulkFields)。組と module の effect・handler の答えの一致は tests/test_maintenance_effects.py が縛る。
+(val MAINTENANCE-EFFECTS #(SweepExpired PruneChanges ReadChangeLog ReadExpiredEvents RetireArchivedEvents MoveBulkFields))
+
+
 (defclass [(dataclass :frozen True)] MaintenanceReport []
   "手入れ 1 回の結果(係の記録と計器のため)。置き場に届かなかった手入れは Unreachable(次の回で撃ち直す)。archived = 送りの答え
    (送りを持たない計画は None・送り先に届かなかった回は Unreachable で、その回は刈らない — pruned も同じ Unreachable)。
