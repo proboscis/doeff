@@ -2322,6 +2322,15 @@ class _Carried:
 
 
 @dataclass(frozen=True)
+class _BuiltIn:
+    """The carried values built in one function, and the functions it calls (in the order they are
+    written) to read next."""
+
+    carried: list[_Carried]
+    calls: tuple[tuple[types.FunctionType, _Bound], ...]
+
+
+@dataclass(frozen=True)
 class _HandledFacts:
     """A Program run under handlers installed in the body (read before following calls)."""
 
@@ -3763,7 +3772,7 @@ class _Reader:
         for parameter, carrier in declared.items():
             handed = bound.get(parameter)
             if isinstance(handed, _LocalFunction):
-                found = self._built_in(handed.node, handed.scope, filename)
+                found = self._built_in(handed.node, handed.scope, filename).carried
             elif (builder := _function_of(handed)) is not None:
                 found = self._built_by(builder)
             else:
@@ -3800,7 +3809,9 @@ class _Reader:
                     )
                 )
                 continue
-            found.extend(self._built_in(located.node, located.scope, located.filename, pending))
+            built = self._built_in(located.node, located.scope, located.filename, queue_calls=True)
+            found.extend(built.carried)
+            pending.extend(built.calls)
         return found
 
     def _built_in(
@@ -3808,11 +3819,12 @@ class _Reader:
         node: FunctionNode,
         scope: _Scope,
         filename: str,
-        pending: list[tuple[types.FunctionType, _Bound]] | None = None,
-    ) -> list[_Carried]:
+        queue_calls: bool = False,
+    ) -> _BuiltIn:
         """The carried values built in ``node`` (each with its Program read where it is
-        written), queuing on ``pending`` the functions it calls."""
+        written), with the functions it calls when ``queue_calls``."""
         found: list[_Carried] = []
+        calls: list[tuple[types.FunctionType, _Bound]] = []
         for child in ast.walk(node):
             if not isinstance(child, ast.Call):
                 continue
@@ -3823,10 +3835,10 @@ class _Reader:
                     self._performed(argument, scope, filename, body)
                     location = Location(filename, getattr(argument, "lineno", 0))
                     found.append(_Carried(target, body, ast.unparse(argument), location))
-            elif pending is not None and (called := _function_of(target)) is not None:
+            elif queue_calls and (called := _function_of(target)) is not None:
                 if _reads_for_built(called):
-                    pending.append((called, _call_bindings(called, child, scope)))
-        return found
+                    calls.append((called, _call_bindings(called, child, scope)))
+        return _BuiltIn(found, tuple(calls))
 
     def _returned(self, expr: ast.expr, scope: _Scope, filename: str, facts: _Facts) -> None:
         """A Program factory's ``return f(...)`` / ``return E(...)``; other returns are data."""
