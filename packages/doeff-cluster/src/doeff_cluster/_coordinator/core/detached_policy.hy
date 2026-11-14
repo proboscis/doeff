@@ -21,8 +21,8 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
 (import doeff_cluster._shared.core.capabilities [environ-pairs])
-(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-ungated-refusal task-room-claim-refusal task-preemptible-refusal task-queue-limit-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
+(import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-family-refusal task-ungated-refusal task-room-claim-refusal task-preemptible-refusal task-queue-limit-refusal])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ShapeFamily ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
 (import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
 (import doeff_cluster._coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached rerun-id runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
@@ -94,6 +94,8 @@
                     (task-room-claim-refusal (is body.ungated True) body.memory-MiB (len (or body.limits [])))
                     ;; 仕事の形(2026-11-10 — 名乗らなくてよい)。
                     (task-shape-refusal body.shape)
+                    ;; 仕事の形の族(2026-11-15 — 名乗らなくてよい。形と一緒にだけ名乗れる)。
+                    (task-family-refusal body.family body.shape)
                     ;; 待ちの期限(2026-11-12 — 名乗らなくてよい)。
                     (task-queue-limit-refusal body.queue-limit-seconds)
                     ;; 名乗った組は系の宣言に在る物だけ(値と範囲は宣言が持つ)。
@@ -132,7 +134,12 @@
                          :shape (or body.shape "") :ungated (is body.ungated True)
                          :preemptible (is body.preemptible True)
                          :queue-limit-ms (if (is body.queue-limit-seconds None) None (* 1000 body.queue-limit-seconds))))
-  (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1))
+  ;; 族を名乗る task は形 → 族の行を書く(ADR-DOE-CLUSTER-005 R4 の改め — 族は形の事実なので task の行に持たない。同じ形の後の名乗りが勝つ)。
+  (setv family (or body.family "")
+        families (if (and family (!= (.row state.shape-families task.shape) (ShapeFamily :shape task.shape :family family)))
+                     (.with-writes state.shape-families #((TableWrite task.shape (ShapeFamily :shape task.shape :family family))))
+                     state.shape-families))
+  (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite id task))) :next-task (+ state.next-task 1) :shape-families families)
          200 (DetachedSubmitted :key key :id id :created True :phase task.phase)))
 
 

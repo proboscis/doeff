@@ -707,13 +707,13 @@
 ;; 持っていた DetachedClient を替えた)。宛先の順・切り替え・送り直しは宛先の部品(coordinator_route.hy)— 宛先の状態は組み立てが渡す
 ;; 入れ物(RouteCell)。出す HttpRequest に答える本物の I/O の答え手は、process の組み立ての根が外側に積む。
 (defhandler detached-cluster [#^ RouteCell cell #^ RouteOptions options #^ DetachedSender sender #^ float [poll-seconds 1.0]]
-  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib rerun shape ungated preemptible queue-limit-seconds]
+  (SubmitDetached [program key needs name lease-seconds retain-seconds environ priority limits notify memory-mib rerun shape ungated preemptible queue-limit-seconds family]
     ;; 送れない値は送る前に断る(encode-program が UnsendableProgram を投げ、呼び手へ届く)。
     (setv blob (encode-program program))
     ;; effect の EnvVar の tuple を、coordinator への本文の形(名 → 値の object)へ綴る(#2179)。
     (<- environ-body dict (env-mapping environ))
     (<- submitted (detached-submitted cell options sender key blob needs name (float lease-seconds) (float retain-seconds) environ-body
-                                      (| (task-placing-json priority limits memory-mib shape) (task-notify-json notify) (task-rerun-json rerun)
+                                      (| (task-placing-json priority limits memory-mib shape family) (task-notify-json notify) (task-rerun-json rerun)
                                          (task-ungated-json ungated) (task-preemptible-json preemptible) (task-queue-limit-json queue-limit-seconds))))
     (resume submitted))
   (AwaitDetachedOutbox [prefix timeout-seconds kinds]

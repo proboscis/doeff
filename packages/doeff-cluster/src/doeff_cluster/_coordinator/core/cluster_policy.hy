@@ -793,7 +793,7 @@
         settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
         since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
         ;; 形ごとの測った山と tasks 区画(申告の行の無い置いた task の要りを数える — task_claims.claim-mib-of・compartment-clamp)。
-        peaks (run (shape-peaks-of state.tasks))
+        peaks (run (shape-peaks-of state.tasks state.shape-families))
         compartments (tasks-compartments-of state)
         ;; measured と同じ heartbeat の状態の報告で動いていた task の id(worker ごと)。
         live (dfor name (.keys state.workers)
@@ -900,7 +900,7 @@
     (return None))
   (val clamp (max (gfor #(_ held) matching held.memory-mib)))
   (val widest-cpu (max (gfor #(_ held) matching held.cpu-millis)))
-  (<- peaks dict (shape-peaks-of state.tasks))
+  (<- peaks dict (shape-peaks-of state.tasks state.shape-families))
   (val peak (if shape (.get peaks shape) None))
   ;; 申告の決め方は置く時と同じ(上限で切る前の見当を断りに使う — 上限で切った値は区画に入るので、切らずに越えるかを見る)。
   (<- need int (learned-need memory-mib None peak None))
@@ -1979,7 +1979,7 @@
   ;; 置いている task の上限の升ごとの数(置くたびに足す — 同じ拍で置いた分も数える)。
   (var held (! (limit-holdings (! (placed-claims placed.tasks)) state.group-limits)))
   ;; 形ごとの測った山(申告の決め方 — task_claims の頭の註)。
-  (<- peaks dict (shape-peaks-of placed.tasks))
+  (<- peaks dict (shape-peaks-of placed.tasks placed.shape-families))
   ;; worker ごとの tasks 区画(ADR-DOE-CLUSTER-005 R1・R2 — 無ければ None)と、置いた task の申告の和(R5 — 置く・止めるたびに足し引く)。
   ;; 置く判断はこの 2 つと組の上限だけを読み、測った負荷(CPU の使い・memory の空き・PSI・task ごとの使い)・床・予約を読まない
   ;; (law placement-reads-claims-not-measurements)。
@@ -3242,18 +3242,35 @@
                   :revision state.revision))
 
 
+(defk placed-uses [state]
+  {:pre [(: state ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "worker ごとの、置いた task(PLACED-PHASES)の測った今の使いの和(MiB — worker の名 → int)を知るため: worker の測りが名乗る task ごとの
+   今の使い(measured.task-memory-MiB)のうち、その worker に置いた task の分。測りの無い・task の使いを名乗らない worker は入れない
+   (GET /state の usedMiB を出さない — 0 と読ませない)。置く判断は読まない(R5 — 申告の和と見比べる外の見張りのための値)。"
+  (dfor #(name w) (.items state.workers)
+        :if (and (is-not w.measured None) (is-not w.measured.task-memory-MiB None))
+        name (sum (gfor #(id use) (.items w.measured.task-memory-MiB)
+                        :setv t (.row state.tasks id)
+                        :if (and (is-not t None) (= t.worker name) (in t.phase PLACED-PHASES))
+                        use))))
+
+
 (defk state-view [state now timing]
   {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % StateView)] :tags {:context "coordinator" :role "judgment"}}
   "GET /state の状態の画面(JSON は coordinator/protocol/replies が綴る — #2595)。worker ごとの taskRoom と taskMemoryRoomMiB は置き先の
    判断と同じ数え(load-of と task-room-of・task-memory-room-of — 機体の測った空きと置いた task の memory の要り)から読む。"
   (setv draining (draining-workers state now)
         load (load-of state state.placements))
+  (<- peaks dict (shape-peaks-of state.tasks state.shape-families))
+  (<- sums dict (claimed-sums state (tasks-compartments-of state) peaks))
+  (<- uses dict (placed-uses state))
   (var workers #())
   (for [#(n w) (.items state.workers)]
     (<- room int (task-room-of w load))
     (<- memory-room int (task-memory-room-of w load))
     (:= workers #(#* workers (WorkerView :info w :silent-ms (- now w.last-seen-ms) :live (alive now w timing.lease-ms)
-                                           :draining (in n draining) :task-room room :task-memory-room-mib memory-room))))
+                                           :draining (in n draining) :task-room room :task-memory-room-mib memory-room
+                                           :claimed-mib (. (get sums n) memory-mib) :used-mib (.get uses n)))))
   (StateView :now now
              :services (tuple (gfor j state.jobs (ServiceView :job j :resource-version (resource-version-of state (+ "Service/" j.spec.name)))))
              :workers workers
@@ -3309,6 +3326,8 @@
                     (if (is body.preemptible None) None "preemptible は切り離した task(PUT /detached)だけが名乗る")
                     ;; 待ちの期限も切り離した task だけ(2026-11-12 — 縛られた task は呼び手が問い合わせを止めれば消える)。
                     (if (is body.queue-limit-seconds None) None "queueLimitSeconds は切り離した task(PUT /detached)だけが名乗る")
+                    ;; 仕事の形の族も切り離した task だけ(2026-11-15 — 縛られた task は形を名乗らない)。
+                    (if (is body.family None) None "family は切り離した task(PUT /detached)だけが名乗る")
                     (! (limits-undeclared-refusal state.group-limits body.limits))))
   (when refusal (return #(state 400 (ErrorReply :message refusal))))
   ;; 数に読めない leaseSeconds は送り手の誤り(float() の ValueError / TypeError を受け口へ漏らさない — #1024)。

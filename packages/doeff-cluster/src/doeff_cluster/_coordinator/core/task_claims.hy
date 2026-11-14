@@ -3,6 +3,11 @@
 ;;; (ClusterState.claims — TaskClaim)に固定する。決め方は measured_room.learned-need(頭の註の測った山で数える要り):
 ;;;   同じ形に終わりまで走った行が在る   申告 = min(⌈max(この task の山, 同じ形の山の最大) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, 上限)
 ;;;   無い(形を名乗らない・初めての形)  申告 = max(送り手の見当〔無ければ UNDECLARED-TASK-MIB〕, min(max(この task の山, 同じ形の山), 上限))
+;;; 形の山は、まだ終わっていない行と近い回の終わった行(task_table.RECENT-PEAK-RUNS 本)の山の最大(2026-11-15 — 保持の間の全部の最大は、
+;;; 外れ値の 1 本が保持の間ずっと申告を縛った)。形に近い回の finished の行が無ければ、送り手が名乗った族(ShapeFamily — 形 → 族の別の表)
+;;; の近い回の山で補う(task_table.family-peaks-of — 引く順は 形の山 → 族の近い回の山 → 送り手の見当)。命令の全体の digest を含む形は
+;;; ほとんどの回が初めての形で、最も大きい共有の機体の 48 時間の 309 本のうち 278 本の申告が送り手の見当(中央の値 3,584 MiB — 測った山の
+;;; 中央の値は 873 MiB)のままだった。
 ;;; CPU の申告は全部の task で TASK-CORES core(task ごとの CPU の使いは記録していない)。
 ;;;
 ;;; 固定する訳: 以前は置いた task の要りを拍ごとに数え直した(load-of)。同じ形の古い行が保持の外へ出た拍や、ほかの task の山が伸びた拍に、
@@ -28,7 +33,7 @@
 (import doeff_cluster._coordinator.core.cluster_rules [placeable])
 (import doeff_cluster._shared.core.compartment_rules [held-compartments])
 (import doeff_hy._table [Table TableWrite])
-(import doeff_cluster._coordinator.intent.task_table [task-index])
+(import doeff_cluster._coordinator.intent.task_table [task-index shape-family-peaks])
 
 ;; 1 core の millicore。
 (val MILLIS-PER-CORE 1000)
@@ -56,12 +61,16 @@
        :default None))
 
 
-(defk shape-peaks-of [tasks]
-  {:pre [(: tasks (get Table TaskRecord))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
-  "形ごとの測った山を知るため(measured_room の頭の註の測った山で数える要り): 形を名乗り山を測った行(保持の間の終わった行を含む)の形 →
-   ShapePeak(山の最大と、終わり〔finished〕まで走った行が在るか)。保持の間の終わった行(scan-rows が除く行)も読む — 終わった task の山が
-   同じ形の次の task の申告の材料なので。値は task の表の索引が書きのたびに持ち続ける(task_table — 行を回らない)。読み手は書き換えない。"
-  (. (task-index tasks) peaks))
+(defk shape-peaks-of [tasks [families None]]
+  {:pre [(: tasks (get Table TaskRecord)) (: families (| Table None))] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "形ごとの測った山を知るため(measured_room の頭の註の測った山で数える要り): 形を名乗り山を測った行の形 → ShapePeak(まだ終わっていない
+   行と近い回の終わった行の山の最大と、その近い回に終わり〔finished〕まで走った行が在るか — task_table.RECENT-PEAK-RUNS)。保持の間の
+   終わった行(scan-rows が除く行)も読む — 終わった task の山が同じ形の次の task の申告の材料なので。families = 形 → 族の関係
+   (ClusterState.shape-families — None = 族で補わない)を渡すと、近い回の finished の行の無い形を族の近い回の山で補う
+   (task_table.family-peaks-of)。値は task の表の索引が書きのたびに持ち続ける(task_table — 行を回らない)。読み手は書き換えない。"
+  (if (is families None)
+      (. (task-index tasks) peaks)
+      (shape-family-peaks tasks families)))
 
 
 (defk task-need-of [task clamp peaks]
@@ -130,11 +139,29 @@
     (when moved
       (.append placed row)))
   (when placed
-    (<- peaks dict (shape-peaks-of after.tasks))
+    (<- peaks dict (shape-peaks-of after.tasks after.shape-families))
     (val compartments (tasks-compartments-of after))
     (for [t placed]
       (<- need int (task-need-of t (compartment-clamp after compartments t.needs) peaks))
       (.append writes (TableWrite t.id (TaskClaim :task t.id :memory-mib need :cpu-millis TASK-CPU-MILLIS)))))
   (if writes
       (replace after :claims (.with-writes after.claims (tuple writes)))
+      after))
+
+
+(defk families-noted [before after]
+  {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "1 歩の前後の状態 before・after から、この歩でその形の task の行が 1 本も無くなった形の族の行(ClusterState.shape-families — ShapeFamily)を
+   外すため(族の行は形の行が在る間だけ要る — 書きは積んだ拍の detached_policy.submit-detached)。変わらなければ after をそのまま返す。"
+  (val changed (.changed-keys before.tasks after.tasks))
+  (when (or (not changed) (= (.size after.shape-families) 0))
+    (return after))
+  (val tallies (. (task-index after.tasks) tallies))
+  (setv gone (set))
+  (for [key changed]
+    (for [row #((.row before.tasks key) (.row after.tasks key))]
+      (when (and (is-not row None) row.shape (not-in row.shape tallies) (is-not (.row after.shape-families row.shape) None))
+        (.add gone row.shape))))
+  (if gone
+      (replace after :shape-families (.with-writes after.shape-families (tuple (gfor shape (sorted gone) (TableWrite shape None)))))
       after))

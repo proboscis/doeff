@@ -5,7 +5,7 @@
 ;;; Service や Rollout の書きに引きずられず、逆に Service の書きが盤全体を書き直さない。
 ;;;
 ;;; キー:
-;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  needsoverride/<名>  claim/<task の id>  compartments/<machine>  audit/<番号 10 桁>  counter
+;;;   service/<名>  placement/<名>  worker/<名>  task/<id>  meta/<Kind/名>  rollout/<名>  grouplimit/<組>  needsoverride/<名>  claim/<task の id>  family/<形>  compartments/<machine>  audit/<番号 10 桁>  counter
 ;;;   drain/<worker の名>  surge/<名>(2026-09-25 — それより前の置き場には無い = 空として読む。旧い版の coordinator はこの鍵を読まずに無視する)
 ;;;   handoff/<名>(2026-09-26 — 入れ替えの期限の見張り HandoffWatch。無い置き場は空として読む)
 ;;;   outbox/<結末の id>(2026-10-21 — 切り離した task の終わりの出口の行 DetachedEnded。無い置き場は空として読む。旧い版の
@@ -38,7 +38,7 @@
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json handoff-watch-from-json ended-to-json ended-from-json])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json job-from-json board-changes board-tally-of value-size
 ] doeff_cluster._coordinator.protocol.state_json [rollout-row-to-json rollout-row-from-json audit-event-to-json audit-event-from-json read-service-rows warm-entry-to-json warm-entry-from-json worker-capabilities-of worker-generations-json worker-generations-from-json program-row-to-json program-row-from-json resource-meta-to-json resource-meta-from-json read-each
-                                               group-limit-from-json needs-override-from-json task-claim-spec task-claim-from-json
+                                               group-limit-from-json needs-override-from-json task-claim-spec task-claim-from-json shape-family-spec shape-family-from-json
                                                machine-compartments-from-json])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-spec])
 (import doeff_cluster._shared.core.detached_rules [group-limit-spec])
@@ -61,6 +61,8 @@
 (val OUTBOX "outbox/")
 ;; 置いた task の申告(2026-11-12 — 申告 1 つに鍵 1 つ。鍵 = task の id。無い置き場は空として読む)。
 (val CLAIM "claim/")
+;; 仕事の形の族(2026-11-15 — 形 1 つに鍵 1 つ。鍵 = 形。無い置き場は空として読む)。
+(val FAMILY "family/")
 ;; 改名の前の置き先の鍵(値の形は同じ)。起動時に読んで移すだけ。
 (setv LEGACY-PLACEMENT "assignment/") ; 新しく書くのには使わない(語彙の規則の旧い語 — 読みの互換のためだけに残す)
 
@@ -170,6 +172,7 @@
     (table-group "handoffs" (fn [k w] #((+ HANDOFF k) #(#(w) w.to-json))))
     (table-group "outbox" (fn [k e] #((+ OUTBOX k) #(#(e) (partial ended-to-json e)))))
     (table-group "claims" (fn [k c] #((+ CLAIM k) #(#(c) (partial task-claim-spec c)))))
+    (table-group "shape_families" (fn [k f] #((+ FAMILY k) #(#(f) (partial shape-family-spec f)))))
     (SourceGroup :fields #("keep_marks")
                  :build (fn #^ Sources [#^ ClusterState state]
                           (dfor m state.keep-marks (+ KEEP m.job) #(#(m) (partial keep-mark-json m)))))
@@ -305,6 +308,7 @@
     :handoffs (table-of (tuple (gfor #(k v) (part HANDOFF) (TableWrite k (handoff-watch-from-json v)))))
     :outbox (table-of (tuple (gfor #(k e) outbox (TableWrite k e))))
     :claims (table-of (tuple (gfor #(k v) (part CLAIM) (TableWrite k (task-claim-from-json k v)))))
+    :shape-families (table-of (tuple (gfor #(k v) (part FAMILY) (TableWrite k (shape-family-from-json k v)))))
     :keep-marks (tuple (gfor #(_ v) (part KEEP) (KeepMark #** v)))
     :superseded-runs (tuple (gfor #(_ v) (part SUPERSEDED) (SupersededRun #** (| v {"jobs" (tuple (get v "jobs"))}))))
     :audit (tuple (gfor #(_ event) audit event))
