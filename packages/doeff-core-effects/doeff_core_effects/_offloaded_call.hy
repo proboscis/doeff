@@ -23,10 +23,17 @@
 ;;;     idle limit, so none ended: a service kept 74 to 116 idle driver threads for hours, and under the free-threaded build each thread keeps its own allocator
 ;;;     heap, so its idle RSS grew with the thread count (about 4 MB per thread, 170 MB at 9 threads to 590 MB at 116). With the last idle thread taking the call, a
 ;;;     trickle runs on one thread and the rest of the burst ends after _IDLE-SECONDS.
+;;;   - ThreadStarter = the one thread that starts the threads of both Executors, so that submit never waits for a thread to start. Thread.start returns only after the new
+;;;     thread has run its first lines (it sets an event from inside the new thread), and the caller of submit is the scheduler's thread, so that wait stopped every task of the
+;;;     scheduler. In a host process with 140 threads, whose file reads, child processes and transcript reads each start a thread, the main loop's ready report came 55 to 83 seconds
+;;;     apart while its thread used 2 to 3% of a CPU, and the stack dumps found it in Thread.start's wait under ThreadPerCall.submit (2026-11-13). submit now only puts the
+;;;     thread that is not started on the starter's queue. The starter itself is started by the first submit of the process (and again in the child of a fork, where it does
+;;;     not exist). A thread that cannot be started (RuntimeError at the OS thread limit) fails its call's Future instead of raising from submit.
 (require doeff-hy.macros [defk deff <- val])
 (val MODULE-TAGS {:context "sql" :role "foundation"})
 (import collections.abc [Callable])
 (import concurrent.futures [Executor Future])
+(import os)
 (import queue [Empty SimpleQueue])
 (import threading)
 (import doeff [PyVM])
@@ -74,6 +81,60 @@
   None)
 
 
+(defclass ThreadStarter []
+  "The thread that starts the threads of the Executors in the order they were handed over (header comment). It is a resource handler, so not a value type.
+   pending = the threads not started yet, each with the Future of its first call. thread = the starter thread (None before the first hand-over)."
+
+  (deff __init__ [self]  ; cannot be a defk: initialization of a resource class
+    {:pre [(: self ThreadStarter)] :post [(: % "None")]}
+    "To start the queue empty and the starter thread not yet started."
+    (setv self.pending (SimpleQueue)
+          self.lock (threading.Lock)
+          self.thread None))
+
+  (deff hand [self thread future]  ; cannot be a defk: Executor's entry (called inside submit - outside the VM)
+    {:pre [(: self ThreadStarter) (: thread threading.Thread) (: future Future)] :post [(: % "None")]}
+    "To put a thread that is not started on the queue, and start the starter thread when it is not running (the first hand-over of the process, and the first in the child of a fork).
+     Only that one start waits on the caller's thread."
+    (.put self.pending #(thread future))
+    (when (not (self.running))
+      (with [_ self.lock]
+        (when (not (self.running))
+          (setv self.thread (threading.Thread :target self.serve :name "doeff-thread-starter" :daemon True))
+          (.start self.thread)))))
+
+  (deff running [self]  ; cannot be a defk: a read of the starter thread (outside the VM)
+    {:pre [(: self ThreadStarter)] :post [(: % bool)]}
+    "Whether the starter thread is running (a thread copied into the child of a fork is not alive there)."
+    (and (is-not self.thread None) (.is-alive self.thread)))
+
+  (deff serve [self]  ; cannot be a defk: the starter thread's body (outside the VM)
+    {:pre [(: self ThreadStarter)] :post [(: % "None")]}
+    "To start the handed threads one at a time for as long as the process runs. A thread that cannot be started fails the Future of its call, unless the Future was cancelled first.
+     It drops its references to the thread and the Future before waiting for the next (a waiting starter does not keep a finished call's answer alive)."
+    (while True
+      (setv #(thread future) (.get self.pending))
+      (try
+        (.start thread)
+        (except [error Exception]
+          (when (.set-running-or-notify-cancel future)
+            (.set-exception future error))))
+      (setv thread None
+            future None)))
+
+  (deff forget [self]  ; cannot be a defk: the after-fork entry of os.register_at_fork (outside the VM)
+    {:pre [(: self ThreadStarter)] :post [(: % "None")]}
+    "In the child of a fork, to drop the parent's queue (its calls belong to the parent and must not run twice), its lock (another parent thread may have held it at the fork) and its starter thread."
+    (setv self.pending (SimpleQueue)
+          self.lock (threading.Lock)
+          self.thread None)))
+
+
+;; The starter shared by every Executor of the process (header comment).
+(val STARTER (ThreadStarter))
+(os.register-at-fork :after-in-child STARTER.forget)
+
+
 (defclass ThreadPerCall [Executor]
   "An Executor that starts one daemon thread per call (header comment). It is a resource handler, so not a value type."
 
@@ -84,18 +145,21 @@
 
   (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self ThreadPerCall) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
-    "To run call on a new thread and hand over its end as a Future (a Future cancelled before starting is not run; on-start is called inside the thread before call)."
+    "To run call on a new thread and hand over its end as a Future (a Future cancelled before starting is not run; on-start is called inside the thread before call).
+     The thread is started by STARTER, so the caller does not wait for it to start (header comment)."
     (setv future (Future))
-    (.start (threading.Thread :target (fn []
-                                        (when (.set-running-or-notify-cancel future)
-                                          (try
-                                            (when (is-not self.on-start None)
-                                              (.on-start self))
-                                            (.set-result future (call #* args))
-                                            (except [error BaseException]
-                                              (.set-exception future error)))))
-                              :name "doeff-offloaded-call"
-                              :daemon True))
+    (.hand STARTER
+           (threading.Thread :target (fn []
+                                       (when (.set-running-or-notify-cancel future)
+                                         (try
+                                           (when (is-not self.on-start None)
+                                             (.on-start self))
+                                           (.set-result future (call #* args))
+                                           (except [error BaseException]
+                                             (.set-exception future error)))))
+                             :name "doeff-offloaded-call"
+                             :daemon True)
+           future)
     future))
 
 
@@ -115,7 +179,7 @@
   (deff submit [self call #* args]  ; cannot be a defk: Executor's entry (a concurrent.futures promise - outside the VM)
     {:pre [(: self ReusedThreads) (: call "callable (args) -> value") (: args tuple)] :post [(: % Future)]}
     "To hand call to the thread that went idle last, or start one thread if none is idle, and hand over its end as a Future (a Future cancelled before starting is not run).
-     The call is put in the inbox and threads are started outside the lock - the wait to start one does not stall other calls or the count of idle threads."
+     The call is put in the inbox and a new thread is handed to STARTER outside the lock - the caller does not wait for it to start (header comment)."
     (setv future (Future)
           job #(future call args))
     (with [_ self.idle-lock]
@@ -130,7 +194,7 @@
       (setv inbox (SimpleQueue)))
     (.put inbox job)
     (when fresh
-      (.start (threading.Thread :target self.serve :args #(inbox) :name "doeff-offloaded-call" :daemon True)))
+      (.hand STARTER (threading.Thread :target self.serve :args #(inbox) :name "doeff-offloaded-call" :daemon True) future))
     future)
 
   (deff serve [self inbox]  ; cannot be a defk: the thread's body (outside the VM - runs the calls handed to its inbox)
