@@ -70,6 +70,10 @@ import sys
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import CodeType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import http.client
 
 #: Environment variable pointing at the store directory (value = directory path; ``off`` = do not use).
 STORE_ENV = "DOEFF_HY_CODE_STORE"
@@ -532,9 +536,15 @@ SHARE_ENV = "DOEFF_HY_CODE_SHARE"
 #: Region used in the signature when the URL names none (the S3 default; an S3-compatible store checks the region it was configured with).
 SHARE_DEFAULT_REGION = "us-east-1"
 
-#: Seconds one request to the shared store may take (connect and read). Requests stay inside the cluster (milliseconds); a store that does not answer within this is treated as
-#: unusable for the run, so that baking on the machine is not delayed by every lookup.
+#: Seconds one request to the shared store may take (connect and read). A store that does not answer within this is treated as unusable for the run, so that baking on the
+#: machine is not delayed by every lookup.
 SHARE_TIMEOUT_SECONDS = 5.0
+
+#: Open connections to the shared store, one per (process, scheme, host) — kept across requests (HTTP keep-alive). A worker far from the store pays the name lookup and the
+#: connect on every new connection: 2026-11-14, a spot node in another region took 1.47 s per request with a new connection (the cluster DNS's ndots:5 search tried six names,
+#: 0.175 s apart, before the connect) and 0.17 s on a kept one, and a cold preparation that looked up and published 480 files spent 1,834 s baking with the CPU idle. The
+#: process id is in the key because the baking pool forks: a child never writes on the socket its parent opened.
+_SHARE_CONNECTIONS: "dict[tuple[int, str, str], http.client.HTTPConnection]" = {}
 
 #: How many of a key's shared entries are fetched and checked, newest first. The entry of the environment being prepared is normally the newest (every worker preparing the same
 #: root writes the same name), and older entries belong to earlier roots.
@@ -624,34 +634,63 @@ def signature_v4(
     return f"AWS4-HMAC-SHA256 Credential={share.key_id}/{scope}, SignedHeaders={signed}, Signature={signature}"
 
 
+def _share_connection(share: Share, fresh: bool) -> "tuple[http.client.HTTPConnection, bool]":
+    """The kept connection of this process to the shared store's host (a new one when fresh, or when there is none yet). Answer = #(connection, whether it was kept from an
+    earlier request)."""
+    import http.client  # loaded only when the shared store is used
+
+    slot = (os.getpid(), share.scheme, share.host)
+    kept = None if fresh else _SHARE_CONNECTIONS.get(slot)
+    if kept is not None:
+        return kept, True
+    stale = _SHARE_CONNECTIONS.pop(slot, None)
+    if stale is not None:
+        stale.close()
+    kind = http.client.HTTPSConnection if share.scheme == "https" else http.client.HTTPConnection
+    connection = kind(share.host, timeout=SHARE_TIMEOUT_SECONDS)
+    _SHARE_CONNECTIONS[slot] = connection
+    return connection, False
+
+
 def _share_request(share: Share, method: str, name: str, query: tuple[tuple[str, str], ...] = (), body: bytes = b"") -> bytes | None:
     """One signed request to the shared store (name = object name — empty for the bucket itself). Answer = the response body, or None when the object does not exist (404).
-    Any other failure (not reachable, timeout, refused, server error) raises :class:`ShareUnusable` naming it."""
+    Any other failure (not reachable, timeout, refused, server error) raises :class:`ShareUnusable` naming it. The request goes on the process's kept connection
+    (:data:`_SHARE_CONNECTIONS`); when a kept connection turns out closed by the store (reset, or closed before the answer), the request is sent once more on a new one — every
+    request here is a read or the put of a whole object under its content's name, so sending it twice changes nothing."""
     import hashlib  # loaded only when the shared store is used
     import http.client
     import time
-    import urllib.error
-    import urllib.request
     from urllib.parse import quote, urlencode
 
     path = f"/{share.bucket}/{name}" if name else f"/{share.bucket}"
-    payload = hashlib.sha256(body).hexdigest()
-    amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    url = f"{share.scheme}://{share.host}{quote(path, safe='/-_.~')}" + (f"?{urlencode(sorted(query))}" if query else "")
-    request = urllib.request.Request(url, data=body if method == "PUT" else None, method=method)
-    request.add_header("Host", share.host)
-    request.add_header("x-amz-date", amz_date)
-    request.add_header("x-amz-content-sha256", payload)
-    request.add_header("Authorization", signature_v4(share, method, path, query, payload, amz_date))
-    try:
-        with urllib.request.urlopen(request, timeout=SHARE_TIMEOUT_SECONDS) as response:
-            return response.read()
-    except urllib.error.HTTPError as error:
-        if error.code == 404:
+    target = quote(path, safe="/-_.~") + (f"?{urlencode(sorted(query))}" if query else "")
+    fresh = False
+    while True:
+        payload = hashlib.sha256(body).hexdigest()
+        amz_date = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+        headers = {"Host": share.host, "x-amz-date": amz_date, "x-amz-content-sha256": payload,
+                   "Authorization": signature_v4(share, method, path, query, payload, amz_date)}
+        connection, kept = _share_connection(share, fresh)
+        try:
+            connection.request(method, target, body=body if method == "PUT" else None, headers=headers)
+            response = connection.getresponse()
+            data = response.read()
+        except TimeoutError as error:
+            connection.close()
+            raise ShareUnusable(f"cannot reach the shared store ({type(error).__name__}: {error})") from error
+        except (OSError, http.client.HTTPException) as error:  # resets and refusals are OSError; a cut-off answer is HTTPException
+            connection.close()
+            if kept:
+                fresh = True
+                continue
+            raise ShareUnusable(f"cannot reach the shared store ({type(error).__name__}: {error})") from error
+        if response.will_close:
+            connection.close()
+        if response.status == 404:
             return None
-        raise ShareUnusable(f"the shared store answered {method} with HTTP {error.code} {error.reason}") from error
-    except (OSError, http.client.HTTPException) as error:  # URLError, timeouts and resets are OSError; a cut-off answer is HTTPException
-        raise ShareUnusable(f"cannot reach the shared store ({type(error).__name__}: {error})") from error
+        if not 200 <= response.status < 300:
+            raise ShareUnusable(f"the shared store answered {method} with HTTP {response.status} {response.reason}")
+        return data
 
 
 def share_problem(share: Share) -> str | None:
