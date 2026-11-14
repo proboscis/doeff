@@ -245,7 +245,8 @@ class DomainTable:
         """Run the body against this table emptied; restore its previous state on exit."""
         saved_domains = dict(self._domains)
         saved_homes = dict(self._effect_home)
-        self.clear()
+        self._domains.clear()
+        self._effect_home.clear()
         try:
             yield
         finally:

@@ -245,12 +245,10 @@ def _close(
     """
     for tag in armed:
         yield DisarmTimer(_FoldTimer(origin, tag))
-    armed.clear()
     for entry in running.values():
         yield Cancel(entry.runner)
     for entry in running.values():
         yield _ended(entry)
-    running.clear()
 
 
 @do
@@ -336,7 +334,7 @@ def fold(
                         yield _set_deadline(effect, origin, inputs, armed)
                     case Finish():
                         yield _close(origin, running, armed)
-                        finish = effect
+                        running, armed, finish = {}, set(), effect
                         break
             if clock is not None:
                 yield FoldMeasured(clock.queued, len(running), step_seconds)

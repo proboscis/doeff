@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from typing import Final
 
 import pytest
@@ -47,22 +48,22 @@ class _FakeServer:
 
     def __init__(self) -> None:
         """Start with an empty stream and no block ended."""
-        self.entries: tuple[tuple[str, dict[str, str]], ...] = ()
-        self.blocks_ended = 0
+        self._mut_entries: tuple[tuple[str, dict[str, str]], ...] = ()
+        self._mut_blocks_ended = 0
         self.changed = asyncio.Condition()
 
     async def add(self, added_ms: int) -> str:
         """``XADD`` of one entry whose id carries ``added_ms`` (the wall clock of the add); its id is the answer."""
-        entry_id = f"{added_ms}-{len(self.entries)}"
+        entry_id = f"{added_ms}-{len(self._mut_entries)}"
         async with self.changed:
-            self.entries = (*self.entries, (entry_id, {"name": "input-sent", "body": "{}"}))
+            self._mut_entries = (*self._mut_entries, (entry_id, {"name": "input-sent", "body": "{}"}))
             self.changed.notify_all()
         return entry_id
 
     async def end_blocks(self) -> None:
         """End every block waiting now: each answers ``None``, as a block whose time ran out with no entry."""
         async with self.changed:
-            self.blocks_ended += 1
+            self._mut_blocks_ended += 1
             self.changed.notify_all()
 
     async def xread(self, streams: dict[str, str], count: int, block: int) -> object:
@@ -71,9 +72,9 @@ class _FakeServer:
         await _turns(ROUND_TRIP_TURNS)
         ((key, position),) = streams.items()
         async with self.changed:
-            started = self.blocks_ended
+            started = self._mut_blocks_ended
             while not (after := self._after(position)[:count]):
-                if self.blocks_ended != started:
+                if self._mut_blocks_ended != started:
                     return None
                 await self.changed.wait()
         await _turns(ROUND_TRIP_TURNS)
@@ -81,13 +82,21 @@ class _FakeServer:
 
     def _after(self, position: str) -> tuple[tuple[str, dict[str, str]], ...]:
         """The entries whose id is past ``position``."""
-        return tuple(entry for entry in self.entries if _order(entry[0]) > _order(position))
+        return tuple(entry for entry in self._mut_entries if _order(entry[0]) > _order(position))
 
 
-def _order(entry_id: str) -> tuple[int, int]:
+@dataclass(frozen=True, order=True)
+class _StreamOrder:
+    """A stream id's order: its milliseconds, then its sequence."""
+
+    ms: int
+    seq: int
+
+
+def _order(entry_id: str) -> _StreamOrder:
     """A stream id's order (milliseconds, sequence)."""
     ms, seq = entry_id.split("-")
-    return int(ms), int(seq)
+    return _StreamOrder(int(ms), int(seq))
 
 
 class _FakePubSub:
@@ -95,24 +104,24 @@ class _FakePubSub:
 
     def __init__(self) -> None:
         """Start with nothing buffered."""
-        self.buffered = 0
+        self._mut_buffered = 0
         self.arrived = asyncio.Event()
 
     def buffer(self) -> None:
         """One notice arrives on the connection."""
-        self.buffered += 1
+        self._mut_buffered += 1
         self.arrived.set()
 
     async def parse_response(self, block: bool, timeout: float) -> object:
         """The next buffered reply at once; with nothing buffered, ``None`` at once for a read that does not wait
         (``timeout`` 0), else the reply of the next notice to arrive (no ``PING`` is ever due within the test)."""
         del block
-        while not self.buffered:
+        while not self._mut_buffered:
             if timeout == 0:
                 return None
             self.arrived.clear()
             await self.arrived.wait()
-        self.buffered -= 1
+        self._mut_buffered -= 1
         return ["message", PUBSUB_CHANNEL, json.dumps({"name": "host-ram", "body": "{}"})]
 
     async def handle_message(self, response: list[str], ignore_subscribe_messages: bool) -> dict[str, str]:

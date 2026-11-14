@@ -70,6 +70,3 @@ def trace_files_handler(effect: Effect, k: Any):
         traces = yield _read_traces(effect)
         return (yield Resume(k, traces))
     return (yield Pass(effect, k))
-
-
-__all__ = ["trace_files_handler"]

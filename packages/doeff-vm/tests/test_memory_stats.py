@@ -26,17 +26,26 @@ def _synthetic_query_handler():
     return handler
 
 
-def _live() -> tuple[int, int, int]:
+@dataclass(frozen=True)
+class _LiveCounts:
+    """The VM's live segments, continuations and IR streams."""
+
+    segments: int
+    continuations: int
+    ir_streams: int
+
+
+def _live() -> _LiveCounts:
     """Read the VM live counts via effect ReadVmLiveCounts (the reading run is compared after it ends, so every read includes the same amount)."""
-    return run(vm_probe_handler(ReadVmLiveCounts()))
+    return _LiveCounts(*run(vm_probe_handler(ReadVmLiveCounts())))
 
 
 def test_the_live_counts_effect_answers_three_ints() -> None:
-    live_segments, live_continuations, live_ir_streams = _live()
+    live = _live()
 
-    assert isinstance(live_segments, int)
-    assert isinstance(live_continuations, int)
-    assert isinstance(live_ir_streams, int)
+    assert isinstance(live.segments, int)
+    assert isinstance(live.continuations, int)
+    assert isinstance(live.ir_streams, int)
 
 
 def test_vm_live_counts_return_to_baseline_after_pyvm_run() -> None:

@@ -93,34 +93,34 @@ class _KeptReader:
     """What one handler keeps for one reader name: the position read up to in each kept channel (the number of
     the log's notices already handed out) and the notices handed out without an acknowledgement, oldest first."""
 
-    __slots__ = ("handed", "positions")
+    __slots__ = ("_mut_handed", "positions")
 
     def __init__(self) -> None:
         """Start a reader that has read nothing (its first subscription sets the positions at the logs' ends)."""
         self.positions: dict[str, int] = {}
-        self.handed: tuple[_Handed, ...] = ()
+        self._mut_handed: tuple[_Handed, ...] = ()
 
     def due(self, now: datetime, redeliver_seconds: float) -> _Handed | None:
         """The oldest unacknowledged notice whose time to be handed out again has come, or ``None``."""
         return next(
-            (held for held in self.handed if (now - held.at).total_seconds() >= redeliver_seconds), None
+            (held for held in self._mut_handed if (now - held.at).total_seconds() >= redeliver_seconds), None
         )
 
     def seconds_to_due(self, now: datetime, redeliver_seconds: float) -> float | None:
         """How long until the oldest unacknowledged notice is due (``None`` = none is held)."""
-        if not self.handed:
+        if not self._mut_handed:
             return None
-        return max(0.0, redeliver_seconds - (now - self.handed[0].at).total_seconds())
+        return max(0.0, redeliver_seconds - (now - self._mut_handed[0].at).total_seconds())
 
     def hand(self, notice: Announcement, now: datetime) -> Announcement:
         """Hand ``notice`` out (again) at ``now``: it is the newest unacknowledged one from now on."""
-        kept = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
-        self.handed = (*kept, _Handed(notice, now))
+        kept = tuple(held for held in self._mut_handed if not _same_notice(held.notice, notice))
+        self._mut_handed = (*kept, _Handed(notice, now))
         return notice
 
     def acknowledged(self, notice: Announcement) -> None:
         """Forget ``notice``: it is not handed out again (nothing changes if it is not held)."""
-        self.handed = tuple(held for held in self.handed if not _same_notice(held.notice, notice))
+        self._mut_handed = tuple(held for held in self._mut_handed if not _same_notice(held.notice, notice))
 
 
 def _same_notice(one: Announcement, other: Announcement) -> bool:

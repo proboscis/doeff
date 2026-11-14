@@ -10,6 +10,8 @@ what it performs is worked out until nothing more leaves (the least answer: a ha
 the reinstall and the clause can answer what the inner turn performs).
 """
 
+from dataclasses import dataclass
+
 import pytest
 from doeff_effect_analyzer._handler_effects import analyze_handler
 
@@ -110,31 +112,39 @@ def pkg(make_package) -> str:
     return make_package({"effects.py": EFFECTS_PY, "handlers.py": HANDLERS_PY})
 
 
-def _left(pkg: str, handler: str, effect: str) -> tuple[set[str], tuple[str, ...]]:
+@dataclass(frozen=True)
+class _Left:
+    """The effects that leave a clause, and the handlers on the way it could not read."""
+
+    effects: frozenset[str]
+    unknown_handlers: tuple[str, ...]
+
+
+def _left(pkg: str, handler: str, effect: str) -> _Left:
     """What leaves ``handler``'s clause for ``effect``, and the handlers on the way it could not read."""
     [clause] = [
         c for c in analyze_handler(f"{pkg}.handlers:{handler}").clauses if c.handles.__name__ == effect
     ]
     left = clause.emits.residual
-    return {escape.effect.__name__ for escape in left.escapes}, left.unknown_handlers
+    return _Left(frozenset(escape.effect.__name__ for escape in left.escapes), left.unknown_handlers)
 
 
 def test_a_handler_passed_to_a_helper_that_installs_it_is_the_handler_itself(pkg: str) -> None:
     # Before: ({"Report"}, ("handler",)) — the handler installed again answered nothing.
-    assert _left(pkg, "_counts", "Count") == (set(), ())
+    assert _left(pkg, "_counts", "Count") == _Left(frozenset(), ())
 
 
 def test_what_the_inner_turn_performs_meets_the_handlers_between_it_and_the_clause(pkg: str) -> None:
     # Again answered inside performs Leaf there, which _deepens answers with Deep. Taking the inner
     # turn to perform nothing would leave {"Leaf"} and hide Deep. Before: ({"Again", "Leaf"}, ("_nests",)).
-    assert _left(pkg, "_nests", "Again") == ({"Leaf", "Deep"}, ())
+    assert _left(pkg, "_nests", "Again") == _Left(frozenset({"Leaf", "Deep"}), ())
 
 
 def test_two_handlers_that_install_each_other_are_read_to_an_end(pkg: str) -> None:
     # Ping → Pong under _pongs → Ping under _pings → …: nothing else is performed, so nothing leaves.
     # Before: ({"Ping"}, ("handler",)).
-    assert _left(pkg, "_pings", "Ping") == (set(), ())
-    assert _left(pkg, "_pongs", "Pong") == (set(), ())
+    assert _left(pkg, "_pings", "Ping") == _Left(frozenset(), ())
+    assert _left(pkg, "_pongs", "Pong") == _Left(frozenset(), ())
 
 
 def test_doeff_traverse_sequential_reports_under_a_handler_it_reads() -> None:

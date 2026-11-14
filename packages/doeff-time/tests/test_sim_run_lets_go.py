@@ -48,9 +48,18 @@ def _read_steps() -> int:
     return steps
 
 
-def _live() -> tuple[int, int, int]:
+@dataclass(frozen=True)
+class _LiveCounts:
+    """The VM's live segments, continuations and IR streams."""
+
+    segments: int
+    continuations: int
+    ir_streams: int
+
+
+def _live() -> _LiveCounts:
     """The VM's live segments, continuations and IR streams of the whole process."""
-    return run(vm_probe_handler(ReadVmLiveCounts()))
+    return _LiveCounts(*run(vm_probe_handler(ReadVmLiveCounts())))
 
 
 def _run_world() -> RunTrace:

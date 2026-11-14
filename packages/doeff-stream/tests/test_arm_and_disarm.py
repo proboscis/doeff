@@ -10,6 +10,7 @@
 """
 
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 import pytest
@@ -74,7 +75,15 @@ def _then_time(body: Program[object]):
     return value, (yield GetTime())
 
 
-def _kicked_with_time(step: Step, inputs: Inputs) -> tuple[object, datetime]:
+@dataclass(frozen=True)
+class _Kicked:
+    """What the fold answered, and the time it answered at."""
+
+    value: object
+    at: datetime
+
+
+def _kicked_with_time(step: Step, inputs: Inputs) -> _Kicked:
     """``kicked``, and the time the fold answered at."""
 
     @do
@@ -88,7 +97,7 @@ def _kicked_with_time(step: Step, inputs: Inputs) -> tuple[object, datetime]:
     assert isinstance(answered, tuple)
     value, at = answered
     assert isinstance(at, datetime)
-    return value, at
+    return _Kicked(value, at)
 
 
 @SHAPES
@@ -105,10 +114,10 @@ def test_the_deadline_of_an_arm_comes_back_as_timer_fired(
             case _:
                 return Next(seen)
 
-    seen, at = _kicked_with_time(shaped(step), INPUTS)
+    kicked = _kicked_with_time(shaped(step), INPUTS)
     # No run end among the inputs: the deadline was set without a task.
-    assert seen == (Kick(), TimerFired("deadline"))
-    assert at == T0 + timedelta(minutes=5)
+    assert kicked.value == (Kick(), TimerFired("deadline"))
+    assert kicked.at == T0 + timedelta(minutes=5)
 
 
 @SHAPES

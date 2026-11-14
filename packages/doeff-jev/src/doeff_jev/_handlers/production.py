@@ -41,9 +41,8 @@ def _post(prepared: Prepared, timeout_seconds: float) -> Any:
 
 def _journal(target: JevTarget, effect: Judge, caller: str, **fields: Any) -> Any:
     """One slog("jev_judge") line. The destination, the question keys (the list of question names), and the caller name (if non-empty) go on every line."""
-    if caller:
-        fields["caller"] = caller
-    return slog("jev_judge", host=target.host, keys=list(effect.questions), **fields)
+    named = {**fields, "caller": caller} if caller else fields
+    return slog("jev_judge", host=target.host, keys=list(effect.questions), **named)
 
 
 def jev_handler(target: JevTarget, *, caller: str = "") -> Callable[[Any], Any]:
