@@ -512,8 +512,10 @@
                     (<- (PrepareNote (.format "editable で入るだけの repo の木 {} の bytecode を焼けない(import の時に作られる): {}"
                                               p.tree p.detail))))
                   ;; 焼きの秒を並列数と並べて準備の記録の 1 行に残す(小さい node で並列数が memory で 1 本に絞られ、2333 本の焼きが
-                  ;; 段の上限に近い 1639 秒かかった回の並列数が読めなかった — 2026-11-07)。
-                  (<- (PrepareNote (bake-line counts)))
+                  ;; 段の上限に近い 1639 秒かかった回の並列数が読めなかった — 2026-11-07)。bake-line は defk なので値を束ねてから
+                  ;; 渡す(Program のまま渡すと log に `Call(<function bake_line …>)` が出て数が読めない — 2026-11-15 の本番の準備の log)。
+                  (<- line str (bake-line counts))
+                  (<- (PrepareNote line))
                   ;; 書いた file の数 = 焼いて置いた .pyc(rebuilt)と保存先の code から置いた .pyc(stored)(#3676・#3858 — どちらも
                   ;; 保存先の中身の同じ file への hardlink で置き、置けない時だけ中身を書く)。焼かずに残した
                   ;; .pyc(reused)は置いていないので足さない(#3675)。

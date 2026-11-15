@@ -108,6 +108,11 @@
   (assert (in "disk ext4 /dev/nvme0n1p2 (/state)" (get lines 0)) lines)
   (assert (in "tree=" (get lines 0)) lines)
   (assert (in "app:expand=" (get lines 0)) lines)
+  ;; 焼きの 1 行も文字で出る(Program のまま記すと `Call(<function bake_line …>)` になり数が読めない — 2026-11-15 の本番の log)。
+  (val baked-lines (lfor n log.notes :if (.startswith (str n) "焼き: ") n))
+  (assert (= (len baked-lines) 1) log.notes)
+  (assert (in (.format "rebuilt={} stored={}" (get baked "rebuilt") (get baked "stored")) (get baked-lines 0)) baked-lines)
+  (assert (in "compile_s=" (get baked-lines 0)) baked-lines)
   ;; 温い準備: 前の root の木から写し、変わった app/__init__.py だけ置き直す(lib は変わらないので置き直さない)。
   (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
   (<- second (prepare-launched second-env #((KnownRoot :env ready.env :root ready.root :platform (get marker "platform") :made-ms 0
