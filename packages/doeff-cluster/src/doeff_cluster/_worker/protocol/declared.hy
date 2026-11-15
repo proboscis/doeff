@@ -150,6 +150,7 @@
    file の中の versions は task の行の versions で、cache の file は版ごとに分かれる(launch.spec-program-file・#3762)。
    実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
   (val id (get task "id"))
+  (val priority (.get task "priority"))
   (<- placed EnvPlacement (env-placement (.get task "runtimeEnv") (get task "revision")))
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--result" (str (/ task-dir f"{id}.result")))
@@ -160,7 +161,9 @@
            ;; 上書きされうるので使わない・#3762)。
            :versions (environ-pairs (get task "versions"))
            ;; 子の環境変数(service の job と同じ欄・同じ路 — 子 process の言い換えが宣言の env-vars の上に重ねる)。
-           :environ (environ-pairs (.get task "environ" {}))))
+           :environ (environ-pairs (.get task "environ" {}))
+           ;; 置き方の優先(整数 — 真偽は数えない。無い・形の違う行は 0 — eviction_rules の task-needs-of と同じ読み)。
+           :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)))
 
 
 (defk task-specs [tasks task-dir]

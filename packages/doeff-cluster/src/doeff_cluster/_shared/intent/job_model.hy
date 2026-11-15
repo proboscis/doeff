@@ -127,6 +127,11 @@
   ;; 「取り分」)。None = 取り分なし(欄を知らない旧い coordinator の返事・旧い行 — 共有の子か層そのもの)。比べない欄(値だけが変わっても
   ;; process を起こし直さない — 次に起こす時の置き場に効く・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| str None) cpu-share (field :default None :compare False))
+  ;; 置き方の優先(task だけ — heartbeat の返事の task の行の priority。coordinator が急ぎの task に低い task を止めさせて場所を空けた値・
+  ;; 2026-11-16)。worker は優先が memory_rules の URGENT-PRIORITY 以上の task を、機体の memory の逼迫でも起こしを見送らない
+  ;; (worker/core/policy の ready-tree-step — 起こした後に尽きかければ見張りが低い物から止める)。0 = 平常(欄の無い行・常駐の job)。
+  ;; 比べない欄(値だけが変わっても process を起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ int priority (field :default 0 :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))

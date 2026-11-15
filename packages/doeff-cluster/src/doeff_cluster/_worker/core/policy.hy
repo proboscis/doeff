@@ -41,6 +41,7 @@
 (import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
 (import doeff_cluster._shared.core.compartment_rules [held-cpu-millis])
 (import doeff_cluster._worker.core.bake_plan [BAKE-JOBS-CEILING])
+(import doeff_cluster._worker.core.memory_rules [URGENT-PRIORITY])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
 (import doeff_cluster._worker.core.warm_rules [forks-from-warm-child warm-key-of warm-mark-clean warm-child-of warm-child-ready warm-child-places mark-refusal
   warm-launch warm-child-refused warm-child-killed-out warm-child-roomless warm-child-size room-shortage warm-refusal-failure service-warm-keys service-only-warm-keys
@@ -348,8 +349,10 @@
     ;; elder-runs — coordinator はそれを見て前の世代から外す)。
     (elder-waits spec) (StartStep :actions #() :hold StartHold.ELDER-RUNS)
     ;; 機体の memory が逼迫している間は、task(once)だけ起こさない(重い task を並べて機体が尽きるのを避ける)。準備と
-    ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。
-    (and spec.once world.memory-tight) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
+    ;; 検めは済んでいるので、逼迫が解けた次の拍にすぐ起こす。常駐の job は見送らない。急ぎの優先(URGENT-PRIORITY 以上)の task も
+    ;; 見送らない(2026-11-16): その場所は置き先が低い task を止めて空けており、起こした後に尽きかければ見張りが低い物から止める
+    ;; (memory_rules の victim-of の urgent)— 見送ると、置き先が急ぎと決めた task が上限まで待つ。
+    (and spec.once world.memory-tight (< spec.priority URGENT-PRIORITY)) (StartStep :actions #() :hold StartHold.MEMORY-TIGHT)
     True (StartStep :actions #((StartJob spec (+ record.attempts 1) tree :warm-key (if (= path WarmStart.FORK) (warm-key-of spec) None)
                                          :warm-places (and spec.once (= path WarmStart.FORK) (warm-child-places world (warm-key-of spec)))))
                     :hold None)))

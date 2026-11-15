@@ -810,6 +810,37 @@
   (assert (= (! (plan 0 #(HEAVY) cold {} POLICY)) #((PrepareCode "rev1" None))) "task の木の準備は逼迫でも撃つ"))
 
 
+;; 割り込みで置いた急ぎの task(2026-11-16): 置き先が低い task を止めて場所を空けた急ぎの優先(URGENT-PRIORITY 以上)の task は、
+;; 逼迫の間も見送らない。
+
+(import pathlib [Path])
+(import doeff_cluster._worker.core.memory_rules [URGENT-PRIORITY] doeff_cluster._worker.protocol.declared [task-spec])
+
+(deftest test-an-urgent-task-starts-while-the-machine-memory-is-tight
+  ;; 失敗ケース: 置き先が低い task に譲らせて急ぎの宣言し直しの task を置いた worker が、逼迫を見て起こしを見送り、task は上限の
+  ;; 10 分まで(別の回は置いてから 5 分 33 秒)待った — 走れば数秒で終わる task だった(2026-11-13)。急ぎの task は逼迫の間も起こし、
+  ;; 優先 0 の task は今どおり見送る。
+  (val tight (replace (! (world)) :memory-tight True))
+  (val urgent (replace HEAVY :name "task/urgent" :priority URGENT-PRIORITY))
+  (assert (= (! (plan 0 #(urgent) tight {} POLICY)) #((StartJob urgent 1 "/c/rev1"))) "急ぎの task は逼迫でも起こす")
+  (<- holds tuple (start-holds 0 #(urgent HEAVY) tight {} POLICY))
+  (assert (= (lfor h holds #(h.name h.hold)) [#("task/urgent" None) #("task/heavy" StartHold.MEMORY-TIGHT)]) "見送るのは平常の task だけ")
+  (val below (replace HEAVY :name "task/below" :priority (- URGENT-PRIORITY 1)))
+  (assert (= (! (plan 0 #(below) tight {} POLICY)) #()) "急ぎの優先に届かない task は見送る"))
+
+(deftest test-a-task-row-carries-its-placement-priority-into-the-job
+  ;; 門が読む優先は heartbeat の返事の task の行の priority から来る(無い・真偽・形の違う欄は 0)。比べない欄なので、優先だけが
+  ;; 違っても同じ job と数える。
+  (val row {"id" "t1" "name" "t" "revision" "rev1" "versions" {} "program" "sha"})
+  (<- urgent JobSpec (task-spec (| row {"priority" URGENT-PRIORITY}) (Path "/tasks")))
+  (assert (= urgent.priority URGENT-PRIORITY))
+  (<- plain JobSpec (task-spec row (Path "/tasks")))
+  (assert (= plain.priority 0))
+  (<- flagged JobSpec (task-spec (| row {"priority" True}) (Path "/tasks")))
+  (assert (= flagged.priority 0) "真偽は優先と読まない")
+  (assert (= urgent plain) "優先は比べない欄"))
+
+
 ;; --- 逼迫での task の見送りの上限: 逼迫が続いて上限を越えた task は、この worker では起こさず、一時の準備の失敗
 ;; (env-failed・種類 memory-tight・retryable)として報告する。coordinator はその worker を避けて置き直す(absorb-env-failure)。
 
