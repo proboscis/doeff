@@ -119,8 +119,15 @@ class AsyncTimeRuntime:
             timer = yield Spawn(self._expire_after(timed_wait_seconds(effect)), daemon=True)
             try:
                 first = yield Race(*timed_wait_futures(effect), timer, priority=TaskPriority.IDLE if effect.park else None)
-            finally:
+            except GeneratorExit:
+                # Python closes the frame a finished run let go of (SchedulerCore.end_run): there is
+                # no run left to perform Cancel in, and the daemon timer is abandoned with it (#501).
+                # A yield here would be "generator ignored GeneratorExit".
+                raise
+            except BaseException:
                 yield Cancel(timer)
+                raise
+            yield Cancel(timer)
             return (yield Transfer(k, timed_wait_answer(effect, first, float(self._monotonic()) - started)))
         if isinstance(effect, ScheduleAtEffect):
             wait_seconds = max(0.0, (effect.time - self._now()).total_seconds())

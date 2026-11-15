@@ -642,9 +642,16 @@ def shielded(program: "Program[_T]") -> Generator[Any, Any, _T]:
     except UnhandledEffect:
         return (yield program)
     try:
-        return (yield program)
-    finally:
+        result = yield program
+    except GeneratorExit:
+        # Python closes the frame a finished run let go of (SchedulerCore.end_run): there is no
+        # task left to leave the region of, and a yield here would be "generator ignored GeneratorExit".
+        raise
+    except BaseException:
         yield ShieldExit()
+        raise
+    yield ShieldExit()
+    return result
 
 
 class ExternalPromiseCancelCallbackError(RuntimeError):
