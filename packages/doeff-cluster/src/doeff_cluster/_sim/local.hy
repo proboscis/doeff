@@ -250,7 +250,7 @@
 (import doeff_cluster._foundation.process_versions [process-versions])
 (import doeff_cluster._shared.protocol.task_result [task-result-request task-id-of-job])
 (import doeff_cluster._shared.protocol.service_report [report-request])
-(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvFailure])
+(import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv EnvFailure EnvFailureKind])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster._shared.core.native_wheel [current-platform])
 (import doeff_cluster._shared.intent.semaphore_model [LeaseOp LeaseAnswer AwaitLeaseFree AwaitLeaseVacated SEMAPHORE-PREFIX])
@@ -304,6 +304,8 @@
 (val CUT-REASON "網が切れている(sim — 送り手の居る worker の網)")
 (val FAULT-REASON "sim: 注入した故障(FailRoute — coordinator の口がこの状態で答える)")
 (val STALL-REASON "sim: coordinator の機体が止まっている(StallCoordinator — 返事なし)")
+;; SimWorker の unpreparable に在る版のコードの木の準備が終わる恒久の失敗(版の commit を取り寄せられない code-host の代役)。
+(val UNPREPARABLE-CODE (EnvFailure :kind EnvFailureKind.COMMIT-MISSING :detail "sim: その版の commit を取り寄せられない(SimWorker.unpreparable)" :retryable False))
 ;; 模擬の世界の時間の設定の既定の比: :timing を渡さない筋書きは、本番の既定の窓を全部この比で延ばした設定(scaled-timing)で走る。
 ;; heartbeat と待ちの送り直しは coordinator の本物の歩なので(#3865)、仮想の時間を長く回す筋書きの歩の数がこの比でほぼ反比例に減る。
 ;; 生死・fence・停止を試す筋書きは本番の値(ClusterTiming の既定)を :timing で明示する。
@@ -386,7 +388,9 @@
    実行環境の root(env-prepare-seconds が None の時)の準備にかかる仮想の秒・env-prepare-seconds = 実行環境の root の準備(PrepareEnv)に
    かかる仮想の秒(None = prepare-seconds と同じ — 本番の code-host と env-host のように 2 つの準備は別の操作で、別の時間がかかる。
    実行環境の宣言を持たない job の準備は env-prepare-seconds を待たない・#2879)・env-failure = 実行環境の root の準備がこの失敗で終わる
-   worker(None = 揃う)・warm-refusal = 先の組み(PrepareEnv :warm)をこの断りで始める前に断る worker(本番の env-host の warm-admission の
+   worker(None = 揃う)・unpreparable = コードの木の準備(PrepareCode)が恒久の失敗 UNPREPARABLE-CODE で終わる版の組(版の commit を取り
+   寄せられない code-host の代役 — 宣言し直した新しい版が組めない間、旧い版の process が動き続ける筋書きのため。空 = どの版も揃う)・
+   warm-refusal = 先の組み(PrepareEnv :warm)をこの断りで始める前に断る worker(本番の env-host の warm-admission の
    代役 — 組みを始めず、宣言された job の準備は断らない。None = 断らない)・
    starts-down = 止まったまま始まる(StartWorker で起きる — 後から加わる node)・ignores-fence = 反例の世界だけの壊れた worker
    (coordinator に届かない間 fence を越えても job を止めない — 本番の worker_policy の判断を使わない)・beat-every-ms = 反例の世界だけの
@@ -429,6 +433,7 @@
   (setv #^ float prepare-seconds 0.0)
   (setv #^ (| float None) env-prepare-seconds None)
   (setv #^ (| EnvFailure None) env-failure None)
+  (setv #^ (get frozenset str) unpreparable (frozenset))
   (setv #^ (| EnvFailure None) warm-refusal None)
   (setv #^ bool starts-down False)
   (setv #^ bool ignores-fence False)
@@ -2383,11 +2388,14 @@
   {:pre [(: worker SimWorker) (: truth HostTruth) (: key str) (: env bool) (: warm bool) (: now int)] :post [(: % None)]
    :tags {:context "doeff-cluster" :role "protocol"}}
   "準備 1 つを始めて宿の真実と世界の記録に書くため(揃う時刻 = now + 準備の秒 — コードの木は prepare-seconds・実行環境の root は
-   env-prepare-seconds(None なら prepare-seconds)・実行環境の root は worker の env-failure で終わる)。"
+   env-prepare-seconds(None なら prepare-seconds)・実行環境の root は worker の env-failure で終わる・worker の unpreparable に在る版の
+   コードの木は UNPREPARABLE-CODE で終わる)。"
   (val seconds (if (and env (is-not worker.env-prepare-seconds None)) worker.env-prepare-seconds worker.prepare-seconds))
   (val preparation (SimPreparation :worker worker.name :key key :env env :warm warm :started-ms now
                                    :ready-ms (+ now (int (* 1000 seconds)))
-                                   :failure (if env worker.env-failure None)))
+                                   :failure (cond env worker.env-failure
+                                                  (in key worker.unpreparable) UNPREPARABLE-CODE
+                                                  True None)))
   (<- (PutHostTruth worker.name (replace truth :codes (| truth.codes {key preparation}))))
   (<- (NotePreparation preparation))
   None)
