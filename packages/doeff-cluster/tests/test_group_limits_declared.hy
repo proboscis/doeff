@@ -19,7 +19,7 @@
 (import doeff_cluster [Refused]
         doeff_cluster._coordinator.core.resource_policy [create-resource update-resource stamp])
 (import doeff_cluster._coordinator.core.cluster_policy [resource-version-of])
-(import doeff_cluster [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedRefused ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedUnknown DetachedUnreachable])
+(import doeff_cluster [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedRefused ReadDetachedQueue DetachedQueueReason ReadDetachedTasks DetachedTasks DetachedTaskPhase DetachedQueueGroup DetachedUnknown DetachedUnreachable])
 (import doeff_cluster._shared.protocol.detached [detached-queue-of-state])
 (import doeff_cluster [submit-detached-task])
 (import doeff_cluster [system-of])
@@ -272,3 +272,25 @@
   (assert (and (isinstance cut DetachedUnreachable) (in "connection refused" cut.detail)) cut)
   (<- bad (detached-queue-of-state "k" {"tasks" [{"key" "k"}]}))
   (assert (isinstance bad DetachedUnreachable) bad))
+
+
+;; --- key の前置きが同じ task の一覧(ReadDetachedTasks)------------------------------------------
+
+(defk listed-tasks-scenario []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "group-limit-scenario と同じ 2 本を出し、前置き probe- の ReadDetachedTasks の答えと、当たらない前置きの答えを返すため。"
+  (<- state dict (group-limit-scenario))
+  (<- listed (ReadDetachedTasks "probe-"))
+  (<- none (ReadDetachedTasks "nobody/"))
+  (| state {"listed" listed "none" none}))
+
+
+(deftest test-the-tasks-under-a-key-prefix-are-listed-with-their-phases-on-sim
+  ;; 送り手が前の process の送った key を知らずに、同じ前置きの task を phase と共に読める: 置かれた 1 本目は assigned・上限で待つ 2 本目は
+  ;; queued(key の順)。前置きの当たらない読みは空の一覧(届かないのとは別)。
+  (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (listed-tasks-scenario)
+                              :workers #((SimWorker :name "w1" :provides LOCAL))))
+  (assert (= (get state "listed") (DetachedTasks :tasks #((DetachedTaskPhase :key "probe-1" :phase "assigned")
+                                                          (DetachedTaskPhase :key "probe-2" :phase "queued"))))
+          (get state "listed"))
+  (assert (= (get state "none") (DetachedTasks :tasks #())) (get state "none")))

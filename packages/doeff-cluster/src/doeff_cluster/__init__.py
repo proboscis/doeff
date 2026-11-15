@@ -179,6 +179,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.detached_model import AwaitServiceReady as AwaitServiceReady
     from doeff_cluster._shared.intent.detached_model import CancelDetached as CancelDetached
     from doeff_cluster._shared.intent.detached_model import ReadDetachedQueue as ReadDetachedQueue
+    from doeff_cluster._shared.intent.detached_model import ReadDetachedTasks as ReadDetachedTasks
     from doeff_cluster._shared.intent.detached_model import ReadDetachedTiming as ReadDetachedTiming
     from doeff_cluster._shared.intent.detached_model import ReadRunners as ReadRunners
     from doeff_cluster._shared.intent.detached_model import ReadServices as ReadServices
@@ -535,6 +536,11 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.intent.detached_model import DetachedSubmitted as DetachedSubmitted
     from doeff_cluster._shared.intent.detached_model import DetachedSucceeded as DetachedSucceeded
+    from doeff_cluster._shared.intent.detached_model import DetachedTaskPhase as DetachedTaskPhase
+    from doeff_cluster._shared.intent.detached_model import DetachedTasks as DetachedTasks
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedTasksAnswer as DetachedTasksAnswer,
+    )
     from doeff_cluster._shared.intent.detached_model import DetachedTiming as DetachedTiming
     from doeff_cluster._shared.intent.detached_model import (
         DetachedTimingAnswer as DetachedTimingAnswer,
@@ -1013,6 +1019,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ReadCoordinator": "doeff_cluster._sim.local",
     "ReadDesired": "doeff_cluster._worker.intent.worker_model",
     "ReadDetachedQueue": "doeff_cluster._shared.intent.detached_model",
+    "ReadDetachedTasks": "doeff_cluster._shared.intent.detached_model",
     "ReadDetachedTiming": "doeff_cluster._shared.intent.detached_model",
     "ReadGrant": "doeff_cluster._sim.k8s_supplied",
     "ReadRunners": "doeff_cluster._shared.intent.detached_model",
@@ -1404,6 +1411,9 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DetachedSubmitAnswer": "doeff_cluster._shared.intent.detached_model",
     "DetachedSubmitted": "doeff_cluster._shared.intent.detached_model",
     "DetachedSucceeded": "doeff_cluster._shared.intent.detached_model",
+    "DetachedTaskPhase": "doeff_cluster._shared.intent.detached_model",
+    "DetachedTasks": "doeff_cluster._shared.intent.detached_model",
+    "DetachedTasksAnswer": "doeff_cluster._shared.intent.detached_model",
     "DetachedTiming": "doeff_cluster._shared.intent.detached_model",
     "DetachedTimingAnswer": "doeff_cluster._shared.intent.detached_model",
     "DetachedUnknown": "doeff_cluster._shared.intent.detached_model",

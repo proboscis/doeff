@@ -523,6 +523,49 @@
    :tags {:context "doeff-cluster" :role "intent"}})
 
 
+;; --- key の前置きが同じ task の一覧(ReadDetachedTasks)------------------------------
+;; key が同じ前置きで始まる切り離した task を、いまの phase と共に列挙する。送り手が、前の process の送った key(中身の印が違う)を知らずに、
+;; 自分の送りに置き換わった未着手の task を見つけて取り下げる時の読み(ReadDetachedTiming と ReadDetachedQueue は key 1 つを引く)。読む先は
+;; coordinator の GET /state の tasks の行の key と phase(返事は大きい — 呼び手は拍ごとでなく判断の時だけ読む)。置き場を失って起きた直後の
+;; coordinator は走っている task の行をまだ持たないことがあるので、一覧に無い key を「無い」と決める判断には使わない(在る行を読む物)。
+
+(defwire DetachedPhaseRowWire
+  "coordinator の GET /state の tasks の行のうち ReadDetachedTasks が読む欄: key(切り離した task だけが持つ — RemoteJob の task の行は無い)・phase。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (setv #^ (| str None) key None)
+  (#^ str phase))
+
+
+(defwire StatePhasesWire
+  "coordinator の GET /state の返事のうち ReadDetachedTasks が読む欄: tasks(task の行の列)。ほかの欄は読まない。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ (get tuple #(DetachedPhaseRowWire ...)) tasks))
+
+
+(defrecord DetachedTaskPhase
+  "ReadDetachedTasks の答えの 1 行: key = task のキー・phase = いまの coordinator の phase(queued | preparing | assigned | 終わりの phase)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str key)
+  (#^ str phase))
+
+
+(defrecord DetachedTasks
+  "ReadDetachedTasks の答え: tasks = key が前置きで始まる task の行(key の順 — 無ければ空)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ (get tuple #(DetachedTaskPhase ...)) tasks))
+
+
+(val DetachedTasksAnswer (| DetachedTasks DetachedUnreachable))
+
+(defeffect ReadDetachedTasks
+  "key が prefix で始まる切り離した task の行を、終わりを待たずにいまのまま読む(coordinator の GET /state の tasks の行の key と phase)。
+   答え = DetachedTasks(当たる行が無ければ空)・DetachedUnreachable(coordinator に届かない・形の違う返事 — task の在否は分からない)。
+   lease に触らない。"
+  {:fields [(: prefix str)]
+   :answer DetachedTasksAnswer
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
 ;; --- 終わりの出口(outbox — 2026-10-21)--------------------------------------------------------
 ;; 知らせ先(SubmitDetached の notify)を名乗った task が終わりへ移ると(値か例外を返した・取り消された・lost・走らなかった・実行環境を
 ;; 用意できない — どの道で終わっても)、coordinator はその移りを状態に書く歩の中で出口に行を 1 つ積む(task の id ごとに 1 度だけ —

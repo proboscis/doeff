@@ -25,9 +25,9 @@
 (import os)
 (import doeff_cluster [process-versions])
 (import doeff_cluster [ClusterTiming])
-(import doeff_cluster [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedUnknown DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable RunnerFact RunnersUnreachable])
+(import doeff_cluster [AwaitDetached ReadRunners ReadServices ServiceFact ServicesUnreachable ReadDetachedTiming DetachedTiming DetachedTasks DetachedTaskPhase DetachedUnknown DetachedSucceeded DetachedLost DetachedUnrunnable DetachedPending DetachedUnreachable RunnerFact RunnersUnreachable])
 (import doeff_cluster [detached-cluster]
-        doeff_cluster._shared.protocol.detached [service-facts-of-json detached-timing-of-state unknown-timing-confirmed])
+        doeff_cluster._shared.protocol.detached [service-facts-of-json detached-timing-of-state detached-tasks-of-state unknown-timing-confirmed])
 (import tests.transport_http [transport-http route-cell detached-sender TEST-ROUTE])
 (import doeff_cluster [sim-cluster SimWorker SimMachine KillWorker DrainWorker StopWorker StartWorker StopCoordinator ProcessesOf ReadCoordinator])
 (import doeff_cluster [system-of])
@@ -693,6 +693,25 @@
   (assert (and (isinstance partial DetachedUnreachable) (in "startedMs" partial.detail)) partial)
   (<- notasks (detached-timing-of-state "k" {"revision" 1}))
   (assert (and (isinstance notasks DetachedUnreachable) (in "tasks" notasks.detail)) notasks))
+
+
+;; --- key の前置きが同じ task の一覧(ReadDetachedTasks) -----
+
+(deftest test-the-tasks-under-a-prefix-are-read-from-the-state-rows
+  ;; 前置きで始まる key の行だけを key の順で phase と共に読む(key を持たない RemoteJob の task の行は当たらない)・当たらなければ空・
+  ;; 届かない読みと key か phase の欄の形が違う返事は DetachedUnreachable(task が無いと読まない)。
+  (val state {"tasks" [{"id" "t1" "phase" "assigned" "key" "run/a/v1/m2"} {"id" "t2" "phase" "queued" "key" "run/a/v1/m1"}
+                       {"id" "t3" "phase" "queued" "key" "run/b/v1/m1"} {"id" "t4" "phase" "assigned"}]})
+  (<- listed (detached-tasks-of-state "run/a/v1/" state))
+  (assert (= listed (DetachedTasks :tasks #((DetachedTaskPhase :key "run/a/v1/m1" :phase "queued")
+                                            (DetachedTaskPhase :key "run/a/v1/m2" :phase "assigned"))))
+          listed)
+  (<- none (detached-tasks-of-state "run/c/" state))
+  (assert (= none (DetachedTasks :tasks #())) none)
+  (<- cut (detached-tasks-of-state "run/" "connection refused"))
+  (assert (and (isinstance cut DetachedUnreachable) (in "connection refused" cut.detail)) cut)
+  (<- bad (detached-tasks-of-state "run/" {"tasks" [{"key" "run/a"}]}))
+  (assert (and (isinstance bad DetachedUnreachable) (in "phase" bad.detail)) bad))
 
 
 ;; GET /state に行の無い key を知らないと言ってよいか(unknown-timing-confirmed): GET /detached/<key> が本当に知らない(phase unknown)と言う時だけ。
