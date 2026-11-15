@@ -77,7 +77,7 @@
 (val BAD-USAGE 129)
 (val UNREACHABLE-TEXT "fatal: Could not read from remote repository.\n")
 (val LOG-FIELDS #("clones" "fetches" "head-fetches" "archives" "diffs" "expanded" "syncs" "downloads" "builds" "compiles" "stored"
-                  "mounts" "unmounts"))
+                  "mounts" "unmounts" "marks"))
 ;; 木を読み専用で見せる外の daemon の代役の命令の名と、その命令を使う翻訳の設定の雛形(筋書きが EnvWorld の tree-mount・tree-unmount に置く)。
 (val TREE-MOUNT-COMMAND "tree-mount")
 (val TREE-UNMOUNT-COMMAND "tree-unmount")
@@ -163,7 +163,7 @@
    code から書いた .pyc の数(木ごとに足す・#3858)・entries = 最後の bytecode の焼く範囲の入口・rebuilt = 木ごとに焼いた source の
    相対 path(#(木 path の tuple) の列・焼いた順)・diffed = git diff で読んだ 2 つの commit(#(旧 新) の列・読んだ順 — どの root を写し元に
    選んだかを commit で確かめる)・head-fetches = 全部の head を取り直す git fetch の呼び・mounts・unmounts = 木を置く・外す代役の命令が
-   通った回数・notes = 準備の記録の行。"
+   通った回数・marks = mirror の ref を取った commit へ動かした git update-ref の呼び・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
   (setv #^ int head-fetches 0)
@@ -177,6 +177,7 @@
   (setv #^ int stored 0)
   (setv #^ int mounts 0)
   (setv #^ int unmounts 0)
+  (setv #^ int marks 0)
   (setv #^ tuple entries #())
   (setv #^ tuple compiled-trees #())
   (setv #^ tuple rebuilt #())
@@ -387,6 +388,20 @@
              (ProcessOutcome :stdout "" :stderr "" :exit-code 0))))
 
 
+(defk git-update-ref [argv args]
+  {:pre [(: argv tuple) (: args tuple)] :post [(: % ProcessOutcome)]}
+  "git -C <mirror> update-ref <ref> <sha> に答えるため(mirror に取った commit なら ref の先を mirror の file marked に書く・取っていない
+   commit は本物と同じく失敗で終わる)。"
+  (<- mirror str (required-option-of argv "-C"))
+  (<- fetched str (read-or-empty (posixpath.join mirror "fetched")))
+  (val sha (get args -1))
+  (if (in sha (.splitlines fetched))
+      (do (<- (WriteText (posixpath.join mirror "marked") (+ (get args 1) " " sha "\n")))
+          (<- (bump {"marks" 1}))
+          (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
+      (ProcessOutcome :stdout "" :stderr (.format "fatal: {}: not a valid SHA1\n" sha) :exit-code GIT-FATAL)))
+
+
 (defk git-archive [world args]
   {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
   "git archive --format=tar -o <archive> <sha> [-- <path>…] に答えるため(tar の台本が読む形 — path → 中身の JSON — で commit の木を書く。
@@ -452,7 +467,7 @@
 
 (defk git-script [world commands request]
   {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "翻訳が出す git の問い(clone・cat-file・config・fetch・archive・diff・ls-tree)に世界から答える台本。"
+  "翻訳が出す git の問い(clone・cat-file・config・fetch・update-ref・archive・diff・ls-tree)に世界から答える台本。"
   (val argv (tuple request.argv))
   (val args (if (in "-C" argv) (cut argv 3 None) (cut argv 1 None)))
   (<- answer ProcessOutcome
@@ -461,6 +476,7 @@
         "cat-file" (git-cat-file argv args)
         "config" (git-config argv)
         "fetch" (git-fetch world argv args)
+        "update-ref" (git-update-ref argv args)
         "archive" (git-archive world args)
         "diff" (git-diff world argv args)
         "ls-tree" (git-ls-tree world argv args)

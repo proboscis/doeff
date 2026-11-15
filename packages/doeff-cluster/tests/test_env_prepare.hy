@@ -490,6 +490,8 @@
   (assert (= (- after.expanded before.expanded) 1) "mirror から置いた file は、変わった app/__init__.py の 1 つだけ")
   (assert (= #((- after.fetches before.fetches) (- after.head-fetches before.head-fetches)) #(1 0))
           "新しい commit は commit 1 つの fetch で取れるので、全部の head は取り直さない")
+  (assert (= (- after.marks before.marks) 1)
+          "commit 1 つの fetch は ref を動かさないので、取った commit を mirror の ref で指す(次の fetch の交渉の have — 指さないと古い ref からの歴史を取り直す)")
   (<- mirror-stage dict (stage-of second "mirror"))
   (assert (= (tuple (gfor p (get mirror-stage "parts") #((get p "name") (get p "how")))) #(#("app" "fetched") #("lib" "present")))
           #("mirror の段の印は repo ごとの揃え方を持つ" mirror-stage))
