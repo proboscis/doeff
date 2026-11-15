@@ -111,6 +111,14 @@
 ;;; ために返す量(clis-reclaim — 需要の余白の不足 ÷ CLIS-ROOM-SHARE)を名乗る — coordinator は借りの task をその量まで止めて待ちの行へ戻す。
 ;;; 需要の余白の値そのものは変えない(上に載る系が待つ時は今までどおり k 本分を空ける)。
 ;;;
+;;; 区画の持つ clis の層の貸し(2026-11-15 — ADR-DOE-CLUSTER-005 R13): 区画が clis の層の memory.max を固定する worker(node-c の
+;;; hosted clis 12288 MiB)は、需要の余白を掛け直さないので上の貸しが働かず、11-12〜11-14 に clis の使いが 3566 MiB の間も借りの task は
+;;; 0 本だった。取り返しの印の file を名指す worker は、区画の上限 − clis の今の使い − 1 本の要り ÷ CLIS-ROOM-SHARE(切り上げ)− 上に載る系が
+;;; 残させる余白(clis-held-lend)を、tasks 区画の外へ貸す量として名乗る。clis の層の memory.max は区画の上限のまま(上に載る系の受け手が
+;;; 読む空きは貸しで縮まない — 新しいターンは貸しを理由に待たない)。jobs の層の memory.max は区画の上限 + 置いた借りの task の要りの和
+;;; (held-jobs-limit — 借りが止まり終えるまでは今の使いより下げない)。ターンが始まって clis の使いが伸びると貸しが縮み、印が新しい間は 0 に
+;;; なり、coordinator は貸しを越えた借りの task を止めて待ちの行へ戻す(coordinator/core/cluster_policy の borrowed-over)。
+;;;
 ;;; container の中の限る層(2026-11-11):jobs と clis の外で memory.max を持つ層(commands・gate・exec)は、container の中の空きから
 ;;; 「その層に今掛けている memory.max − 層の今の working set」(layer-hold — 層が伸びうる残り。使いは container の working set に数え済みなので
 ;;; 引かない)を取り置く。機体の宣言に層の余地(WORKER_LAYER_FLOORS — worker/entry/main)が在る層は、worker が回ごとに memory.max を
@@ -236,7 +244,9 @@
   (#^ str id)
   (#^ int bytes)
   (setv #^ int priority 0)
-  (setv #^ bool declared True))
+  (setv #^ bool declared True)
+  ;; borrowed = 置き先が区画の持つ clis の層の貸しへ借りとして置いた task(返事の行の borrowed — 頭の註の区画の持つ clis の層の貸し)。
+  (setv #^ bool borrowed False))
 
 
 (defrecord CommandLayerUse
@@ -441,6 +451,30 @@
   (if (> short 0) (int (- (// (- short) CLIS-ROOM-SHARE))) 0))
 
 
+(defk clis-held-lend [held clis-current turn [kept 0]]
+  {:pre [(: held int) (>= held 0) (: clis-current int) (>= clis-current 0) (: turn int) (>= turn 0) (: kept int) (>= kept 0)]
+   :post [(: % int) (<= 0 % held)] :tags {:context "worker" :role "judgment"}}
+  "区画の持つ clis の層が tasks 区画の外へ貸す量(byte)を求めるため(頭の註の区画の持つ clis の層の貸し): held = 区画の clis の
+   memory.max・clis-current = clis の今の使い・turn = 会話の CLI の 1 本の要り・kept = 上に載る系が残させる余白。区画の上限から、今の使いと
+   1 本の要り ÷ CLIS-ROOM-SHARE(切り上げ — 貸した後も受け手が新しいターンを受けられる空き)と kept を引いた量。0 未満は 0。"
+  (val keep (- (// (- turn) CLIS-ROOM-SHARE)))
+  (max 0 (- held clis-current (int keep) kept)))
+
+
+(defk held-jobs-limit [held borrowed before current]
+  {:pre [(: held int) (>= held 0) (: borrowed int) (>= borrowed 0) (: before (| int None)) (: current (| int None))]
+   :post [(: % int) (>= % (+ held borrowed))] :tags {:context "worker" :role "judgment"}}
+  "区画の持つ jobs の層に書く memory.max を求めるため(頭の註の区画の持つ clis の層の貸し): held = tasks 区画の memory.max・borrowed = 置いた
+   借りの task の要りの和・before = 前に書いた上限(None = まだ)・current = jobs の層の今の memory.current(None = 読めなかった)。
+   区画の上限 + 借りの和。前の上限より下げる回は、今の使いより下げない(止めた借りの process が退き終えるまで、残る task を層の中の
+   OOM で止めない — 使いを読めない回は前の上限のまま)。"
+  (val target (+ held borrowed))
+  (cond
+    (or (is before None) (>= target before)) target
+    (is current None) before
+    True (max target (min before current))))
+
+
 (defk clis-lent[limit clis-current floor]
   {:pre [(: limit int) (: clis-current int) (>= clis-current 0) (: floor int) (>= floor 0)] :post [(: % int) (>= % 0)]
    :tags {:context "worker" :role "judgment"}}
@@ -558,8 +592,8 @@
   "heartbeat の返事の task の行(置き先が worker に置いた task — JSON の dict の tuple)から、置いた task の要り(TaskNeed の tuple)を
    読むため: 欄 memoryMiB(0 以上の整数 — 真偽は数えない)が在ればその byte、無い・形の違う行は見込み UNDECLARED-NEED-BYTES で、要りを
    名乗らない task と読む(declared が偽 — 置き先が空きを待たせずに置く task は memoryMiB を運ばない)。欄 priority
-   (整数 — 真偽は数えない)が在ればその優先、無い・形の違う行は 0。id の無い行は
-   読まない。"
+   (整数 — 真偽は数えない)が在ればその優先、無い・形の違う行は 0。欄 borrowed が真の行は借りの task(頭の註の区画の持つ clis の層の
+   貸し)。id の無い行は読まない。"
   (tuple (gfor row rows
                :if (and (isinstance row dict) (isinstance (.get row "id") str))
                :setv mib (.get row "memoryMiB")
@@ -568,7 +602,8 @@
                (TaskNeed :id (get row "id")
                          :bytes (if declared (* mib MIB) UNDECLARED-NEED-BYTES)
                          :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)
-                         :declared declared))))
+                         :declared declared
+                         :borrowed (is (.get row "borrowed") True)))))
 
 
 (defk urgent-jobs [needs]

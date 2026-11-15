@@ -72,7 +72,7 @@
                                                   prepare-after prepare-line])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
                                               task-uses-of jobs-room-of prepare-wait-of
-                                              job-meters-told ClisRoomLend clis-room-lend])
+                                              job-meters-told ClisRoomLend clis-room-lend held-lend-told])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine task-needs-of])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.memory_rules [MIB])  ; room-noted が命令の層の床を byte にする
@@ -1069,6 +1069,12 @@
         (<- told ClisRoomLend (clis-room-lend reading.reclaiming reading.load.memory-available-mib jobs-room widened
                                               state.eviction.clis-reclaim))
         (:= clis-lend told))
+      ;; 区画の持つ clis の層の貸し(load_rules の頭の註 — ADR-DOE-CLUSTER-005 R13): 枠の file の行が取り返しの印の file を名指す worker は、
+      ;; 見張りが数えた貸しを、印が新しい間は 0 で名乗る(区画が clis の層を持たない回は見張りが数えないので名乗らない)。
+      (var held-lend None)
+      (when (and (is-not state.eviction None) (is-not reading None) state.reclaim-file)
+        (<- told (| int None) (held-lend-told reading.reclaiming state.eviction.clis-held-lend))
+        (:= held-lend told))
       ;; keeper が版の準備を待つ間の取り置きを添える(coordinator は名乗る worker に新しく常駐の job を置かない — load_rules.prepare-wait-of)。
       (var prepare-wait None)
       (when (is-not state.eviction None)
@@ -1077,6 +1083,7 @@
       (val load (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
                                                     :urgent-jobs-room-mib urgent-jobs-room
                                                     :lend-jobs-room-mib lend-jobs-room
+                                                    :hosted-lend-mib held-lend
                                                     :prepare-wait-mib prepare-wait :job-meters job-meters
                                                     :job-meters-at-ms (if (is job-meters None) None
                                                                           state.eviction.meters-at-ms))))

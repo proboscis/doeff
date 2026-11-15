@@ -1568,6 +1568,69 @@
            :rerun-note note :detail note :preempted-by by.id :borrowed False :reclaimed False))
 
 
+(defk held-lend-of [worker]
+  {:pre [(: worker WorkerInfo)] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "worker が名乗った、区画の持つ clis の層が tasks 区画の外へ貸す量を知るため(ADR-DOE-CLUSTER-005 R13 — MiB・None = 名乗らない)。"
+  (if (is worker.measured None) None worker.measured.hosted-lend-MiB))
+
+
+(defk lend-remainder [held used kept need cpu lend]
+  {:pre [(: held (| HeldCompartment None)) (: used ClaimedSum) (: kept ClaimedSum) (: need int) (: cpu int) (: lend (| int None))]
+   :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
+  "区画の和に入らない場所を譲る名乗りの task を、worker の区画の持つ clis の層の貸しへ借りとして置けるかを知るため(ADR-DOE-CLUSTER-005
+   R13): held = tasks 区画(None = 持たない → 置けない)・used・kept・need・cpu = compartment-misfit と同じ・lend = 名乗った貸し(MiB — None = 名乗らない
+   → 置けない)。memory の和 + need が memoryMiB + lend の内で、CPU の和 + cpu が cpuMillis の内(貸すのは memory だけ)なら、置いた後の残り
+   (memoryMiB + lend − 和 − need — 置き先の順の鍵)。入らなければ None。"
+  (when (or (is held None) (is lend None))
+    (return None))
+  (val left (- (+ held.memory-mib lend) used.memory-mib kept.memory-mib need))
+  (if (and (>= left 0) (<= (+ used.cpu-millis kept.cpu-millis cpu) held.cpu-millis)) left None))
+
+
+(defk borrowed-over [worker tasks state compartments peaks]
+  {:pre [(: worker WorkerInfo) (: tasks tuple) (: state ClusterState) (: compartments dict) (: peaks dict)] :post [(: % tuple)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "区画の持つ clis の層の貸しが縮んだ worker で、止めて待ちの行へ戻す借りの task を知るため(ADR-DOE-CLUSTER-005 R13 の取り返し): tasks =
+   今の task の行・state と compartments と peaks = 申告の読み(claim-mib-of)。worker が貸しを名乗り(上に載る系が待つ間は 0)、tasks 区画を
+   持つ時だけ、その worker に置いた task の申告の和が memoryMiB + 貸しを越えた分に届くまで、置いた借りの task(borrowed — 場所を譲る名乗りと
+   走らせ直しの名乗りを持つ切り離した task)を優先の低い順・申告の大きい順・id の順に並べる。貸しを名乗らない worker(測りの欠け・前の版)は
+   空 — 測りが欠けた拍に借りを止めない。"
+  (<- lend (| int None) (held-lend-of worker))
+  (val held (.get compartments worker.name))
+  (when (or (is lend None) (is held None))
+    (return #()))
+  (var total 0)
+  (var borrowed #())
+  (for [t tasks :if (and (in t.phase PLACED-PHASES) (= t.worker worker.name))]
+    (<- memory int (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
+    (:= total (+ total memory))
+    (when (and t.detached t.borrowed t.preemptible t.rerun)
+      (:= borrowed #(#* borrowed (YieldCandidate :task t :memory-mib memory :cpu-millis 0)))))
+  (val over (- total held.memory-mib lend))
+  (var picked #())
+  (var freed 0)
+  (for [c (sorted borrowed :key (fn [c] #(c.task.priority (- c.memory-mib) c.task.id)))]
+    (when (>= freed over)
+      (break))
+    (:= picked #(#* picked c.task))
+    (:= freed (+ freed c.memory-mib)))
+  picked)
+
+
+(defk reclaimed-detached [task now worker]
+  {:pre [(: task TaskRecord) (: now int) (: worker str)] :post [(: % TaskRecord)] :tags {:context "coordinator" :role "judgment"}}
+  "区画の持つ clis の層の貸しが縮んだので取り返す借りの task の次の行(ADR-DOE-CLUSTER-005 R13 — 場所の譲りの preempted-detached と同じ形・
+   id が替わり、呼び手は前の行を消す)。担い手は消えていないので、消失の上限に数えない(losses を足さない)。detail と rerun-note に
+   取り返した訳を、reclaimed に印を残す。"
+  (val note (.format "worker {} の区画の持つ clis の層の貸しが縮んだ(上に載る系が memory を要る)ので、借りて置いた試行を止めた(優先 {}・場所を譲る名乗り)— 試行 {} を最初から待つ(上限に数えた消失 {}/{} 回)"
+                     worker task.priority (+ task.attempt 1) task.losses RERUN-LIMIT))
+  (replace task :id (rerun-id task) :attempt (+ task.attempt 1) :phase "queued" :worker None :boot None :started-ms None
+           :placed-memory-available-mib None :placed-measured-at-ms None
+           :submitted-ms now :lease-until-ms (+ now task.lease-ms) :reported False :queued-noticed-ms None
+           :avoid #() :env-attempts 0 :failure-kind "" :retryable False :retiring ""
+           :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed True))
+
+
 (defk kept-text [text worker]
   {:pre [(: text str) (: worker str)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
   "取っておきを掛けて待つ task の detail の文を決めるため: 待つ訳の文 text に、取っておく worker を名指す句を足す(worker が替わらない
@@ -1956,6 +2019,23 @@
                (not (alive now (.row state.workers task.worker) timing.reassign-after-ms))))
         (setv (get writes id) (replace task :phase "failed" :finished-ms now
                                        :detail (.format "担い手の worker {} が沈黙した(task は走らせ直さない)" task.worker)))))
+  ;; 区画の持つ clis の層の貸しの取り返し(ADR-DOE-CLUSTER-005 R13): 貸しを名乗る worker で、置いた task の申告の和が tasks 区画 + 貸しを
+  ;; 越えた分の借りの task を止めて次の試行の待ちの行へ戻す(上に載る系が待つ間は貸し 0 — 区画を越えた借りを全部返す)。待ちの行は下で
+  ;; queue に入り、この拍に置き直せる。借りの置いた task が無い拍は申告を読まない。
+  (val lenders (lfor w (sorted (.rows state.workers) :key (fn [w] w.name))
+                     :if (and (alive now w timing.lease-ms) (is-not w.measured None) (is-not w.measured.hosted-lend-MiB None))
+                     w))
+  (when (and lenders (any (gfor t (.values live) (and t.borrowed (in t.phase PLACED-PHASES)))))
+    (val after-scan (tuple (gfor #(id task) (.items live) :setv row (if (in id writes) (get writes id) task) :if (is-not row None) row)))
+    (val lent-state (replace state :tasks (.with-writes state.tasks (task-writes state.tasks writes))))
+    (val lent-compartments (tasks-compartments-of lent-state))
+    (<- lent-peaks dict (shape-peaks-of lent-state.tasks lent-state.shape-families))
+    (for [w lenders]
+      (<- victims tuple (borrowed-over w after-scan lent-state lent-compartments lent-peaks))
+      (for [v victims]
+        (<- next-row TaskRecord (reclaimed-detached v now w.name))
+        (setv (get writes v.id) None
+              (get writes next-row.id) next-row))))
   ;; 走査の後の行の読み(書いた行が先・無ければ元の行)。
   (for [#(id task) (.items live)]
     (setv now-row (if (in id writes) (get writes id) task))
@@ -2079,6 +2159,20 @@
           (:= ranked [#* ranked #(#(short.memory-mib short.cpu-millis (not (env-ready-on task.runtime-env w)) w.name) w)]))
         (:= free [(get (get (sorted ranked :key (fn [pair] (get pair 0))) 0) 1)])
         (:= beyond True))
+      ;; 区画の持つ clis の層の貸し(R13): 場所を譲る名乗り(preemptible と rerun)の門の内の task がどの区画の和にも入らない時、worker が
+      ;; 名乗る貸しの分だけ区画の和を越えて借りとして置く(急ぎの優先の task は場所の譲りで置くので借りにしない)。置き先の順は準備済みの
+      ;; 実行環境、置いた後の残り(区画 + 貸し − 和)の大きい順、名の順。貸しが縮むと、上の取り返しが借りを止めて待ちの行へ戻す。
+      (var lent False)
+      (when (and (not free) (not urgent) (not task.ungated) task.detached task.preemptible task.rerun)
+        (var lending [])
+        (for [w unlimited]
+          (<- lend (| int None) (held-lend-of w))
+          (<- left (| int None) (lend-remainder (get compartments w.name) (get sums w.name) (get seen-kept w.name) need cpu lend))
+          (when (is-not left None)
+            (:= lending [#* lending #(#((not (env-ready-on task.runtime-env w)) (- left) w.name) w)])))
+        (when lending
+          (:= free [(get (get (sorted lending :key (fn [pair] (get pair 0))) 0) 1)])
+          (:= lent True)))
       ;; 入らない門の内の task のうち、急ぎの優先(KEEP-NOW-PRIORITY 以上)の task と STARVE-WAIT-MS を越えて待った task は(keeps-room?)、
       ;; 置いた task が全部終われば入る 1 台にこの拍の申告を取っておく(R6 の取っておき)。後ろの順の門の内の task は、その worker の和に
       ;; 取っておきを足して数える(後ろの小さい task が、終わる task の返した分を先に取らない)。
@@ -2112,10 +2206,12 @@
                  (setv (get writes id) (if task.detached
                                           (replace task :phase phase :worker chosen.name :started-ms now :unplaced-kind None
                                                    :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at
-                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms)
+                                                   :boot chosen.boot :lease-until-ms (+ now task.lease-ms) :borrowed lent
                                                    :detail (cond
                                                              beyond (.format "tasks 区画の申告の和に入らないので、待たない仕事として worker {} に和を越えて置いた"
                                                                              chosen.name)
+                                                             lent (.format "tasks 区画の申告の和に入らないので、worker {} の区画の持つ clis の層の貸しへ借りとして置いた(貸しが縮むと止めて待ちの行へ戻す)"
+                                                                           chosen.name)
                                                              (is yielded None)
                                                                task.detail
                                                              True

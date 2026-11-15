@@ -124,6 +124,8 @@
    #** (if (is load.lend-available-mib None) {} {"lendMemoryAvailableMiB" load.lend-available-mib})
    #** (if (is load.lend-jobs-room-mib None) {} {"lendJobsRoomMiB" load.lend-jobs-room-mib})
    #** (if (is load.reclaim-mib None) {} {"reclaimMiB" load.reclaim-mib})
+   ;; 区画の持つ clis の層が tasks 区画の外へ貸す量(名乗る時だけ — 2026-11-15・worker/core/load_rules の頭の註の区画の持つ clis の層の貸し)。
+   #** (if (is load.hosted-lend-mib None) {} {"hostedLendMiB" load.hosted-lend-mib})
    ;; keeper が版の準備を待つ間の取り置き(待っている時だけ — 2026-11-10)。
    #** (if (is load.prepare-wait-mib None) {} {"prepareWaitMiB" load.prepare-wait-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。

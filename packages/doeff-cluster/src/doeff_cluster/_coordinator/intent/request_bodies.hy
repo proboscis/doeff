@@ -227,13 +227,16 @@
    lend-memory-available-MiB / lend-jobs-room-MiB = worker が線の内を貸す下の線で数えた memory の空きと jobs の層の空き(MiB — None = 貸さない・
    前の版の worker。置き先は場所を譲る名乗りの task だけを借りとしてこの空きで数える)・reclaim-MiB = 上に載る系が memory の不足で仕事を
    待たせている間に、機体の空きが線を割った量(MiB — None = 待っていない。置き先は借りの task をこの量まで止めて待ちの行へ戻す — どちらも
-   core/measured_room の頭の註の線の内の貸し・2026-11-12)。coordinator は保存せず、task の置き先を
+   core/measured_room の頭の註の線の内の貸し・2026-11-12)・hosted-lend-MiB = 区画の持つ clis の層が tasks 区画の外へ貸す量(MiB — 0 = 上に
+   載る系が待っている・None = 貸さない〔区画が clis の層を持たない・取り返しの印が無い・前の版の worker〕。置き先は場所を譲る名乗りの task
+   だけを区画の和を越えてこの量まで借りとして置き、区画と貸しを越えた借りを止めて待ちの行へ戻す — ADR-DOE-CLUSTER-005 R13・
+   core/cluster_policy の borrowed-over・2026-11-15)。coordinator は保存せず、task の置き先を
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
            (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10 task-cpu-some-avg10) (or (is v None) (>= v 0))))
            (or (is cpu-nice None) (<= 0 cpu-nice 1)) (or (is prepare-wait-MiB None) (>= prepare-wait-MiB 0))
-           (or (is reclaim-MiB None) (> reclaim-MiB 0))
+           (or (is reclaim-MiB None) (> reclaim-MiB 0)) (or (is hosted-lend-MiB None) (>= hosted-lend-MiB 0))
            (or (is task-memory-MiB None)
                (all (gfor #(k v) (.items task-memory-MiB)
                           (and (isinstance k str) (isinstance v int) (not (isinstance v bool)) (>= v 0)))))]}
@@ -257,7 +260,8 @@
   (setv #^ (| int None) urgent-jobs-room-MiB None)
   (setv #^ (| int None) lend-memory-available-MiB None)
   (setv #^ (| int None) lend-jobs-room-MiB None)
-  (setv #^ (| int None) reclaim-MiB None))
+  (setv #^ (| int None) reclaim-MiB None)
+  (setv #^ (| int None) hosted-lend-MiB None))
 
 
 (defwire PrepareReport

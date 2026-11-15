@@ -70,7 +70,7 @@
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
                                                   pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
-                                                  clis-lend-limit clis-reclaim
+                                                  clis-lend-limit clis-reclaim clis-held-lend held-jobs-limit
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
                                                   CLI-TURN-BYTES CLI-TURN-SLOTS box-layer-limit layer-hold writing-elder-of])
 (import doeff_cluster._worker.core.env_rules [oom-kills-of])
@@ -247,6 +247,11 @@
           ;; 需要の余白の貸し(worker/core/eviction_rules の頭の註): clis-lend-limit = 最後の回に借りの受けを数えた clis の上限(None = 数えなかった)・
           ;; clis-reclaim = 同じ回に需要の余白を戻すため jobs の層から返す量(byte — None = 数えなかった)。
           self.clis-lend-limit None self.clis-reclaim None
+          ;; 区画の持つ clis の層の貸し(worker/core/eviction_rules の頭の註): clis-held-lend = 最後の回に区画の持つ clis の層が tasks 区画の外へ
+          ;; 貸すと数えた量(byte — None = 区画が clis の層を持たない・数えなかった)。
+          self.clis-held-lend None
+          ;; jobs-lent-limit = 区画の持つ jobs の層に、借りの task のため区画の上限より広げて最後に書いた memory.max(byte — None = 広げていない)。
+          self.jobs-lent-limit None
           self.command-line-file "" self.command-floor-bytes 0 self.command-limit None self.command-use None
           self.command-squeezed False self.told-command-failure "" self.jobs-dir None self.oom-count None self.oom-at-ms #()
           self.meters #() self.meters-at-ms None self.retired False self.elder None self.elder-gone False self.declared {} self.box-limits #() self.box-held None)
@@ -549,7 +554,7 @@
    需要の余白・床と天井の間・使いより下げない)、線が無いか読めない回は床と clis の今の使いの大きい方。その前に jobs と clis の外の
    限る層を掛け直して取り置きを数える(box-layers-held)。clis の使いを読めない・書けない回は前の上限を残し、その上限 − 床を貸しのまま引く。上限が床を越えた
    時と床へ戻った時に 1 行言う。答え = 書けない・読めない訳(\"\" = 書いた)。"
-  (setv cell.box None cell.clis-lend-limit None cell.clis-reclaim None)
+  (setv cell.box None cell.clis-lend-limit None cell.clis-reclaim None cell.clis-held-lend None)
   (<- read (| LayerMemory str) (layer-read "clis" clis.dir False))
   (when (isinstance read str)
     (setv cell.clis-current None
@@ -587,7 +592,14 @@
   (<- clis-held (| int None) (held-limit-bytes cell.compartments (posixpath.basename clis.dir)))
   (when (is-not clis-held None)
     (:= limit clis-held)
-    (setv cell.clis-lend-limit None cell.clis-reclaim None))
+    (setv cell.clis-lend-limit None cell.clis-reclaim None)
+    ;; 区画の持つ clis の層の貸し(worker/core/eviction_rules の頭の註 — ADR-DOE-CLUSTER-005 R13): memory.max は区画の上限のまま、上限 −
+    ;; 使い − 1 本の要り ÷ CLIS-ROOM-SHARE − 残させる余白を tasks 区画の外へ貸す量に数える(残させる余白を読めない回は貸さない)。
+    (<- held-kept (| int str) (clis-kept-read clis.kept-file))
+    (if (isinstance held-kept str)
+        (:= failure (or failure held-kept))
+        (do (<- held-lend int (clis-held-lend clis-held current clis.turn-bytes held-kept))
+            (setv cell.clis-held-lend held-lend))))
   (<- written (| FileFailed None) (if (is clis-held None) (WriteText (+ clis.dir "/memory.max") (str limit)) (Pure None)))
   (when (isinstance written FileFailed)
     (setv cell.lent (if (is cell.clis-limit None) 0 (max 0 (- cell.clis-limit clis.floor-bytes)))
@@ -733,11 +745,22 @@
   (when (and (is-not line None) (is current None) (is jobs-held-limit None))
     ;; 使いを読めない回は、線から決めた前の上限を残す(宣言の値へ戻すと、線の手前を越えうる)。
     (:= limit None))
+  (var raised None)
   (when (is-not jobs-held-limit None)
-    ;; 区画の持つ層の上限は区画の値(書くのは compartments-written)。受けの上限は区画の上限で切る。
-    (:= limit jobs-held-limit))
+    ;; 区画の持つ層の上限は区画の値(書くのは compartments-written)。受けの上限は区画の上限で切る。借りの task が置かれている間は、区画の
+    ;; 上限 + 借りの要りの和に広げ、借りが止まって和が減った回は今の使いより下げずに区画の上限へ戻す(worker/core/eviction_rules の頭の註の
+    ;; 区画の持つ clis の層の貸し — 広げた上限を書いた回だけ書き、区画の上限そのものは compartments-written が書く)。広げる量は借りの要りの和
+    ;; のうち、置いた task の要りの和が区画を越えた分だけ(先の task が終わって区画に入った借りの分は広げない)。
+    (val borrowed (min (sum (gfor n cell.needs :if n.borrowed n.bytes))
+                       (max 0 (- (sum (gfor n cell.needs n.bytes)) jobs-held-limit))))
+    (<- held-limit int (held-jobs-limit jobs-held-limit borrowed cell.jobs-lent-limit current))
+    (:= limit held-limit)
+    (:= raised (if (> held-limit jobs-held-limit) held-limit None)))
   (when (is-not limit None)
-    (<- written (| FileFailed None) (if (is jobs-held-limit None) (WriteText (+ settings.jobs-dir "/memory.max") (str limit)) (Pure None)))
+    (val rewrite (or (is jobs-held-limit None) (is-not raised None) (is-not cell.jobs-lent-limit None)))
+    (<- written (| FileFailed None) (if rewrite (WriteText (+ settings.jobs-dir "/memory.max") (str limit)) (Pure None)))
+    (when (not (isinstance written FileFailed))
+      (setv cell.jobs-lent-limit raised))
     (if (isinstance written FileFailed)
         (:= failure (.format "jobs の層の memory.max に {} を書けない: {}" limit written.detail))
         (setv cell.jobs-limit limit cell.jobs-intake (if (is intake None) limit (min limit intake)) cell.jobs-intake-urgent urgent

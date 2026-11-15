@@ -56,6 +56,11 @@
 ;;; 広い回に、memory の空きを平常のまま貸しの空きとして名乗り、その受けを lend-jobs-room-mib で名乗る。印が新しい間は貸さず、需要の余白を戻すため
 ;;; 返す量(見張りの clis-reclaim — MiB の切り上げ)を reclaim-mib で名乗る(clis-room-lend)。
 ;;;
+;;; 区画の持つ clis の層の貸し(2026-11-15 — ADR-DOE-CLUSTER-005 R13): 区画が clis の層を持つ worker は需要の余白を掛け直さないので、上の
+;;; 欄では貸さない。取り返しの印の file を名指す worker は、見張りが数えた貸し(worker/core/eviction_rules の clis-held-lend)を hosted-lend-mib
+;;; で名乗る(held-lend-told)。印が新しい間(上に載る系が memory の不足で仕事を待たせている間)は 0 を名乗る — coordinator は借りの要りの和が
+;;; 名乗った量を越えた分の借りの task を止めて待ちの行へ戻す。
+;;;
 ;;; /proc の無い機体(macOS): 入口が LoadPaths の代わりに印 HostLoad を渡し、同じ間ごとに問い ReadHostCounters で OS の口から CPU の
 ;;; 刻みと memory を読む(答え手 foundation/host_counters — mach の host_statistics・sysctl)。CPU の使いと nice の分は /proc/stat と同じく
 ;;; 前の読みとの間の刻みの増えの比で数え、memory は OS の数えた総量と空き(host-load-of)。PSI は OS に無いので None。測りを名乗らない
@@ -188,7 +193,11 @@
   (setv #^ (| int None) urgent-jobs-room-mib None)
   (setv #^ (| int None) lend-available-mib None)
   (setv #^ (| int None) lend-jobs-room-mib None)
-  (setv #^ (| int None) reclaim-mib None))
+  (setv #^ (| int None) reclaim-mib None)
+  ;; hosted-lend-mib = 区画の持つ clis の層が tasks 区画の外へ貸す量(MiB — 頭の註の区画の持つ clis の層の貸し。0 = 上に載る系が待つ間・
+  ;; None = 貸さない〔区画が clis の層を持たない・取り返しの印の file が無い・見張りが数えなかった〕— coordinator は場所を譲る名乗りの task を
+  ;; 区画の和を越えてこの量まで借りとして置き、借りの要りの和がこの量を越えた worker の借りを止める・2026-11-15)。
+  (setv #^ (| int None) hosted-lend-mib None))
 
 
 (defrecord LoadReading
@@ -304,6 +313,18 @@
     (and (is-not lend-jobs-room-mib None) (or (is jobs-room-mib None) (> lend-jobs-room-mib jobs-room-mib)))
       (ClisRoomLend :available-mib memory-available-mib :jobs-room-mib lend-jobs-room-mib :reclaim-mib None)
     True (ClisRoomLend :available-mib None :jobs-room-mib None :reclaim-mib None)))
+
+
+(defk held-lend-told [reclaiming lend-bytes]
+  {:pre [(: reclaiming bool) (: lend-bytes (| int None)) (or (is lend-bytes None) (>= lend-bytes 0))]
+   :post [(: % (| int None)) (or (is % None) (>= % 0))] :tags {:context "worker" :role "judgment"}}
+  "区画の持つ clis の層の貸しの名乗り(MiB)を決めるため(頭の註の区画の持つ clis の層の貸し): reclaiming = 取り返しの印が新しい・
+   lend-bytes = 見張りが数えた貸し(clis-held-lend — None = 数えなかった)。数えなかった回は名乗らない(None)、印が新しい間は 0
+   (借りを全部返させる)、ほかは MiB の切り捨て(貸しを名乗り過ぎない)。"
+  (cond
+    (is lend-bytes None) None
+    reclaiming 0
+    True (// lend-bytes MIB)))
 
 
 (defk task-uses-of [uses uses-at-ms now-ms]
