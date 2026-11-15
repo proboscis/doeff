@@ -53,3 +53,35 @@
   "送り手自身が動いている source(このパッケージ)の checkout の根。答え = 絶対 path か None(checkout の外 — 例: wheel で入れた)。"
   {:answer (| str None)
    :tags {:context "runtime-env" :role "intent"}})
+
+
+;; --- git を起こさずに読む checkout の file(覚えた答えを使うかの鍵 — protocol/checkout_memo.hy) -----------------------
+
+(defrecord CheckoutFiles
+  "git を起こさずに checkout の file から読んだ姿(答えるのは foundation/checkout_files.hy の checkout-files-reader)。root = 作業木の根・
+   git-dir = この作業木の git の dir(覚えた答えの置き場)・head = HEAD の commit(HEAD と ref の file から解いた)・index-digest = index の
+   file の末尾の checksum(index の中身が同じなら同じ)・config-digest = remote の URL を決める設定の file の中身の sha256・settled = index の
+   全部の項の stat が作業木の file と同じで、作業木を見ないと汚れを判じられない項(racy な項・stage の番号のある項・gitlink・skip-worktree
+   など)が無い(git status が作業木の file を読み直さずに済む形)。"
+  (#^ str root)
+  (#^ str git-dir)
+  (#^ str head)
+  (#^ str index-digest)
+  (#^ str config-digest)
+  (#^ bool settled))
+
+
+(defeffect ReadCheckoutFiles
+  "path の checkout の file を git を起こさずに読む。答え = CheckoutFiles か None(file から読めない形 — reftable・index の版 4・split index・
+   sparse index・生まれていない branch など。読み手は git の読みへ倒す)。"
+  {:fields [(: path str)]
+   :answer (| CheckoutFiles None)
+   :tags {:context "runtime-env" :role "intent"}})
+
+
+(defeffect FindCheckoutRoot
+  "path(dir)から上へ .git を探し、git を起こさずに checkout の根を読む。答え = 絶対 path(symlink を解いた — git rev-parse --show-toplevel と
+   同じ)か None(見つからない・.git の dir の中 — 読み手は git の読みへ倒す)。"
+  {:fields [(: path str)]
+   :answer (| str None)
+   :tags {:context "runtime-env" :role "intent"}})
