@@ -59,5 +59,11 @@ cache-keys = [
     { file = "../doeff-indexer/data/**/*.json" },
 ]
 
+# build.rs embeds the doeff commit this binary was built from (`--version`). The build entry decides that commit itself and puts it in the
+# wheel store key: the last commit that changed a cache-keys file above (not HEAD — so a wheel built on a commit that is not pushed is never
+# handed to another checkout with the same source), passed to build.rs in this env (tools/doeff_cargo_backend.py, ADR-DOE-BUILD-001 R4d).
+[tool.doeff-cargo-backend]
+build-commit-env = "DOEFF_LINTER_BUILD_COMMIT"
+
 
 

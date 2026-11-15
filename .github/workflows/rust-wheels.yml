@@ -30,7 +30,11 @@ jobs:
   publish:
     runs-on: ubuntu-24.04
     steps:
+      # Full history: doeff-linter's key and `--version` hold the last commit that changed its key files (ADR-DOE-BUILD-001 R4d), which a
+      # shallow checkout cannot see (it would name HEAD, and the wheel's key would match no checkout with history).
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: astral-sh/setup-uv@v6
       - name: Build through the build entry and upload what it built

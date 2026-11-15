@@ -59,57 +59,57 @@ def package(tmp_path: Path) -> Path:
 @pytest.mark.parametrize("name", BUILD_ENV)
 def test_a_build_env_change_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     # Failure case (#2969): even with the same source, a different value of an environment variable that changes the build points to a different slot (the default build does not pull a wheel built with changed settings).
-    plain = backend._wheel_slot(package, None)
+    plain = backend._wheel_slot(package, None, None)
     monkeypatch.setenv(name, "changed")
-    assert backend._wheel_slot(package, None) != plain
+    assert backend._wheel_slot(package, None, None) != plain
     monkeypatch.setenv(name, "changed-again")
-    assert backend._wheel_slot(package, None) != plain
+    assert backend._wheel_slot(package, None, None) != plain
 
 
 def test_the_strip_setting_alone_splits_the_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Issue acceptance: two builds of the same source that differ only in CARGO_PROFILE_RELEASE_STRIP point to different slots.
     monkeypatch.setenv("CARGO_PROFILE_RELEASE_STRIP", "true")
-    stripped = backend._wheel_slot(package, None)
+    stripped = backend._wheel_slot(package, None, None)
     monkeypatch.setenv("CARGO_PROFILE_RELEASE_STRIP", "false")
-    assert backend._wheel_slot(package, None) != stripped
+    assert backend._wheel_slot(package, None, None) != stripped
 
 
 def test_another_python_abi_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Failure case (#2969): building with a Python whose extension module name suffix differs, such as free-threading cp314t versus cp313, points to a different slot.
-    here = backend._wheel_slot(package, None)
+    here = backend._wheel_slot(package, None, None)
     # Name a suffix different from the running Python's -- naming cp313 on cp313 would leave the same slot (failed in the 3.13 row of the version matrix).
     current = backend.sysconfig.get_config_var("EXT_SUFFIX")
     other = next(s for s in (".cpython-313-x86_64-linux-gnu.so", ".cpython-314t-x86_64-linux-gnu.so") if s != current)
     monkeypatch.setattr(backend.sysconfig, "get_config_var", lambda name: other if name == "EXT_SUFFIX" else None)
-    assert backend._wheel_slot(package, None) != here
+    assert backend._wheel_slot(package, None, None) != here
 
 
 def test_another_libc_points_at_another_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Failure case (addendum 2 to ADR-DOE-BUILD-001 R4): a wheel in the off-machine slot is built with CI's glibc. Machines with a different glibc
     # version point to a different slot -- an image with an older glibc would fetch it and fail at import.
-    here = backend._wheel_slot(package, None)
+    here = backend._wheel_slot(package, None, None)
     monkeypatch.setattr(backend.platform, "libc_ver", lambda: ("glibc", "2.17"))
-    assert backend._wheel_slot(package, None) != here
+    assert backend._wheel_slot(package, None, None) != here
 
 
 @pytest.mark.parametrize("name", PLACE_ENV)
 def test_a_place_only_env_keeps_the_slot(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch, name: str) -> None:
     # Values that change only the build location or parallelism do not enter the key -- changing the target per working tree still shares the same slot's wheel (the benefit of #2364).
-    plain = backend._wheel_slot(package, None)
+    plain = backend._wheel_slot(package, None, None)
     monkeypatch.setenv(name, "/somewhere/else")
-    assert backend._wheel_slot(package, None) == plain
+    assert backend._wheel_slot(package, None, None) == plain
 
 
 def test_the_same_inputs_give_the_same_slot_and_a_source_change_does_not(backend: ModuleType, package: Path) -> None:
     # The key is deterministic (same ingredients, same slot), and a difference in source contents still points to a different slot as before.
-    first = backend._wheel_slot(package, None)
-    assert backend._wheel_slot(package, None) == first
+    first = backend._wheel_slot(package, None, None)
+    assert backend._wheel_slot(package, None, None) == first
     (package / "src" / "lib.rs").write_text("pub fn probe() { let _ = 1; }\n")
-    assert backend._wheel_slot(package, None) != first
+    assert backend._wheel_slot(package, None, None) != first
 
 
 def test_env_values_do_not_appear_in_the_slot_path(backend: ModuleType, package: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # The value only enters the key's hash and does not appear literally in the slot's path.
     monkeypatch.setenv("RUSTFLAGS", "-C secret-looking-flag")
-    assert "secret-looking-flag" not in str(backend._wheel_slot(package, None))
+    assert "secret-looking-flag" not in str(backend._wheel_slot(package, None, None))
     assert sys.platform  # one of the key ingredients (the machine) can be read

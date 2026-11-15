@@ -184,7 +184,7 @@ def test_an_empty_machine_takes_the_wheel_from_the_remote_store_without_calling_
     for name in ("CARGO", "RUSTC"):
         monkeypatch.delenv(name, raising=False)
     package = _checkout(tmp_path / "wt")
-    slot = backend._wheel_slot(package, None)
+    slot = backend._wheel_slot(package, None, None)
     remote.put(slot, _wheel_bytes(b"from the remote store\n"))
     # maturin builds the package in the cwd (the build hook is called in the package dir).
     monkeypatch.chdir(package)
@@ -214,7 +214,7 @@ def test_a_missing_remote_wheel_is_named_and_built(
     compile_wheel = FakeCompile(tmp_path / "compile.log")
     stored = backend.stored_wheel(package, None, compile_wheel)
     err = capsys.readouterr().err
-    slot = backend._wheel_slot(package, None)
+    slot = backend._wheel_slot(package, None, None)
     assert (compile_wheel.calls, stored.source) == (1, "built")
     assert f"/{slot.name}.whl" in err and "404" in err, err
     assert remote.requests == [f"/{slot.name}.whl"]
@@ -225,7 +225,7 @@ def test_a_remote_wheel_that_fails_its_record_is_named_and_not_stored(
 ) -> None:
     # If the remote wheel's RECORD hash does not match its contents, print one named line and build without using it (and without placing it in the local store).
     package = _checkout(tmp_path / "wt")
-    slot = backend._wheel_slot(package, None)
+    slot = backend._wheel_slot(package, None, None)
     remote.put(slot, _wheel_bytes(b"tampered\n", broken=True))
     compile_wheel = FakeCompile(tmp_path / "compile.log")
     stored = backend.stored_wheel(package, None, compile_wheel)
@@ -259,7 +259,7 @@ def test_an_empty_remote_setting_does_not_ask_the_network(
     # Setting env DOEFF_WHEEL_REMOTE to empty skips the remote store (builds before the CI that uploads to the remote store, places without network).
     monkeypatch.setenv("DOEFF_WHEEL_REMOTE", "")
     package = _checkout(tmp_path / "wt")
-    remote.put(backend._wheel_slot(package, None), _wheel_bytes(b"from the remote store\n"))
+    remote.put(backend._wheel_slot(package, None, None), _wheel_bytes(b"from the remote store\n"))
     compile_wheel = FakeCompile(tmp_path / "compile.log")
     stored = backend.stored_wheel(package, None, compile_wheel)
     assert (compile_wheel.calls, stored.source, remote.requests) == (1, "built", [])
@@ -279,7 +279,7 @@ def test_the_default_remote_is_the_doeff_release(
     monkeypatch.setattr(backend.urllib.request, "urlopen", not_found)
     package = _checkout(tmp_path / "wt")
     backend.stored_wheel(package, None, FakeCompile(tmp_path / "compile.log"))
-    slot = backend._wheel_slot(package, None)
+    slot = backend._wheel_slot(package, None, None)
     assert f"https://github.com/proboscis/doeff/releases/download/rust-wheels/{slot.name}.whl" in capsys.readouterr().err
 
 
@@ -290,7 +290,7 @@ def test_the_report_names_where_the_wheel_came_from(
     report = tmp_path / "report.jsonl"
     monkeypatch.setenv("DOEFF_WHEEL_REPORT", str(report))
     package = _checkout(tmp_path / "wt")
-    remote.put(backend._wheel_slot(package, None), _wheel_bytes(b"from the remote store\n"))
+    remote.put(backend._wheel_slot(package, None, None), _wheel_bytes(b"from the remote store\n"))
     backend.stored_wheel(package, None, FakeCompile(tmp_path / "compile.log"))
     backend.stored_wheel(package, None, FakeCompile(tmp_path / "compile.log"))
     rows = [json.loads(line) for line in report.read_text(encoding="utf-8").splitlines()]
