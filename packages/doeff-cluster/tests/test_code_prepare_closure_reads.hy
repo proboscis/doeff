@@ -8,6 +8,7 @@
 ;;   * (b) 進みの印: 走査の後・閉包の一回りごと・焼きの前と後に MarkProgress を出す — 処理ステージの前と後だけに戻すと赤。
 ;;   * (c) 印の答え手: 印の file の時刻を今にし(中身は変えない)、印の無い起動と消えた印の file では何もしない。
 ;;   * (d) 並べた読み: 答え手 closure-reads は path の順に答え、読めない source は None で返す(UTF-8 でない byte は前の読み ReadText と同じく置き換える — 中身の鍵が揃う)。
+;;   * (e) 並べた構文の読み: 答え手 closure-reads は ParseImports を source の順に、1 つずつ読んだ imported-names と同じ答えで返す。
 (require doeff-hy.macros [defhandler defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import os)
@@ -17,7 +18,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_cluster [tree-files])
-(import doeff_cluster._worker.entry.code_prepare [BakeSources MarkProgress ReadSources ReadStoreEntries bake-trees closure-reads plan
+(import doeff_cluster._worker.entry.code_prepare [BakeSources MarkProgress ParseImports ReadSources ReadStoreEntries bake-trees closure-reads plan
                                                prepare-trees progress-marks])
 
 
@@ -122,3 +123,16 @@
   (assert (= (get texts 12) "V = 12\n") texts)
   (<- datas tuple (with-handlers [closure-reads] (ReadStoreEntries #(None None))))
   (assert (= datas #(None None)) datas))
+
+
+(deftest test-the-closure-reads-parse-imports-in-order-like-one-by-one []
+  ;; 構文の読みを thread で並べても、答えは source の順で、1 つずつ読んだ imported-names と同じ(閉包と .imports の entry が変わらない)。
+  (val sources (tuple (gfor i (range 30)
+                            (if (% i 2)
+                                #(f"m{i}.py" f"import os\nfrom pkg.m{i} import a, b\n")
+                                #(f"m{i}.hy" f"(import json)\n(require pkg.n{i} [mac])\n")))))
+  (<- parsed tuple (with-handlers [closure-reads] (ParseImports sources)))
+  (assert (= parsed (tuple (gfor #(rel text) sources (plan.imported-names rel text)))) parsed)
+  (assert (= (get parsed 1) #(#(0 "os" #()) #(0 "pkg.m1" #("a" "b")))) (get parsed 1))
+  (<- none tuple (with-handlers [closure-reads] (ParseImports #())))
+  (assert (= none #()) none))

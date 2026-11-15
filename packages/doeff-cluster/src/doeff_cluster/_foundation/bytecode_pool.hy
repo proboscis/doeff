@@ -84,6 +84,12 @@
 ;; この回の .pyc の置き場(--pycache-prefix・--inherit-pycache-prefix — 頭の註。None = 木の中の __pycache__)。入口が pool を起こす前に
 ;; 1 度だけ置き、fork の子は起こされた時の値を持つ。
 (setv PYCACHE-PREFIXES {"own" None "inherit" None})
+;; 1 回り目(焼かずに機体の保存先と分け合う保存先から書くだけ)の process の数 = 焼く並列数 × FETCH-JOBS-PER-JOB(天井 FETCH-JOBS-CEILING)。
+;; 1 回り目は CPU でなく分け合う保存先への往復(1 本ごとに一覧と取り寄せ)を待つので、焼く並列数のままだと冷えた機体が待ちを重ねられない —
+;; 2026-11-15 に保存先から遠い region の新しい spot の機体(並べる数 8)は約 3,350 本の取り寄せに 271 秒かかり、1 本あたり 0.65 秒を process ごとに順に待った。
+;; 焼かない子は焼く子の memory の山(bake_plan の BAKE-CHILD-BYTES)を持たないので、焼く並列数を決めた memory の空きの内に収まる。
+(setv FETCH-JOBS-PER-JOB 4)
+(setv FETCH-JOBS-CEILING 32)
 
 
 (defn #^ ModuleType guard-module []  ; cannot be a defk: root の版の doeff の macro を使わない道具の素の関数(頭の註)
@@ -420,6 +426,12 @@
       (pooled work jobs paths one progress)))
 
 
+(defn #^ int fetch-jobs [#^ int jobs]  ; cannot be a defk: 焼く前に親が呼ぶ素の関数
+  "1 回り目(焼かずに書くだけ)の process の数を、焼く並列数 jobs から決めるため(FETCH-JOBS-PER-JOB の註)。jobs が 1 なら 1(memory の
+   空きが子 1 本も入れない時 — 並べない)。"
+  (if (<= jobs 1) 1 (min FETCH-JOBS-CEILING (* jobs FETCH-JOBS-PER-JOB))))
+
+
 (defn #^ tuple carry [#^ tuple items #^ dict inherits #^ frozenset changed #^ (| str None) store]  ; cannot be a defk: 焼く前に親が呼ぶ素の関数
   "写し元の木の在る木の items(#(木の path 相対 path module 名) の列)に、写し元の .pyc を置き(carry-pyc)、照らさずに残せる物
    (carried-current)の保存先の印を進めるため(頭の註 --inherit)。答え = #(items と同じ順の、照らさずに残すか の列 置いた数
@@ -441,7 +453,7 @@
    import し直す前に関数を解けない・worker の版の code_store も fork で子へ引き継ぐ)。1 つ用意し終えるたびに(終わった順に)進みの印
    progress を進める(頭の註 --progress — 渡す順の先の遅い 1 file を待つ間も、ほかの process の終わりで印が進む)。
    share = 分け合う保存先(code_store の Share・None = 使わない)。在れば 2 回りで用意する: 1 回り目は焼かずに機体の保存先と
-   分け合う保存先から書けるだけ書き(焼く 1 本の秒の間に取り寄せは数十本進む)、2 回り目に残りを、焼く直前にもう 1 度取り寄せを試してから
+   分け合う保存先から書けるだけ書き(焼く 1 本の秒の間に取り寄せは数十本進む — 往復を待つだけなので fetch-jobs 個の process で)、2 回り目に残りを、焼く直前にもう 1 度取り寄せを試してから
    焼く。同じ root を同時に準備する並びの多い機体が先へ進んで置いた物を、並びの少ない機体が焼かずに取り寄せるため — 1 回りだけでは、
    準備を早く始めた機体は、遅れて始めた並びの多い機体が置く物を待たずに焼いてしまう。
    inherits・changed = 写し元の木と、写し元から変わった module(頭の註 --inherit — carry)。写し元から置いた .pyc のうち、照らさずに
@@ -455,7 +467,7 @@
                     carried (sum trusted) (- carried (sum trusted)))
            :file sys.stderr :flush True))
   (mark-progress progress)
-  (setv first-results (if (is share None) #() (pass-results work jobs paths (partial bake-one store share True) progress))
+  (setv first-results (if (is share None) #() (pass-results work (fetch-jobs jobs) paths (partial bake-one store share True) progress))
         answered (dict (gfor #(item result) (zip work first-results) :if (!= (get result 0) "missed") #(item result)))
         rest (tuple (gfor item work :if (not-in item answered) item))
         rest-results (pass-results rest jobs paths (partial bake-one store share False) progress)

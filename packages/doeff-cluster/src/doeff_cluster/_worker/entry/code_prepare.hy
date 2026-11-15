@@ -218,6 +218,12 @@
   (#^ tuple pairs))
 
 
+(defclass [(dataclass :frozen True)] ParseImports [EffectBase]
+  "閉包の一回りで保存先に entry の無い source の import の名を構文で読む(#(相対 path 中身) の列 — 答え手が並べて読む)。答え = 組の順の
+   import の名の列(bake_plan の imported-names の答えの形)。"
+  (#^ tuple sources))
+
+
 (defclass [(dataclass :frozen True)] ReadClosureTable [EffectBase]
   "写し元の木の閉包の表の file を読む。答え = 中身か None(無い・読めない)。"
   (#^ str path))
@@ -356,17 +362,27 @@
         (do (<- path (| str None) (imports-entry-path code-store (get place 1) text hy-version))
             (:= paths (+ paths #(path))))))
   (<- datas tuple (ReadStoreEntries paths))
-  (var answers #())
-  (for [#(place text path data) (zip places texts paths datas)]
-    (val rel (get place 1))
+  (var storeds #())
+  (for [#(text path data) (zip texts paths datas)]
     (if (is text None)
-        (:= answers (+ answers #(#(None False None))))
+        (:= storeds (+ storeds #(None)))
         (do (<- stored (| tuple None) (stored-imports path data))
-            (match stored
-              None (do (val listed (plan.imported-names rel text))
-                       (<- problem (| str None) (store-imports code-store rel text hy-version listed))
-                       (:= answers (+ answers #(#(listed True problem)))))
-              _ (:= answers (+ answers #(#(stored False None))))))))
+            (:= storeds (+ storeds #(stored))))))
+  ;; entry の無い source の構文の読みは一回りの分をまとめて答え手へ渡す(答え手が並べて読む — 冷えた機体では閉包の秒の大半)。
+  (val misses (tuple (gfor #(place text stored) (zip places texts storeds) :if (and (is-not text None) (is stored None))
+                           #((get place 1) text))))
+  (<- parsed tuple (ParseImports misses))
+  (val listed-of (dict (zip misses parsed)))
+  (var answers #())
+  (for [#(place text stored) (zip places texts storeds)]
+    (val rel (get place 1))
+    (cond
+      (is text None) (:= answers (+ answers #(#(None False None))))
+      (is stored None)
+      (do (val listed (get listed-of #(rel text)))
+          (<- problem (| str None) (store-imports code-store rel text hy-version listed))
+          (:= answers (+ answers #(#(listed True problem)))))
+      True (:= answers (+ answers #(#(stored False None))))))
   answers)
 
 
@@ -604,6 +620,27 @@
         (tuple (.map pool reader paths)))))
 
 
+;; 構文の読みを並べる thread の数。読みは CPU を使うので disk の待ちの READ-THREADS より少なく、GIL の無い root の python(3.14t)で効く。
+;; 2026-11-15 に 16 core の機体で Hy の source 1,200 本を読んだ測り: 1 つずつ 1 本 34 ms・8 本並べて 13.5 ms・16 本並べて 16.4 ms
+;; (並べすぎると遅くなる)。冷えた機体の閉包の歩みは、保存先に entry が無く約 3,500 本を読み直して 150 秒かかっていた。
+(val PARSE-THREADS 8)
+
+
+(deff parsed-imports [source]  ; cannot be a defk: thread の pool で回す構文の読み(VM の外)
+  {:pre [(: source tuple)] :post [(: % tuple)]}
+  "#(相対 path 中身) の source 1 つの import の名を bake_plan の imported-names で読むため。"
+  (plan.imported-names (get source 0) (get source 1)))
+
+
+(defk parse-all [sources]
+  {:pre [(: sources tuple)] :post [(: % tuple)] :tags {:context "worker" :role "foundation"}}
+  "一回りの構文の読みを CPU の上で並べて済ませるため: sources を PARSE-THREADS の thread の pool で読み、sources の順の答えの列にする。"
+  (if (not sources)
+      #()
+      (with [pool (ThreadPoolExecutor :max-workers (min PARSE-THREADS (len sources)))]
+        (tuple (.map pool parsed-imports sources)))))
+
+
 (deff same-file [pair]  ; cannot be a defk: thread の pool で回す読み(VM の外)
   {:pre [(: pair tuple)] :post [(: % bool)]}
   "#(新しい木の path 写し元の木の path) の 2 つが同じ file(同じ device の同じ inode)か(どちらかを読めなければ偽)。"
@@ -648,6 +685,9 @@
   (SameFiles [pairs]
     (<- flags tuple (read-all same-file pairs))
     (resume flags))
+  (ParseImports [sources]
+    (<- parsed tuple (parse-all sources))
+    (resume parsed))
   (ReadClosureTable [path]
     (resume (read-table path)))
   (WriteClosureTable [path text]
