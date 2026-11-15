@@ -144,6 +144,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "CheckoutFiles",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "ChildOrigin",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"

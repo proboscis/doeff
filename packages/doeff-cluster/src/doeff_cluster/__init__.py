@@ -711,6 +711,12 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.core.runtime_identity import (
         check_runtime_identity as check_runtime_identity,
     )
+    from doeff_cluster._sim.checkout_git_script import scripted_checkout_files as scripted_checkout_files
+    from doeff_cluster._foundation.checkout_files import checkout_files_reader as checkout_files_reader
+    from doeff_cluster._shared.intent.checkout_model import CheckoutFiles as CheckoutFiles
+    from doeff_cluster._shared.intent.checkout_model import FindCheckoutRoot as FindCheckoutRoot
+    from doeff_cluster._shared.intent.checkout_model import ReadCheckoutFiles as ReadCheckoutFiles
+    from doeff_cluster._shared.protocol.checkout_memo import checkout_memo as checkout_memo
     from doeff_cluster._shared.protocol.checkout_reads import checkout_reads as checkout_reads
     from doeff_cluster._shared.protocol.checkout_reads import checkout_root as checkout_root
     from doeff_cluster._shared.protocol.checkout_reads import checkout_state_at as checkout_state_at
@@ -1543,6 +1549,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "answer_body": "doeff_cluster._shared.protocol.coordinator_reads",
     "canonical_argument": "doeff_cluster._shared.core.service_rules",
     "check_runtime_identity": "doeff_cluster._shared.core.runtime_identity",
+    "scripted_checkout_files": "doeff_cluster._sim.checkout_git_script",
+    "checkout_files_reader": "doeff_cluster._foundation.checkout_files",
+    "CheckoutFiles": "doeff_cluster._shared.intent.checkout_model",
+    "FindCheckoutRoot": "doeff_cluster._shared.intent.checkout_model",
+    "ReadCheckoutFiles": "doeff_cluster._shared.intent.checkout_model",
+    "checkout_memo": "doeff_cluster._shared.protocol.checkout_memo",
     "checkout_reads": "doeff_cluster._shared.protocol.checkout_reads",
     "checkout_root": "doeff_cluster._shared.protocol.checkout_reads",
     "checkout_state_at": "doeff_cluster._shared.protocol.checkout_reads",

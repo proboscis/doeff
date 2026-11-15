@@ -383,6 +383,20 @@
    "why": "entry spelling of os_environ_reader (ADR-DOE-API-001 R5 — users read from the entry)"
   },
   {
+   "handler": "doeff_cluster._foundation.checkout_files:checkout-files-reader",
+   "touches": [
+    "file"
+   ],
+   "why": "reads a checkout's git files (HEAD, refs, packed-refs, config, index) and lstats the work-tree files the index names (checkout_files.hy) — answers ReadCheckoutFiles and FindCheckoutRoot without starting git"
+  },
+  {
+   "handler": "doeff_cluster:checkout_files_reader",
+   "touches": [
+    "file"
+   ],
+   "why": "entry spelling of checkout_files_reader (ADR-DOE-API-001 R5 — users read from the entry)"
+  },
+  {
    "handler": "doeff_cluster._foundation.record_handlers:recording-handler",
    "touches": [
     "clock"

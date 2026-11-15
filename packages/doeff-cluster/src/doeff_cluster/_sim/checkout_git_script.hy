@@ -17,14 +17,16 @@
 ;;; checkout でない path は exit 128(fatal: not a git repository — 本物の git と同じ)。
 ;;;
 ;;;   (scripted-process-handler (ProcessScript :commands #((git-command #((GitCheckout :path "/src/app" :head sha …))))))
-(require doeff-hy.macros [defk <- val])
+(require doeff-hy.macros [defk defhandler <- val])
 (val MODULE-TAGS {:context "doeff-cluster" :role "foundation"})
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])
 (import fnmatch)
+(import hashlib)
 (import functools [partial])
 (import doeff_core_effects [ProcessOutcome RunProcess])
 (import doeff_core_effects [ScriptedCommand])
+(import doeff_cluster._shared.intent.checkout_model [CheckoutFiles ReadCheckoutFiles FindCheckoutRoot])
 
 ;; 本物の git と同じ exit(checkout でない = 128・使い方の誤り = 129・無い remote = 2・--verify で解けない rev = 1)。
 (val NOT-A-REPOSITORY 128)
@@ -211,3 +213,42 @@
 (defn #^ ScriptedCommand git-command [#^ tuple checkouts]  ; cannot be a defk: handler の列(ProcessScript)を組む時に Program の外で呼ぶ
   "checkout の世界(GitCheckout の tuple)に答える git の台本の命令を作るため(scripted-process-handler の ProcessScript に並べる)。"
   (ScriptedCommand :name "git" :run (partial git-answer checkouts)))
+
+
+;; --- git を起こさない file の読み(ReadCheckoutFiles・FindCheckoutRoot)の模擬の答え手 -------------------
+
+(defk files-of [checkout]
+  {:pre [(: checkout GitCheckout)] :post [(: % CheckoutFiles)]}
+  "台本の checkout の file の姿を作るため(模擬: git の dir = 根の .git・index の checksum は head から・設定の digest は remote の列から・
+   settled = 汚れていない — 汚れた checkout は作業木の file が index と違う形)。"
+  (CheckoutFiles :root checkout.path :git-dir (+ checkout.path "/.git") :head checkout.head
+                 :index-digest (.hexdigest (hashlib.sha1 (.encode (+ "index " checkout.head) "utf-8")))
+                 :config-digest (.hexdigest (hashlib.sha256 (.encode (repr checkout.remotes) "utf-8")))
+                 :settled (not checkout.dirty)))
+
+
+(defk scripted-files [checkouts path]
+  {:pre [(: checkouts tuple) (: path str)] :post [(: % (| CheckoutFiles None))]}
+  "ReadCheckoutFiles に checkout の世界から答えるため(path を含む checkout が無ければ None)。"
+  (<- found (| GitCheckout None) (checkout-of checkouts path))
+  (when (is found None)
+    (return None))
+  (<- files CheckoutFiles (files-of found))
+  files)
+
+
+(defk scripted-root [checkouts path]
+  {:pre [(: checkouts tuple) (: path str)] :post [(: % (| str None))]}
+  "FindCheckoutRoot に checkout の世界から答えるため(path を含む checkout の根・無ければ None)。"
+  (<- found (| GitCheckout None) (checkout-of checkouts path))
+  (if (is found None) None found.path))
+
+
+(defhandler scripted-checkout-files [#^ tuple checkouts]
+  ;; git を起こさない checkout の file の読みに、git の台本と同じ checkout の世界(GitCheckout の tuple)から答える模擬の答え手。
+  (ReadCheckoutFiles [path]
+    (<- files (| CheckoutFiles None) (scripted-files checkouts path))
+    (resume files))
+  (FindCheckoutRoot [path]
+    (<- root (| str None) (scripted-root checkouts path))
+    (resume root)))
