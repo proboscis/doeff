@@ -158,6 +158,27 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "DetachedTaskPhase",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedTasks",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedTasksAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "HeldBackup",
    "group": "Allowed — handler setting type",
    "basis": "ADR-DOE-API-001 R2"
@@ -1958,6 +1979,13 @@
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
    "name": "Semaphore",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
+   "name": "SqlPermitLoad",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
