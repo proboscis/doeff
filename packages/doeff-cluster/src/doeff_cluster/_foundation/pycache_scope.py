@@ -27,9 +27,12 @@ MODULE_TAGS = {"context": "doeff-cluster", "role": "foundation"}
 
 
 def kept_dirs() -> tuple[str, ...]:
-    """隣の __pycache__ を使い続ける source の dir の頭(末尾の / 付き): interpreter と venv の prefix(標準 library と入れた package)。"""
+    """隣の __pycache__ を使い続ける source の dir の頭(末尾の / 付き): interpreter と venv の prefix(標準 library と入れた package)。
+    root の venv が依存のキーごとの共有の venv を使う薄い venv の時、入れた package は共有の venv の下に在る — 薄い venv の bin は
+    共有の venv の bin への symlink なので、bin の実の path の親(共有の venv)も足す(普通の venv では prefix そのもの)。"""
     prefixes = (sys.prefix, sys.base_prefix, sys.exec_prefix, sys.base_exec_prefix)
-    return tuple(sorted({os.path.join(os.path.abspath(p), "") for p in prefixes if p}))
+    shared = os.path.dirname(os.path.realpath(os.path.join(sys.prefix, "bin")))
+    return tuple(sorted({os.path.join(os.path.abspath(p), "") for p in (*prefixes, shared) if p}))
 
 
 def scoped(prefixed: Callable[..., str], kept: tuple[str, ...]) -> Callable[..., str]:

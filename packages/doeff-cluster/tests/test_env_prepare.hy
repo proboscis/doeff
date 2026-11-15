@@ -19,7 +19,9 @@
 (import pathlib [Path])
 (import doeff [Program with-handlers])
 (import doeff_core_effects [os-file-handler])
-(import doeff_cluster._worker.protocol.env_translation [editable-dirs hy-dist-version])
+(import doeff_cluster._worker.protocol.env_translation [editable-dirs hy-dist-version SHARED-SCRIPT-HEAD])
+(import posixpath)
+(import doeff_core_effects [ReadMemoryFiles MemoryFiles])
 (import doeff_core_effects [ListDirectory WriteText RemoveTree MakeDirectory])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Task Gather])
@@ -30,7 +32,7 @@
         doeff_cluster._shared.core.runtime_env_rules [repo-source-material key-material])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue LayerSample layer-sample->json])
 (import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]
-                                                                             doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH] doeff_cluster [ENV-MARKER])
+                                                                             doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH SHARED-VENV-PTH] doeff_cluster [ENV-MARKER])
 (import doeff_cluster._sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS BAKE-JOBS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
@@ -170,8 +172,10 @@
   (assert (isinstance ready EnvReady) ready)
   (assert (= #(ready.downloaded ready.built) #(3 1)))
   (assert (>= (- ended started) 120.0) "冷たい sync と build でそれぞれ 60 秒(仮想の時間)")
-  ;; bytecode を作った interpreter は root の venv の物(マーカーで読める)
-  (assert (= ready.interpreter (.format "{}/.venv/bin/python" ready.root)))
+  ;; bytecode を作った interpreter は root の venv の物(マーカーで読める)— root の venv は依存のキーの共有の venv を使う薄い venv で、
+  ;; bin は共有の venv の bin への symlink なので、実の path は共有の venv の python。
+  (assert (.startswith ready.interpreter "/state/venvs/") ready.interpreter)
+  (assert (.endswith ready.interpreter "/bin/python") ready.interpreter)
   (<- files dict (files-under ready.root))
   (assert (in (.format "{}/app/uv.lock" ready.root) files))
   (assert (in (.format "{}/lib/native/core/lib.rs" ready.root) files))
@@ -180,7 +184,7 @@
   (assert (= (get marker "key") ready.key))
   (assert (= (get marker "interpreter") ready.interpreter))
   (assert (= (lfor s (get marker "stages") (get s "name"))
-             ["disk" "mirror" "tree" "lock" "venv" "native" "sync" "wheels" "roots" "bytecode" "probe"]))
+             ["disk" "mirror" "tree" "lock" "venv" "native" "sync" "wheels" "share" "roots" "bytecode" "probe"]))
   True)
 
 
@@ -474,9 +478,11 @@
   (<- first-deps str (dependency-key first-env PLATFORM))
   (<- second-deps str (dependency-key second-env PLATFORM))
   (assert (= first-deps second-deps) "project の commit だけが違う宣言は同じ依存のキー")
-  (assert (= (- after.syncs before.syncs) 0) "同じ依存のキーの root の venv を写すので、uv sync で venv を作らない")
+  (assert (= (- after.syncs before.syncs) 0) "同じ依存のキーの共有の venv を使うので、uv sync で venv を作らない")
   (<- venv-stage dict (stage-of second "venv"))
-  (assert (= (get venv-stage "files") 1) #("書き換えて置いたのは import の根の .pth の 1 つ(hardlink は数えない)" venv-stage))
+  (assert (= (get venv-stage "files") 4)
+          #("薄い venv に置いたのは pyvenv.cfg・bin と wheels の symlink・共有の site-packages を足す .pth の 4 つ(共有の venv の file は張らない)"
+            venv-stage))
   (<- app-part tuple (part-of second "app"))
   (<- lib-part tuple (part-of second "lib"))
   (assert (= #((get app-part 0) (get lib-part 0)) #("copy" "copy")) #("app も lib も前の root の木から写す" app-part lib-part))
@@ -492,7 +498,7 @@
   (<- files dict (files-under second.root))
   (assert (= (get files (.format "{}/app/app/__init__.py" second.root)) "V = 2\n"))
   (assert (not (any (gfor p files (and (in "/.venv/wheels/" p) (in first.root p))))) "写しは元の root の venv を持ち越さない")
-  (assert (in (.format "{}/.venv/bin/python" second.root) files) "venv は新しい root の下に在る")
+  (assert (in (.format "{}/.venv/pyvenv.cfg" second.root) files) "venv は新しい root の下に在る")
   (assert (not (any (gfor #(p text) (.items files) (and (in "/.venv/" p) (.endswith p ".pth") (in first.root text)))))
           #("写した venv の .pth は前の root の path を持たない(.pth は新しい root を指す)" (lfor #(p text) (.items files) :if (and (in "/.venv/" p) (.endswith p ".pth") (in first.root text)) #(p text))))
   True)
@@ -535,23 +541,32 @@
 
 (defk venv-moved-into-tree [ready]
   {:pre [(: ready EnvReady)] :post [(: % None)]}
-  "完成した root を、venv を木の外へ移す前の形(venv が project の木の中の <root>/app/.venv)に作り直すため: venv の file を木の中へ写し、
-   中身の venv の path も木の中の path に替え、bin に venv の python を頭に書いた script を 1 つ足し、木の外の venv を消す。"
+  "完成した root を、venv を木の外へ移して共有する前の形(venv が project の木の中の <root>/app/.venv に在り、全部の file を持つ)に
+   作り直すため: 共有の venv の file(共有の印と root の型を除く)と root の薄い venv の file(共有の site-packages を足す .pth を除く)を
+   木の中へ写し、中身の venv の path も木の中の path に替え、bin に venv の python を頭に書いた script を 1 つ足し、木の外の venv と
+   共有の venv を消す。"
   (val outside (.format "{}/.venv" ready.root))
   (val inside (.format "{}/app/.venv" ready.root))
-  (<- files dict (files-under (+ outside "/")))
-  (for [#(path text) (.items (| files {(+ outside "/bin/hy") (.format "#!{}/bin/python\nimport hy\n" outside)}))]
-    (<- (WriteText (+ inside (cut path (len outside) None)) (.replace text (+ outside "/") (+ inside "/")))))
+  (val shared (posixpath.dirname (posixpath.dirname ready.interpreter)))
+  (<- common dict (files-under (+ shared "/")))
+  (<- own dict (files-under (+ outside "/")))
+  (val placed (| (dfor #(p text) (.items common) :if (not-in "/.doeff-" p) (+ inside (cut p (len shared) None)) text)
+                 (dfor #(p text) (.items own) :if (not (.endswith p SHARED-VENV-PTH)) (+ inside (cut p (len outside) None)) text)
+                 {(+ inside "/bin/hy") (.format "#!{}/bin/python\nimport hy\n" inside)}))
+  (for [#(path text) (.items placed)]
+    (<- (WriteText path (.replace (.replace text (+ outside "/") (+ inside "/")) (+ shared "/") (+ inside "/")))))
   (<- (RemoveTree outside))
+  (<- (RemoveTree shared))
   None)
 
 
 (defk old-form-venv-scenario []
   {:pre [] :post [(: % bool)]}
-  "venv が project の木の中に在る前の形の完成済みの root(次の掃除で消えるまで残る)から、project の commit だけ変えた root を準備する:
-   venv は前の形の root の木の中から写して使い回し(sync しない)、新しい root では project の木の外の <root>/.venv に置く。写した file の
-   venv の path は木の外の venv を、root の path は新しい root を指す(写し元の venv の path → 新しい venv・写し元の root → 新しい root の
-   2 段の書き換え)。"
+  "venv が project の木の中に在る前の形の完成済みの root(次の掃除で消えるまで残る — 共有の venv はまだ無い)から、project の commit
+   だけ変えた root を準備する: venv は前の形の root の木の中から写して使い回し(sync しない)、写した venv を共有の venv にして、新しい
+   root には project の木の外の <root>/.venv に薄い venv を置く。写した file の venv の path は木の外の venv を、root の path は新しい
+   root を指す(写し元の venv の path → 新しい venv・写し元の root → 新しい root の 2 段の書き換え)。共有の venv の bin の script は、
+   script の在る dir の python で起きる頭に替わる。"
   (<- first EnvReady (prepare-app "app-editable" "lib-1" #() EDITABLE-LOCK))
   (<- (venv-moved-into-tree first))
   (<- before EnvWorldLog (read-world-log))
@@ -562,12 +577,14 @@
   (assert (= (- after.syncs before.syncs) 0) "前の形の root の木の中の venv を写すので sync しない")
   (<- files dict (files-under second.root))
   (val site (.format "{}/.venv/lib/python3.14/site-packages" second.root))
-  (assert (= (get files (.format "{}/.venv/bin/hy" second.root)) (.format "#!{}/.venv/bin/python\nimport hy\n" second.root))
-          "bin の script の頭は新しい root の木の外の venv の python")
+  (val shared (posixpath.dirname (posixpath.dirname second.interpreter)))
+  (<- common dict (files-under (+ shared "/")))
+  (assert (= (get common (+ shared "/bin/hy")) (+ (.decode SHARED-SCRIPT-HEAD "utf-8") "import hy\n"))
+          "共有の venv の bin の script の頭は、script の在る dir(薄い venv の bin)の python で起こす")
   (assert (= (get files (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) "editable の .pth は新しい root の木")
   (assert (= (get files (+ site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" second.root)))
   (assert (not (any (gfor p files (in "/app/.venv/" p)))) "新しい root の project の木の下に venv を置かない")
-  (val copied (dfor #(p text) (.items files) :if (.startswith p (.format "{}/.venv/" second.root)) p text))
+  (val copied (| (dfor #(p text) (.items files) :if (.startswith p (.format "{}/.venv/" second.root)) p text) common))
   (assert (not (any (gfor text (.values copied) (or (in (+ first.root "/") text) (in "/app/.venv/" text)))))
           #("写した venv の file は前の root の path も木の中の venv の path も持たない"
             (lfor #(p text) (.items copied) :if (or (in (+ first.root "/") text) (in "/app/.venv/" text)) p)))
@@ -581,6 +598,58 @@
   (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
                                                                  (if (= r.url APP-URL) (replace r :commits (+ r.commits #(a1 a2))) r))))
                             (old-form-venv-scenario)))
+  (assert ok))
+
+
+;; 共有の venv(依存のキーごとに 1 つ): 依存のキーの同じ 2 つ目の root の準備は、venv のために置く物(file と symlink)が 100 以下 —
+;; 共有の venv の file に hardlink を張らない。反例 = 直す前の形(root ごとに venv を file ごとに写す)は、lock の package の file の数
+;; (ここでは 1,200 を越える)だけ張った。
+(val BIG-LOCK (+ EDITABLE-LOCK (.join "" (gfor i (range 400) (.format "pkg-{0}==1.0 top=pkg_{0}\n" i)))))
+
+
+(defk venv-entries-now []
+  {:pre [] :post [(: % frozenset)]}
+  "置き場の venv の物(root の venv の下と共有の venv の置き場の下の file と symlink)の path の集合を読むため。"
+  (<- store MemoryFiles (ReadMemoryFiles))
+  (frozenset (gfor p (+ (tuple (gfor f store.files f.path)) (tuple (gfor l store.links l.path)))
+                   :if (or (in "/.venv/" p) (.startswith p "/state/venvs/"))
+                   p)))
+
+
+(defk shared-venv-scenario []
+  {:pre [] :post [(: % bool)]}
+  "依存のキーの同じ 2 つ目の root を準備し、venv のために置いた物が 100 以下で、どれも 2 つ目の root の薄い venv の下に在り(共有の
+   venv に足さない)、薄い venv の editable の .pth と import の根の .pth は 2 つ目の root を指す事を確かめるため。"
+  (<- first EnvReady (prepare-app "app-big" "lib-1" #() BIG-LOCK))
+  (<- before frozenset (venv-entries-now))
+  (<- log-before EnvWorldLog (read-world-log))
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-big-2" "lib-1" known BIG-LOCK))
+  (<- after frozenset (venv-entries-now))
+  (<- log-after EnvWorldLog (read-world-log))
+  (assert (isinstance second EnvReady) second)
+  (assert (= (- log-after.syncs log-before.syncs) 0) "共有の venv を使うので sync しない")
+  (val shared (tuple (gfor p before :if (.startswith p "/state/venvs/") p)))
+  (assert (> (len shared) 1200) #("共有の venv は lock の package の file を全部持つ(写せば 100 を越える)" (len shared)))
+  (val placed (sorted (- after before)))
+  (assert (<= (len placed) 100) #("2 つ目の root が venv のために置いた物" (len placed) placed))
+  (assert (all (gfor p placed (.startswith p (.format "{}/.venv/" second.root))))
+          #("2 つ目の root は共有の venv に何も足さない" (lfor p placed :if (not (.startswith p (.format "{}/.venv/" second.root))) p)))
+  (<- files dict (files-under second.root))
+  (val site (.format "{}/.venv/lib/python3.14/site-packages" second.root))
+  (assert (= (get files (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) "editable の .pth は 2 つ目の root の木")
+  (assert (= (get files (+ site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" second.root)))
+  (assert (in "site.addsitedir" (get files (+ site "/" SHARED-VENV-PTH))) "共有の site-packages を足す .pth が在る")
+  True)
+
+
+(deftest test-a-second-root-of-one-dependency-key-places-at-most-100-venv-files
+  (<- world EnvWorld (base-world))
+  (<- b1 WorldCommit (app-commit "app-big" BIG-LOCK "V = 7\n"))
+  (<- b2 WorldCommit (app-commit "app-big-2" BIG-LOCK "V = 8\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(b1 b2))) r))))
+                            (shared-venv-scenario)))
   (assert ok))
 
 

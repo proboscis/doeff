@@ -12,11 +12,14 @@
 ;;;                                                          変わった path だけ新しく置く(追跡しない .venv・__pycache__・マーカーは写さない)・
 ;;;                                                          写し元が無ければ展開 — #3677
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
-;;;   4b venv     FileSha256 / CopyVenv                      依存のキー(dependency-key)の同じ完成済みの root が在り、project の pyproject.toml が
-;;;                                                          同じなら、その venv を hardlink で写して絶対 path を書き換える(写せば 5〜7 を走らせない —
-;;;                                                          新しい commit の root は source の木と bytecode だけを置く)。写せなければ 5〜7 へ。
+;;;   4b venv     FileSha256 / UseSharedVenv / CopyVenv      依存のキー(dependency-key)と project の pyproject.toml の同じ共有の venv が在れば、
+;;;                                                          root の venv をそれを使う薄い venv として置く(venv の file を張らない — 5〜7 を
+;;;                                                          走らせない)。無ければ、同じ依存のキーの前の形の完成済みの root の venv を hardlink
+;;;                                                          で写して絶対 path を書き換える(写せば 5〜7 を走らせない)。写せなければ 5〜7 へ。
 ;;;                                                          venv は project の木の外の <root>/.venv(runtime_env.root-venv)— 木を読み専用で
 ;;;                                                          置けるように。前の形の root(venv が木の中)からも写す(venv-source-path)
+;;;   7b 共有     ShareVenv                                  写した・作った root だけの venv を共有の venv の置き場へ移し、root の venv を
+;;;                                                          薄い venv に置き換える(依存のキーごとに 1 つ — 次の root は 4b で使う)
 ;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
@@ -55,7 +58,7 @@
 (import doeff_cluster._shared.core.runtime_env [project-dir root-venv tree-venv ROOT-VENV])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
 (import doeff_cluster._worker.core.env_upkeep [LayerSample])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256 ROOT-PYCACHE])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused VenvShared CopyVenv UseSharedVenv ShareVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256 ROOT-PYCACHE])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -388,12 +391,35 @@
       (! (tree-venv source.env source.root))))
 
 
+(defk shared-venv-name [request]
+  {:pre [(: request PrepareRequest)] :post [(: % (| str None))]}
+  "root の venv が使う共有の venv の名を決めるため: 依存のキー(dependency-key)と、新しい木の project の pyproject.toml の sha256 の頭 16 桁
+   (依存のキーは uv.lock と他の repo の commit で venv の中身を決めるが、project 自身の pyproject.toml — editable で入る project の入口の
+   script など — は lock に出ない所が在る)。pyproject.toml を読めなければ None(共有の venv を使わない)。"
+  (<- wanted str (dependency-key request.env request.platform))
+  (<- pdir str (project-dir request.env request.root))
+  (<- own (| str None) (FileSha256 (.format "{}/pyproject.toml" pdir)))
+  (if (is own None) None (.format "{}-{}" wanted (cut own 0 16))))
+
+
 (defk stage-venv [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
-  "同じ依存のキーの完成済みの root が在れば、その venv を写して使い回す(写した準備は native・依存・wheel の処理ステージを走らせない)。
-   依存のキーは uv.lock と他の repo の commit で venv の中身を決めるが、project 自身の pyproject.toml(editable で入る project の入口の
-   script など)は lock に出ない所が在るので、写し元と新しい木の pyproject.toml の中身が同じ時だけ写す。写し元が無い・pyproject.toml が
-   違う・写せない時は記録を 1 行残して uv sync の道へ戻る(写しは最適化 — 準備を止めない)。書いた file の数は書き換えて置いた数。"
+  "依存のキーと project の pyproject.toml の同じ共有の venv(shared-venv-name)が在れば、root の venv をそれを使う薄い venv として置く
+   (共有の venv の file に hardlink を張らない・native・依存・wheel の処理ステージを走らせない)。無ければ、同じ依存のキーの完成済みの
+   root(共有の venv を使う前の形の root — 次の掃除で消えるまで残る)の venv を写して使い回す — 写した venv も sync した venv も share の
+   処理ステージが共有の venv にする。依存のキーは uv.lock と他の repo の commit で venv の中身を決めるが、project 自身の pyproject.toml は
+   lock に出ない所が在るので、写し元と新しい木の pyproject.toml の中身が同じ時だけ写す。写し元が無い・pyproject.toml が違う・写せない時は
+   記録を 1 行残して uv sync の道へ戻る(写しは最適化 — 準備を止めない)。書いた file の数は薄い venv に置いた数か、書き換えて置いた数。"
+  (<- name (| str None) (shared-venv-name request))
+  (when (is-not name None)
+    (<- used (| VenvShared VenvRefused None) (UseSharedVenv name (! (root-venv request.root)) request.root))
+    (match used
+      (VenvShared :shared shared :written written)
+      (do (<- (PrepareNote (.format "venv は共有の venv {} を使う(薄い venv に置いた物 {})" shared written)))
+          (return (replace state :venv-from shared :venv-shared shared :written written)))
+      (VenvRefused :reason reason)
+      (do (<- (PrepareNote (.format "共有の venv {} を使えず venv を作る: {}" name reason))))
+      _ None))
   (<- source (| KnownRoot None) (venv-source request))
   (when (is source None)
     (return state))
@@ -473,6 +499,30 @@
       state
       (do (<- done (InstallWheels pdir (! (root-venv request.root)) state.wheels))
           (if (isinstance done EnvFailure) done state))))
+
+
+(defk stage-share [request state]
+  {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % (| PrepareState EnvFailure))]}
+  "uv sync か写しで作った root だけの venv を、依存のキーと project の pyproject.toml の同じ root が使い回す共有の venv にし、root の
+   venv をそれを使う薄い venv に置き換える(次の同じ名の root は venv の file を張らずに薄い venv だけを置く — stage-venv)。共有の venv を
+   使っている準備(venv-shared)・pyproject.toml を読めない準備は何もしない。共有にできない時は記録を 1 行残して root だけの venv のまま
+   続ける(共有は最適化 — 準備を止めない)。venv を移した後の失敗は一時の失敗(root の venv が無い)。書いた file の数は薄い venv に
+   置いた数。"
+  (when (is-not state.venv-shared None)
+    (return state))
+  (<- name (| str None) (shared-venv-name request))
+  (when (is name None)
+    (return state))
+  (<- shared (| VenvShared VenvRefused EnvFailure) (ShareVenv name (! (root-venv request.root)) request.root))
+  (match shared
+    (EnvFailure) shared
+    (VenvRefused :reason reason)
+    (do (<- (PrepareNote (.format "venv を共有の venv {} にせず root だけの venv として使う: {}" name reason)))
+        state)
+    (VenvShared :shared path :written written :published published)
+    (do (<- (PrepareNote (.format "venv を共有の venv {} に{}(薄い venv に置いた物 {})" path
+                                  (if published "した" "せず、同じ名の在る共有の venv を使う") written)))
+        (replace state :venv-shared path :written written))))
 
 
 (defk stage-roots [request state]
@@ -615,7 +665,8 @@
                (Stage :name "tree" :run stage-trees) (Stage :name "lock" :run stage-lock)
                (Stage :name "venv" :run stage-venv)
                (Stage :name "native" :run stage-native) (Stage :name "sync" :run stage-sync)
-               (Stage :name "wheels" :run stage-wheels) (Stage :name "roots" :run stage-roots)
+               (Stage :name "wheels" :run stage-wheels) (Stage :name "share" :run stage-share)
+               (Stage :name "roots" :run stage-roots)
                (Stage :name BYTECODE-STAGE :run stage-bytecode) (Stage :name "probe" :run stage-probe)))
 
 
