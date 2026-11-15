@@ -5,7 +5,11 @@
 ;;;
 ;;; 拍から拍へ持ち越す値(最後の宣言・途絶の数え・状態の報告・待ちの版)は入れ物 LinkState に置く(宛先の RouteCell と同じ形 — 組み立てが
 ;;; 作って handler の引数に渡し、検は同じ入れ物を外から見る)。振る舞いは前の口と同じ:
-;;;   * heartbeat を送る拍は beat_policy.heartbeat-due(待ちの口を使えている間は、宣言が変わった・状態の報告が変わった・送る間隔を過ぎた時だけ)。
+;;;   * heartbeat を送る拍は beat_policy.heartbeat-due(待ちの口を使えている間は、宣言が変わった・状態の報告が変わった・準備の姿が変わった・
+;;;     送る間隔を過ぎた時だけ)。
+;;;   * 準備の file は、置き換えの知らせ(FileNotices — 本番は foundation/file_notices の inotify・kqueue)が鳴った時に読み直す。知らせは
+;;;     周の間の待ちを起こす呼び鈴(WorkerWakes)にも掛け、送る間隔を待たずに heartbeat で名乗る。間を置いた読み直しは知らせの取りこぼしを
+;;;     揃える遅い読み(worker/core/prepare_rules の prepare-read-due)だけに残す。
 ;;;   * 返事の job と task を JobSpec に読み(worker/protocol/declared)、task の印 <id>.program を残し、返事から外れた task の結果の file を消し、
 ;;;     cache に無い詰めた Program を取り寄せる(中身の sha256 がキーと合わない物は書かない)。
 ;;;   * 届かなければ desired-when-unreachable(途絶が fence を越えたら lease を持たない job と task を止める)。
@@ -43,6 +47,8 @@
 (import doeff_core_effects [EnvEntry ReadEnvironment])
 (import doeff_core_effects [HttpResponse HttpFailed])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise Promise Wait])
+(import doeff_core_effects [CreateExternalPromise ExternalPromise])
+(import typing [Protocol runtime-checkable])
 (import doeff_time [Delay GetMonotonic])
 (import doeff_cluster._shared.core.clock [now-epoch-ms monotonic-ms-of datetime-of-epoch-ms])
 (import doeff_cluster._shared.core.remote_rules [program-sha])
@@ -69,7 +75,7 @@
 (import doeff_cluster._worker.core.account_token [TokenClaims TokenState token-claims token-state token-read-due])
 (import doeff_cluster._worker.core.room_rules [RoomReading RoomState WorkerRoom room-of-text room-read-due room-line])
 (import doeff_cluster._worker.core.prepare_rules [PrepareReading PrepareState prepare-of-text prepare-missing prepare-unreadable
-                                                  prepare-after prepare-line])
+                                                  prepare-after prepare-line prepare-read-due])
 (import doeff_cluster._worker.core.load_rules [LoadPaths HostLoad CpuTicks LoadReading load-read-due machine-load-of host-load-of fresh-line
                                               task-uses-of jobs-room-of prepare-wait-of
                                               job-meters-told ClisRoomLend clis-room-lend held-lend-told])
@@ -84,6 +90,16 @@
 ;; 生存の合図の thread の送りの事実を、拍の宣言の読みが受け取るまで持つ本数。止まりの上限 30 分の間の送り
 ;; (4 秒ごと)を覆う。越えた古い送りは heartbeat の間の計り(#3850)から落ちるだけ。
 (val LIFELINE-SENT-KEPT 512)
+
+
+(defclass [runtime-checkable] FileNotices [Protocol]
+  "1 つの file の置き換えの知らせの箱の形(foundation/file_notices の FileNoticeBoard・検の相手役)。mark = file が最後に変わった印(読む前に
+   取る)・arm = 印 seen の後に変わっていれば真を返して何も掛けない、変わっていなければ鈴 bell を掛けて偽を返す(箱は次に変わった時に bell を
+   True で満たす)・watching = OS の見張りが今 掛かっている(偽の間は間を置いて読み直す)・fault = 掛からない訳(None = 掛かっている)。"
+  (defn #^ int mark [self] (raise NotImplementedError))
+  (defn #^ bool arm [self #^ int seen #^ ExternalPromise bell] (raise NotImplementedError))
+  (defn #^ bool watching [self] (raise NotImplementedError))
+  (defn #^ (| str None) fault [self] (raise NotImplementedError)))
 
 
 (defclass WatchCell []
@@ -161,7 +177,8 @@
    None = 名乗らない。本番の入口が起動の時に 1 度決めて渡し、heartbeat の childEnviron で名乗る)。pinned-to-node = この worker の Pod は
    自分の node の外で動けない(起動の引数 --pinned-to-node — 印の在る job を長い柵まで動かし続ける・heartbeat_rules.held-keep-fence-ms)。
    prepare-file = 準備の file(None = 読まない。渡すと heartbeat の前に読み直し、file の能力を起動の引数の能力に足して名乗り、準備の姿を
-   heartbeat の prepare で名乗る — worker/core/prepare_rules)。"
+   heartbeat の prepare で名乗る — worker/core/prepare_rules)。prepare-notices = 準備の file の置き換えの知らせ(None = 受けない — 枠の
+   file と同じ間で読み直す。渡すと知らせで読み直し、周の間の待ちを起こす)。"
   (defn #^ None __init__ [self #^ str name #^ tuple provides #^ int fence-ms #^ str task-dir #^ str boot
                           #^ int boot-at #^ int started-ms #^ int started-mono-ms * #^ (| dict None) [versions None]
                           #^ (| dict None) [tools None]
@@ -171,7 +188,8 @@
                           #^ (| str None) [token-file None] #^ (| str None) [room-file None] #^ str [doeff-commit ""]
                           #^ (| int None) [memory-mib None] #^ str [keep-line-file ""] #^ (| LoadPaths HostLoad None) [load-paths None]
                           #^ (| EvictionCell None) [eviction None] #^ (| tuple None) [child-environ None]
-                          #^ bool [pinned-to-node False] #^ (| str None) [prepare-file None]]
+                          #^ bool [pinned-to-node False] #^ (| str None) [prepare-file None]
+                          #^ (| FileNotices None) [prepare-notices None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.pod-ip pod-ip
           self.tools (or tools {})
           self.handles-envs handles-envs self.env-report None
@@ -232,8 +250,14 @@
           self.room-file room-file self.room-state None self.room-reason "" self.room-read-ms None
           self.pools #() self.memory-mib memory-mib
           ;; 準備の file(worker/core/prepare_rules の頭の註): prepare-file = 読む file(None = 読まない — heartbeat に prepare を載せない)・
-          ;; prepare = 最後に名乗る準備の姿(None = まだ読んでいない)・prepare-read-ms = 最後に読んだ刻。
-          self.prepare-file prepare-file self.prepare None self.prepare-read-ms None
+          ;; prepare = 最後に名乗る準備の姿(None = まだ読んでいない)・prepare-read-ms = 最後に読んだ刻・sent-prepare = 前に届けた
+          ;; heartbeat に載せた姿(違えば送る間隔を待たずに送る — 状態の報告の違いと同じ扱い)。
+          ;; 置き換えの知らせ: prepare-notices = 知らせの箱(None = 受けない)・prepare-mark = 最後に読む前に取った箱の印(None = まだ読んで
+          ;; いない)・prepare-bell = 周の間の待ちに掛けた鈴(None = 掛けていない)と、それを掛けた時の印 prepare-bell-seen(印が進めば鈴は
+          ;; 鳴った後 — 新しく掛ける)・prepare-fault-told = 最後に log に出した見張りの訳。
+          self.prepare-file prepare-file self.prepare None self.prepare-read-ms None self.sent-prepare None
+          self.prepare-notices prepare-notices self.prepare-mark None self.prepare-bell None self.prepare-bell-seen None
+          self.prepare-fault-told None
           ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — worker/core/load_rules の頭の註。空 = 読まない)。file を読めない間は前の値のまま。
           self.keep-line-file keep-line-file
           ;; 命令の層を掛け直す線の file と短い命令の余地 MiB(枠の file の行の commandLineFile と commandFloorMiB — worker/core/eviction_rules の
@@ -594,6 +618,7 @@
    呼ぶのは送り口 sent-beat だけ(送りを 1 本ずつにし、送りの事実を溜める)。"
   (val sending state.statuses)
   (val stopping state.stopping)
+  (val preparing state.prepare)
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
   (setv state.watch.woken False)
   (val endpoint (get cell.route.urls cell.route.active))
@@ -606,7 +631,7 @@
                                 :pools state.pools :memory-mib state.memory-mib :measured state.measured
                                 :child-environ state.child-environ :pod-ip state.pod-ip
                                 :pinned (! (pinned-claim? (or state.pinned-to-node state.room-pinned) stopping))
-                                :prepare state.prepare))
+                                :prepare preparing))
   (val body (| base
                (if (or (not state.handles-envs) (is state.env-report None))
                    {}
@@ -681,6 +706,7 @@
     ;; 次の拍の判断の材料(#1933): 届けた状態の報告・送る間隔・待ちの after(返事の版 — 無ければ旧い coordinator)。
     (setv state.sent-statuses sending
           state.sent-stopping stopping
+          state.sent-prepare preparing
           state.beat-interval-ms (beat-interval-ms timing state.task-echo)
           ;; 退いた世代の印(返事の superseded)は Pod の job の label の答え手が読む。
           state.last-desired (DesiredJobs (+ state.last-jobs state.last-tasks) :warm state.last-warm :superseded declared.superseded))
@@ -909,15 +935,27 @@
 
 (defk prepare-noted [state]
   {:pre [(: state LinkState)] :post [(: % None)]}
-  "準備の file を枠の file と同じ間(room-read-due)で読み直し、次の heartbeat で名乗る準備の姿と足す能力を file の値にするため
-   (worker/core/prepare_rules — 準備が起動の後に済んでも、Pod を作り直さずに能力を足す)。file が無い間は running、在るのに読めない・
-   形が崩れている間は前に名乗った能力のまま状態だけを名乗る。姿が変わった時に log へ 1 行出す。file を読まない worker
+  "準備の file を、置き換えの知らせが鳴った時(と知らせの取りこぼしを揃える遅い間 — prepare-read-due)に読み直し、次の heartbeat で
+   名乗る準備の姿と足す能力を file の値にするため(worker/core/prepare_rules — 準備が起動の後に済んでも、Pod を作り直さずに能力を足す)。
+   知らせを受けない worker と見張りの掛からない間は枠の file と同じ間で読み直す。file が無い間は running、在るのに読めない・形が崩れて
+   いる間は前に名乗った能力のまま状態だけを名乗る。姿が変わった時と見張りの訳が替わった時に log へ 1 行出す。file を読まない worker
    (prepare-file が None)は何もしない。"
   (when (is-not state.prepare-file None)
     (<- now-ms int (now-epoch-ms))
-    (<- due bool (room-read-due state.prepare-read-ms now-ms))
+    (val notices state.prepare-notices)
+    (val watching (and (is-not notices None) (.watching notices)))
+    (val fault (if (is notices None) None (.fault notices)))
+    (when (!= fault state.prepare-fault-told)
+      (setv state.prepare-fault-told fault)
+      (<- (slog (if (is fault None)
+                    "worker: 準備の file の置き換えの知らせを受ける — 置き換えた時に読み直す"
+                    (+ "worker: 準備の file の置き換えの知らせを受けられない — 間を置いて読み直す: " fault))
+                :level (if (is fault None) "info" "warning"))))
+    ;; 読む前に印を取る(読みの後に来た置き換えは、印の違いで次の周に読み直す)。
+    (val mark (if (is notices None) None (.mark notices)))
+    (<- due bool (prepare-read-due state.prepare-read-ms now-ms watching state.prepare-mark mark))
     (when due
-      (setv state.prepare-read-ms now-ms)
+      (setv state.prepare-read-ms now-ms state.prepare-mark mark)
       (val before state.prepare)
       (<- text (ReadText state.prepare-file))
       (var after None)
@@ -939,6 +977,30 @@
                                   "warning" "info"))))
       (setv state.prepare after)))
   None)
+
+
+(defk prepare-wake [state]
+  {:pre [(: state LinkState)] :post [(: % tuple)]}
+  "周の間の待ちを準備の file の置き換えで起こす物を #(期限 鈴の組) で返すため: 前の読み(prepare-noted)の後に置き換わっていれば今すぐ
+   (DueNow)、まだなら置き換えで満ちる鈴を 1 つ。鈴は鳴るまで周をまたいで同じ物を渡し(周ごとに掛けない — 箱の鈴の組を育てない)、
+   箱の印が掛けた時から進んでいれば(鳴った後)新しく掛ける。知らせを受けない・まだ読んでいない・見張りの掛からない間は何も足さない
+   (間を置いた読み直しは拍の期限で起きる)。"
+  (val notices state.prepare-notices)
+  (val seen state.prepare-mark)
+  (when (or (is notices None) (is seen None) (not (.watching notices)))
+    (return #((DueNever) #())))
+  (when (!= (.mark notices) seen)
+    (return #((DueNow) #())))
+  (when (and (is-not state.prepare-bell None) (= state.prepare-bell-seen seen))
+    (return #((DueNever) #(state.prepare-bell.future))))
+  (<- bell ExternalPromise (CreateExternalPromise))
+  (if (.arm notices seen bell)
+      ;; 印を見てから掛けるまでの間に置き換わった: 掛けなかった鈴を満たして手放し(待ち手の無い外の Promise を残さない)、今すぐ起きる。
+      (do (.complete bell True)
+          (setv state.prepare-bell None state.prepare-bell-seen None)
+          #((DueNow) #()))
+      (do (setv state.prepare-bell bell state.prepare-bell-seen seen)
+          #((DueNever) #(bell.future)))))
 
 
 (defk proc-load-read [paths before now-ms line [keep-line-file ""] [lend-line-file ""] [reclaim-file ""]]
@@ -1164,9 +1226,11 @@
     (return silenced))
   (<- watching bool (watching? state))
   (var desired state.last-desired)
-  ;; 止まり始めは状態の報告の違いと同じく、送る間隔を待たずに名乗る(#2819)。
+  ;; 止まり始め(#2819)と準備の姿の移り(準備で足す能力が置き方に効くまでを、送る間隔で遅らせない)は、状態の報告の違いと同じく、
+  ;; 送る間隔を待たずに名乗る。
   (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken
-                       (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping))
+                       (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping)
+                           (!= state.prepare state.sent-prepare))
                        silent state.beat-interval-ms)
     ;; 送りの事実(#3850)は送り口が溜め、宣言の読みが渡す(拍の外の送りと同じ数え方)。
     (<- beaten (| DesiredJobs DesiredUnreadable) (sent-beat state cell options))
@@ -1266,8 +1330,10 @@
     ;; 時間で取り直す理由: 届かない coordinator の戻りを知る試し(届いた後は heartbeat の期限だけ)。再送は期限でなく再送の間の待ちなので、
     ;; tick の終わりの時刻から数える。
     (val resend (if (is state.last-desired None) (DueAt :at (+ now RESEND-AFTER-MS)) (DueNever)))
-    (<- due (| DueAt DueNow DueNever) (earliest-due #(beat fence resend)))
-    (<- merged WakeSet (wakes-with outer due #() #()))
+    ;; 準備の file の置き換えの知らせ: 前の読みの後に置き換わっていれば今すぐ、まだなら鈴で起きる(送る間隔を待たずに名乗る)。
+    (<- #(prepare-due prepare-bells) tuple (prepare-wake state))
+    (<- due (| DueAt DueNow DueNever) (earliest-due #(beat fence resend prepare-due)))
+    (<- merged WakeSet (wakes-with outer due prepare-bells #()))
     (resume merged))
   (ObservePrograms []
     (<- gaps tuple (program-gaps state))

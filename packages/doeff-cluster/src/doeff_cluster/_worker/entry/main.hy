@@ -53,6 +53,7 @@
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-environ-names])
 (import doeff_cluster._worker.protocol.lease_release [lease-release])
 (import doeff_cluster._foundation.process_versions [this-process-versions clock-ticks])
+(import doeff_cluster._foundation.file_notices [file-notices])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._shared.core.timing_rules [SelfStopSpans ReassignTooEarly timing-outlasts-the-self-stop])
 (import doeff_cluster._shared.core.capabilities [capabilities-of])
@@ -652,7 +653,7 @@
                  :help "枠の file(JSON — worker の名 → memoryMiB・pools)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
                         値を名乗る — 枠の変更で worker を起こし直さない。空 = 読まない")
   (.add-argument parser "--prepare-file" :default ""
-                 :help "準備の file(JSON — state・provides・sinceMs・stage・reason。worker/core/prepare_rules)。渡すと heartbeat の前に
+                 :help "準備の file(JSON — state・provides・sinceMs・stage・reason。worker/core/prepare_rules)。渡すと置き換えの知らせで
                         読み直し、file の能力を --provides に足して名乗り、準備の状態を heartbeat の prepare で名乗る — 準備を起動の前に
                         待たずに、済んだ後で能力を足す。空 = 読まない")
   (.add-argument parser "--fence" :type float :default (/ (. (ClusterTiming) fence-ms) 1000)
@@ -837,8 +838,10 @@
                         :token-file SERVICE-ACCOUNT-TOKEN-FILE
                         ;; 枠の file を heartbeat の前に読み直す(空 = 読まない)。
                         :room-file (or args.room-file None)
-                        ;; 準備の file を heartbeat の前に読み直し、準備で足す能力と準備の状態を名乗る(空 = 読まない)。
+                        ;; 準備の file を置き換えの知らせで読み直し、準備で足す能力と準備の状態を名乗る(空 = 読まない)。知らせの見張りは
+                        ;; OS の変わりの知らせ(foundation/file_notices — Linux = inotify・macOS = kqueue)で、置き換わった周に送る間隔を待たずに名乗る。
                         :prepare-file (or args.prepare-file None)
+                        :prepare-notices (if args.prepare-file (run (file-notices (str (.absolute (Path args.prepare-file))))) None)
                         ;; 起動の時に名乗る memory の予算(枠の file の行か --memory-mib — None = 名乗らない)。
                         :memory-mib room.memory-mib
                         ;; 会話のターンに残す線の file(枠の file の行の keepLineFile — 空 = 読まない。heartbeat の前に枠の file と一緒に読み直す)。
