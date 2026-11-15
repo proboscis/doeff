@@ -375,6 +375,14 @@ class BundleRow:
     cached: CachedProjection
 
 
+@dataclass(frozen=True)
+class PlacedBundleRow:
+    """One read bundle row and the relative path of the file it is for."""
+
+    relative: str
+    row: BundleRow
+
+
 def bundle_key(root: Path, targets: Sequence[str]) -> str:
     """Name of the bundle (determined by the root, the set of relative paths of checked files, and the storage format version)."""
     digest = hashlib.sha256()
@@ -409,14 +417,14 @@ def load_bundle(cache_dir: Path, key: str) -> dict[str, BundleRow]:
                 except json.JSONDecodeError:
                     continue
                 if (kept := _bundle_row(row)) is not None:
-                    found[kept[0]] = kept[1]
+                    found[kept.relative] = kept.row
     except OSError:
         return {}
     return found
 
 
-def _bundle_row(row: object) -> tuple[str, BundleRow] | None:
-    """To turn one bundle row into (relative path, row) (None for a malformed row or one whose entry is unreadable; skipped)."""
+def _bundle_row(row: object) -> PlacedBundleRow | None:
+    """To turn one bundle row into its relative path and row (None for a malformed row or one whose entry is unreadable; skipped)."""
     match row:
         case {"relative": str(relative), "module": str(module), "place": str(place), "stat": stat, "entry": entry}:
             cached = _entry_from_json(entry)
@@ -424,9 +432,9 @@ def _bundle_row(row: object) -> tuple[str, BundleRow] | None:
                 return None
             match stat:
                 case [int(size), int(mtime)]:
-                    return relative, BundleRow(module, place, FileStat(size, mtime), cached)
+                    return PlacedBundleRow(relative, BundleRow(module, place, FileStat(size, mtime), cached))
                 case None:
-                    return relative, BundleRow(module, place, None, cached)
+                    return PlacedBundleRow(relative, BundleRow(module, place, None, cached))
                 case _:
                     return None
         case _:

@@ -24,7 +24,7 @@ import textwrap
 import warnings
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import cast
+from typing import NamedTuple, cast
 
 import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
@@ -70,11 +70,18 @@ def _typed(value: object) -> object:
     return (type(value), value)
 
 
-def _pydantic(value: WireValue) -> tuple[object, str]:
+class _Written(NamedTuple):
+    """What a writer answered for one value: the JSON value (dump) and the JSON text (dump-json)."""
+
+    value: object
+    text: str
+
+
+def _pydantic(value: WireValue) -> _Written:
     """Answer of the pydantic writer (doeff_hy._wire_parity -- same as dump / dump-json of wire.hy before the switch). Warnings about writing values that do not match the field type are discarded."""
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        return pydantic_dump(value), pydantic_dump_json(value)
+        return _Written(pydantic_dump(value), pydantic_dump_json(value))
 
 
 # --- 1. Write the same JSON as the current pydantic -------------------------------------------------------------------------------------------

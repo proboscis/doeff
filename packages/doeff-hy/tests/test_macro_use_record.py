@@ -797,25 +797,16 @@ def compiled_doeff_hy(tmp_path_factory: pytest.TempPathFactory) -> Path:
     )
     root = base / "proj"
     _probe_project(root)
-    env = {
-        name: value
-        for name, value in os.environ.items()
-        if name not in ("PYTHONDONTWRITEBYTECODE", "PYTHONPYCACHEPREFIX")
-    }
     prefix = base / "pycache"
-    env |= {
-        "PYTHONPATH": str(lib),
-        "PYTHONPYCACHEPREFIX": str(prefix),
-        "DOEFF_HY_CODE_STORE": "off",
-    }
+    # The child inherits this process's environment (not read here); `env` drops the bytecode switch and sets only the settings the build needs.
+    settings = ["-u", "PYTHONDONTWRITEBYTECODE", f"PYTHONPATH={lib}", f"PYTHONPYCACHEPREFIX={prefix}", "DOEFF_HY_CODE_STORE=off"]
     # A one-time build for the whole session, not a check — its limit only stops a hung compile.
     done = subprocess.run(
-        [sys.executable, "-c", REAL_CHILD, str(root), "record", str(base / "record.json")],
+        ["env", *settings, sys.executable, "-c", REAL_CHILD, str(root), "record", str(base / "record.json")],
         capture_output=True,
         text=True,
         timeout=300,
         check=False,
-        env=env,
     )
     assert done.returncode == 0, done.stderr
     compiled = lib / "doeff_hy"

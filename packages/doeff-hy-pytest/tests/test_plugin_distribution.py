@@ -56,7 +56,10 @@ def test_the_plugin_shows_only_the_two_declarations() -> None:
     modules starting with _, and there is no module without _ - the move of the old paths (budget, python_calls) was removed too."""
     import doeff_hy_pytest
 
-    assert doeff_hy_pytest.__all__ == ["declare_process_tree_cpu", "declare_step_budget"]
+    shown = sorted(
+        name for name in vars(doeff_hy_pytest) if not name.startswith(("_", "pytest_"))
+    )
+    assert shown == ["declare_process_tree_cpu", "declare_step_budget"]
     assert callable(doeff_hy_pytest.pytest_terminal_summary)
     source = PACKAGES / "doeff-hy-pytest" / "src" / "doeff_hy_pytest"
     open_modules = sorted(

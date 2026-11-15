@@ -38,7 +38,7 @@ import sys
 import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
-from typing import Any, Final, cast
+from typing import Any, Final, NamedTuple, cast
 
 from pydantic import ConfigDict, TypeAdapter, ValidationError
 from pydantic.json_schema import GenerateJsonSchema, JsonSchemaValue
@@ -245,9 +245,16 @@ def _imported(name: str) -> object:
         return f"SystemExit: {error}"
 
 
+class WireTypesFound(NamedTuple):
+    """The defwire types wire_types_in collected (module-name and definition order) and the modules it could not import (name -> reason)."""
+
+    types: list[type]
+    failures: dict[str, str]
+
+
 def wire_types_in(
     packages: Iterable[str], *, skip: Callable[[str], bool] = lambda _name: False
-) -> tuple[list[type], dict[str, str]]:
+) -> WireTypesFound:
     """Import every module under the package (module names for which skip is true are not imported) and collect the defwire types defined there.
     Answer = (list of types — in module-name and definition order, module names that could not be imported -> reason)."""
     names = sorted(
@@ -267,7 +274,7 @@ def wire_types_in(
         for candidate in list(vars(module).values())
         if _is_wire_type(candidate) and candidate.__module__ == name
     ]
-    return list(dict.fromkeys(found)), failures
+    return WireTypesFound(list(dict.fromkeys(found)), failures)
 
 
 # --- Building inputs -----------------------------------------------------------------------------------------------------------------
@@ -293,15 +300,18 @@ _UNKNOWN_KEY: Final = "zzUnknownField"
 _DEPTH: Final = 2
 
 
-def _nodes(node: _Node, seen: set[int] | None = None) -> Iterator[_Node]:
-    """One discriminator for each node of the type tree (including itself; the same discriminator once — a nested type points at the same discriminator rather than being rebuilt per parent)."""
-    seen = set() if seen is None else seen
-    if id(node) in seen:
-        return
-    seen.add(id(node))
-    yield node
-    for child in _children(node):
-        yield from _nodes(child, seen)
+def _nodes(node: _Node) -> Iterator[_Node]:
+    """One discriminator for each node of the type tree (including itself; the same discriminator once — a nested type points at the same discriminator rather than being rebuilt per parent).
+    Depth first, children in order (the stack holds the children of a node in reverse, so the first child is taken next)."""
+    seen: set[int] = set()
+    stack: list[_Node] = [node]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        stack.extend(reversed(_children(current)))
 
 
 def _wire_types_under(node: _Node) -> list[type]:
@@ -626,12 +636,19 @@ class Report:
     unbuildable: Mapping[str, str] = dataclasses.field(default_factory=dict)
 
 
-def _call(function: Callable[[], object]) -> tuple[bool, object]:
+class _Answered(NamedTuple):
+    """Whether a call answered (False = it raised), and the answer or the text of the exception."""
+
+    ok: bool
+    value: object
+
+
+def _call(function: Callable[[], object]) -> _Answered:
     """The answer of a call or the text of the exception — to compare the exceptions of both decoders as answers."""
     try:
-        return True, function()
+        return _Answered(True, function())
     except Exception as error:  # a comparison tool — compare the exceptions of both decoders as answers
-        return False, f"{type(error).__name__}: {error}"
+        return _Answered(False, f"{type(error).__name__}: {error}")
 
 
 def _text(value: object) -> str:
@@ -697,12 +714,19 @@ def _write_mismatches(value: object, name: str, case: str, shown: str) -> Iterat
             yield Mismatch(name, case, shown, what, _text(ours)[:600], _text(theirs)[:600])
 
 
-def _schema_differences(ours: object, theirs: object, where: str) -> tuple[bool, tuple[str, ...]]:
+class _SchemaComparison(NamedTuple):
+    """Whether two JSON Schemas are equal apart from default, and the places where only the default value differs."""
+
+    same: bool
+    defaults: tuple[str, ...]
+
+
+def _schema_differences(ours: object, theirs: object, where: str) -> _SchemaComparison:
     """Compare JSON Schema down to key order. Answer = (whether they are equal apart from default, places where only the default value differs — counted as differences of section 3b)."""
     match ours, theirs:
         case dict(), dict():
             if list(ours) != list(theirs):
-                return False, ()
+                return _SchemaComparison(False, ())
             defaults = tuple(
                 f"{where}: ours={json.dumps(ours[key])} theirs={json.dumps(theirs[key])}"
                 for key in ours
@@ -713,21 +737,19 @@ def _schema_differences(ours: object, theirs: object, where: str) -> tuple[bool,
                 for key in ours
                 if not (key == "default" and typed(ours[key]) != typed(theirs[key]))
             ]
-            return all(same for same, _ in inner), defaults + tuple(
-                line for _, lines in inner for line in lines
+            return _SchemaComparison(
+                all(same for same, _ in inner), defaults + tuple(line for _, lines in inner for line in lines)
             )
         case list(), list():
             if len(ours) != len(theirs):
-                return False, ()
+                return _SchemaComparison(False, ())
             inner = [
                 _schema_differences(a, b, f"{where}/{index}")
                 for index, (a, b) in enumerate(zip(ours, theirs, strict=True))
             ]
-            return all(same for same, _ in inner), tuple(
-                line for _, lines in inner for line in lines
-            )
+            return _SchemaComparison(all(same for same, _ in inner), tuple(line for _, lines in inner for line in lines))
         case _:
-            return typed(ours) == typed(theirs), ()
+            return _SchemaComparison(typed(ours) == typed(theirs), ())
 
 
 @dataclasses.dataclass(frozen=True)

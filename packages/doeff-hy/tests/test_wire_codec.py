@@ -22,6 +22,7 @@ import textwrap
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 import doeff_hy  # noqa: F401  # enable the Hy import hook
 import pytest
@@ -62,8 +63,15 @@ def _kinds(answer: Malformed) -> list[tuple[str, str]]:
     return [(field.field, field.reason.rsplit(" [", 1)[1].rstrip("]")) for field in answer.fields]
 
 
-def _both(wire_type: type, text: str) -> tuple[object, object]:
-    return codec_of(wire_type).decode_json(text), pydantic_parse_json(wire_type, text)
+class _Both(NamedTuple):
+    """The answer of this codec and of pydantic to the same text."""
+
+    ours: object
+    theirs: object
+
+
+def _both(wire_type: type, text: str) -> _Both:
+    return _Both(codec_of(wire_type).decode_json(text), pydantic_parse_json(wire_type, text))
 
 
 # --- 1. Accepted and refused forms per vocabulary type (compared against pydantic) ------------------------------------------------------------

@@ -218,12 +218,11 @@ class WorkReader:
     """Hook that reads doeff-vm's cumulative counts (runs the doeff effect ``ReadVmWorkCounts`` once and reads it).
     Reading is itself a run, so the difference between the two reads before and after a span contains a fixed number of steps (and one handler call) of the reading run."""
 
-    read: Callable[[], tuple[int, int]]
+    read: Callable[[], VmWork]
 
     def tally(self) -> VmWork:
         """Current cumulative counts — read before and after a span, and the difference is the span's amount of work."""
-        steps, handler_calls = self.read()
-        return VmWork(steps, handler_calls)
+        return self.read()
 
 
 @dataclass(frozen=True)
@@ -246,10 +245,10 @@ def read_work_source() -> WorkSource:
     except ImportError as exc:
         return NoWorkReader(f"cannot import ReadVmWorkCounts from doeff (doeff older than the effect, or no doeff): {exc}")
 
-    def read() -> tuple[int, int]:
+    def read() -> VmWork:
         """Read the cumulative counts (steps, handler calls) of all VMs in the process before and after a test span."""
         counts: tuple[int, int] = run(vm_probe_handler(ReadVmWorkCounts()))
-        return counts
+        return VmWork(*counts)
 
     try:
         read()

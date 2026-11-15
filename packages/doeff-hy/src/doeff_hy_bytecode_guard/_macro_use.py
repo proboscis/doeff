@@ -1225,7 +1225,23 @@ _JUMP_OPCODES = frozenset(dis.hasjump) if hasattr(dis, "hasjump") else frozenset
 _CONST_OPCODES = frozenset(dis.hasconst)
 
 
-def _function_annotations(instructions: list[dis.Instruction]) -> tuple[set[int], list[CodeType]]:
+@dataclass(frozen=True)
+class _FunctionAnnotations:
+    """The positions of the instructions that attach a type annotation to a function (3.14 form) and the code of each ``__annotate__``."""
+
+    dropped: set[int]
+    codes: list[CodeType]
+
+
+@dataclass(frozen=True)
+class _InlineAnnotations:
+    """The positions of the instructions that attach a type annotation to a function (form up to 3.13) and the ``MAKE_FUNCTION`` to count with the flag removed."""
+
+    dropped: set[int]
+    unflagged: dict[int, dis.Instruction]
+
+
+def _function_annotations(instructions: list[dis.Instruction]) -> _FunctionAnnotations:
     """List, from a sequence of instructions, the positions of the instructions that attach a type annotation to a function and the code of that ``__annotate__``.
 
     In 3.14, a function's annotations are placed before the construction of the function body as the instructions that make the annotation function (the instruction that pushes cells and makes a tuple if a closure is needed,
@@ -1258,7 +1274,7 @@ def _function_annotations(instructions: list[dis.Instruction]) -> tuple[set[int]
         dropped.update(range(start, end))
         dropped.add(attach)
         codes.append(instruction.argval)
-    return dropped, codes
+    return _FunctionAnnotations(dropped, codes)
 
 
 def _sets_attribute(instruction: dis.Instruction, flag: int) -> bool:
@@ -1318,7 +1334,7 @@ def _annotate_attachment(instructions: list[dis.Instruction], start: int) -> int
 
 def _inline_function_annotations(
     instructions: list[dis.Instruction],
-) -> tuple[set[int], dict[int, dis.Instruction]]:
+) -> _InlineAnnotations:
     """List, from a sequence of instructions, the positions of the instructions that attach a type annotation to a function in the form up to 3.13, and the ``MAKE_FUNCTION`` to be counted with the flag removed.
 
     Up to 3.13, a function's annotations are pushed alternately as a name (string constant) and an annotation expression, made into a tuple by ``BUILD_TUPLE``, and pushed before the function body code
@@ -1355,7 +1371,7 @@ def _inline_function_annotations(
             dropped.update(attach)
         else:
             unflagged[index] = instruction._replace(arg=flags & ~_ANNOTATIONS_ATTRIBUTE)
-    return dropped, unflagged
+    return _InlineAnnotations(dropped, unflagged)
 
 
 def _attribute_run(instructions: list[dis.Instruction], start: int) -> range:
@@ -1434,13 +1450,12 @@ class _Instructions:
             for instruction in dis.get_instructions(code, adaptive=False)
             if instruction.opname != "EXTENDED_ARG"
         ]
-        dropped, self._annotations = (
-            _function_annotations(listed) if drop_annotations else (set(), [])
-        )
-        inline, unflagged = _inline_function_annotations(listed) if drop_annotations else (set(), {})
-        dropped |= inline
+        found = _function_annotations(listed) if drop_annotations else _FunctionAnnotations(set(), [])
+        inline = _inline_function_annotations(listed) if drop_annotations else _InlineAnnotations(set(), {})
+        self._annotations = found.codes
+        dropped = found.dropped | inline.dropped
         self._kept = [
-            unflagged.get(index, instruction)
+            inline.unflagged.get(index, instruction)
             for index, instruction in enumerate(listed)
             if index not in dropped
         ]

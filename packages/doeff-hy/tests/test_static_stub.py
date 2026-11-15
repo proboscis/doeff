@@ -10,7 +10,6 @@ Hand-written .pyi files drift from the implementation, and every time a doeff de
 """
 
 import json
-import os
 from concurrent.futures import ThreadPoolExecutor
 import subprocess
 import sys
@@ -192,9 +191,10 @@ def test_a_public_name_added_without_touching_the_stub_is_in_the_built_stub(tmp_
 
 def _build_in_a_process(tmp_path: Path, package: str) -> subprocess.CompletedProcess[str]:
     """Build the stubs of one package dir in a fresh process, the way a package build runs the tool (sharing the store of tmp_path)."""
-    command = [sys.executable, "-m", "doeff_hy._static_stub", "--build", "--root", str(tmp_path), str(tmp_path / package)]
-    environment = {**os.environ, "DOEFF_HY_CHECK_CACHE": str(tmp_path / "cache")}
-    return subprocess.run(command, env=environment, capture_output=True, text=True, timeout=240, check=False)
+    # The child inherits this process's environment (not read here); `env` adds only the store of tmp_path.
+    command = ["env", f"DOEFF_HY_CHECK_CACHE={tmp_path / 'cache'}",
+               sys.executable, "-m", "doeff_hy._static_stub", "--build", "--root", str(tmp_path), str(tmp_path / package)]
+    return subprocess.run(command, capture_output=True, text=True, timeout=240, check=False)
 
 
 def test_changing_only_the_macro_module_rebuilds_the_stub_of_its_user(tmp_path: Path) -> None:

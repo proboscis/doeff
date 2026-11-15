@@ -757,6 +757,22 @@ class _Opaque(_Node):
         return {}
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _Counted:
+    """A value one defwire arm read, and the number of fields filled from the input (a union of two or more object-accepting arms chooses the arm with more -- pydantic smart union)."""
+
+    value: object
+    filled: int
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _WriterPart:
+    """The expression that spells one field in the function _WireNode._compile_writer builds, and the names the expression reads."""
+
+    expression: str
+    bindings: dict[str, object]
+
+
 @final
 class _WireField:
     """One field of a defwire type: Python name, wire name, checker, default (dataclasses.MISSING if none -- plus the default factory)."""
@@ -796,35 +812,40 @@ class _WireNode(_Node):
     """
 
     __slots__ = (
-        "_bare",
-        "_post_init",
-        "_reader",
-        "_reads",
-        "_reject",
-        "_texts",
-        "_values_of",
+        "_mut_bare",
+        "_mut_post_init",
+        "_mut_reader",
+        "_mut_reads",
+        "_mut_reject",
+        "_mut_texts",
+        "_mut_values_of",
+        "_mut_wires",
+        "_mut_writer",
+        "_mut_writes",
         "_whole",
-        "_wires",
-        "_writer",
-        "_writes",
         "description",
-        "fields",
+        "mut_fields",
         "wire_type",
     )
     kinds = frozenset({"object"})
 
+    @property
+    def fields(self) -> tuple[_WireField, ...]:
+        """The field checkers (installed by fill once building finishes -- mut_fields until then is empty)."""
+        return self.mut_fields
+
     def __init__(self, wire_type: type, whole: bool = False) -> None:
         super().__init__(wire_type.__name__)
         self.wire_type = wire_type
-        self.fields: tuple[_WireField, ...] = ()
+        self.mut_fields: tuple[_WireField, ...] = ()
         #: The defwire docstring (WireShape.description -- the type's __doc__ is the shared descriptor built from the field names, so the wire shape holds it); None for a table row.
         self.description: str | None = None
-        self._wires: frozenset[str] = frozenset()
-        self._reject = False
-        self._bare = False
-        self._post_init = None
+        self._mut_wires: frozenset[str] = frozenset()
+        self._mut_reject = False
+        self._mut_bare = False
+        self._mut_post_init = None
         #: Per field: (wire name, Python name, checker fast, whether it has no default, bare type, whether it accepts None, default, default factory).
-        self._reads: tuple[
+        self._mut_reads: tuple[
             tuple[
                 str,
                 str,
@@ -837,25 +858,25 @@ class _WireNode(_Node):
             ],
             ...,
         ] = ()
-        self._writes: tuple[tuple[str, Callable[[object, bool], _Json]], ...] = ()
+        self._mut_writes: tuple[tuple[str, Callable[[object, bool], _Json]], ...] = ()
         #: Per field: (head of the written field `"wire":`, checker text).
-        self._texts: tuple[tuple[str, Callable[[object], str]], ...] = ()
-        self._values_of: Callable[[object], tuple[object, ...]] | None = None
+        self._mut_texts: tuple[tuple[str, Callable[[object], str]], ...] = ()
+        self._mut_values_of: Callable[[object], tuple[object, ...]] | None = None
         #: Reader and writer with the fields fully unrolled (built on first use -- _compile_reader, _compile_writer).
-        self._reader: Callable[[Mapping[str, object], int], dict[str, object]] | None = None
-        self._writer: Callable[[object], str] | None = None
+        self._mut_reader: Callable[[Mapping[str, object], int], dict[str, object]] | None = None
+        self._mut_writer: Callable[[object], str] | None = None
         # whole = do not omit fields equal to their default when writing (the table-row image -- a row write is a per-field diff, so an omitted field would leave the previous value).
         self._whole = whole
 
     def fill(self, fields: tuple[_WireField, ...], reject: bool) -> None:
         """Install the field checkers after building finishes (a type cycle during building is watched by _BUILDING)."""
-        self.fields = fields
-        self._wires = frozenset(field.wire for field in fields)
-        self._reject = reject
+        self.mut_fields = fields
+        self._mut_wires = frozenset(field.wire for field in fields)
+        self._mut_reject = reject
         # Line up, once, what the fast path and the writer fetch per field (so a row does not do one attribute lookup per field).
         # For a (| T None) field, the field loop accepts None and other values call the T checker directly (skipping one level of the union checker -- same answer).
         bodies = [_nullable_body(field.node) for field in fields]
-        self._reads = tuple(
+        self._mut_reads = tuple(
             (
                 field.wire,
                 field.python,
@@ -871,25 +892,25 @@ class _WireNode(_Node):
         # Whether the fast path may create the type without going through the constructor: a type whose constructor was written by the defrecord expansion (the seal_record mark RECORD_PARAMS) and all fields are
         # constructor arguments -- that constructor places the fields in declaration order (absent fields get the default or the factory value) and only calls the :check __post_init__.
         owned = vars(self.wire_type)
-        self._bare = (
+        self._mut_bare = (
             owned.get("__dataclass_params__") is _RECORD_PARAMS
             and "__new__" not in owned
             and len(fields) == len(dataclasses.fields(self.wire_type))
         )
-        self._post_init: Callable[[object], None] | None = owned.get("__post_init__")
-        self._writes = tuple((field.wire, field.node.encode) for field in fields)
-        self._texts = tuple(
+        self._mut_post_init: Callable[[object], None] | None = owned.get("__post_init__")
+        self._mut_writes = tuple((field.wire, field.node.encode) for field in fields)
+        self._mut_texts = tuple(
             (_ENCODE_STRING(field.wire) + ":", (body or field.node).text)
             for field, body in zip(fields, bodies, strict=True)
         )
-        self._values_of = (
+        self._mut_values_of = (
             operator.attrgetter(*(field.python for field in fields)) if len(fields) > 1 else None
         )
 
     def decode(self, value: object) -> object:
-        return self.decode_counted(value)[0]
+        return self.decode_counted(value).value
 
-    def decode_counted(self, value: object) -> tuple[object, int]:
+    def decode_counted(self, value: object) -> _Counted:
         """The value, and the number of fields filled from the input (when two or more object-accepting arms of a union accept, the one with more is chosen -- pydantic smart union)."""
         if type(value) is not dict:
             raise _refuse("dataclass_type", "Input should be an object")
@@ -897,16 +918,16 @@ class _WireNode(_Node):
         # When a field is absent: if it has a default, do not pass it as an argument (the constructor fills the default); if not, it is missing.
         outcomes = [
             (field, _attempt(field.node, source[field.wire]) if field.wire in source else _MISSING)
-            for field in self.fields
+            for field in self.mut_fields
             if field.wire in source or field.required
         ]
         unknown: list[_Problem] = (
             [
                 ((key,), "unexpected_keyword_argument", "Unexpected keyword argument")
                 for key in source
-                if key not in self._wires
+                if key not in self._mut_wires
             ]
-            if self._reject and not self._wires.issuperset(source)
+            if self._mut_reject and not self._mut_wires.issuperset(source)
             else []
         )
         problems = [
@@ -915,7 +936,7 @@ class _WireNode(_Node):
         if problems:
             raise _RefusedError(problems)
         arguments = {field.python: outcome[1] for field, outcome in outcomes}
-        return self._built(arguments), len(arguments)
+        return _Counted(self._built(arguments), len(arguments))
 
     def _built(self, arguments: dict[str, object]) -> object:
         """Build the typed value from the field values (only ValueError and AssertionError from a failing :check are mapped to a rejection -- other exceptions are raised as they are)."""
@@ -928,27 +949,27 @@ class _WireNode(_Node):
 
     def fast(self, value: object, room: int) -> object:
         # The common shape (a json.loads dict that has all fields) is read without going through fast_counted (same answer as fast_counted).
-        if room and type(value) is dict and len(value) == len(self._reads) and self._wires.issuperset(value):
-            arguments = (self._reader or self._compile_reader())(value, room - 1)
-            return self._bare_built(arguments) if self._bare else self._built(arguments)
-        return self.fast_counted(value, room)[0]
+        if room and type(value) is dict and len(value) == len(self._mut_reads) and self._mut_wires.issuperset(value):
+            arguments = (self._mut_reader or self._compile_reader())(value, room - 1)
+            return self._bare_built(arguments) if self._mut_bare else self._built(arguments)
+        return self.fast_counted(value, room).value
 
-    def fast_counted(self, value: object, room: int) -> tuple[object, int]:
+    def fast_counted(self, value: object, room: int) -> _Counted:
         """decode_counted for the fast path. Only when all mapping keys are field wire names of this type and every field without a default is present, read without copying
         (unknown fields, missing fields, and numeric keys take the existing path -- how errors and discarding are judged lives in that one place)."""
-        if room and _is_mapping(value) and self._wires.issuperset(value):
+        if room and _is_mapping(value) and self._mut_wires.issuperset(value):
             inner = room - 1
-            if len(value) == len(self._reads):  # all fields are present (a table row writes all fields) -- read with the fully unrolled reader
-                reader = self._reader or self._compile_reader()
+            if len(value) == len(self._mut_reads):  # all fields are present (a table row writes all fields) -- read with the fully unrolled reader
+                reader = self._mut_reader or self._compile_reader()
                 arguments = reader(value, inner)
-                made = self._bare_built(arguments) if self._bare else self._built(arguments)
-                return made, len(arguments)
+                made = self._bare_built(arguments) if self._mut_bare else self._built(arguments)
+                return _Counted(made, len(arguments))
             arguments = {}
-            bare = self._bare
+            bare = self._mut_bare
             defaulted = 0
             # A field value of exactly the bare type (exact -- ASCII string, int, float, bool) and the None of a field that accepts None are accepted without calling the checker
             # (same answer as the checker's fast -- so a row does not call one function per field).
-            for wire, python, fast, required, exact, nullable, default, factory in self._reads:
+            for wire, python, fast, required, exact, nullable, default, factory in self._mut_reads:
                 if wire in value:
                     item = value[wire]
                     kind = type(item)
@@ -964,8 +985,8 @@ class _WireNode(_Node):
                     arguments[python] = default if factory is None else factory()
                     defaulted += 1
             if bare:
-                return self._bare_built(arguments), len(arguments) - defaulted
-            return self._built(arguments), len(arguments)
+                return _Counted(self._bare_built(arguments), len(arguments) - defaulted)
+            return _Counted(self._built(arguments), len(arguments))
         return self._fast_fallback(value, room)
 
     def _compile_reader(self) -> Callable[[Mapping[str, object], int], dict[str, object]]:
@@ -973,8 +994,8 @@ class _WireNode(_Node):
         building at the same time yield the same function). The answer is the same as the field loop below (per field: a value of exactly the bare type, and None for a field that accepts None, pass as they are; others go to the
         checker's fast). On this Python (3.14t), about 0.7 µs per field of the field loop took half the cost of one row, so, like dataclass building __init__, the source is built and exec'd
         (field names are made literal with repr, and checkers and types are passed in the namespace)."""
-        reads = self._reads
-        bodies = [_nullable_body(field.node) or field.node for field in self.fields]
+        reads = self._mut_reads
+        bodies = [_nullable_body(field.node) or field.node for field in self.mut_fields]
         arrays = {index: node for index, node in enumerate(bodies) if isinstance(node, _Array)}
         namespace: dict[str, object] = {
             **{f"f{index}": read[2] for index, read in enumerate(reads)},
@@ -995,7 +1016,7 @@ class _WireNode(_Node):
             Callable[[Mapping[str, object], int], dict[str, object]],
             _compiled(source, namespace, "read", self.wire_type),
         )
-        self._reader = reader
+        self._mut_reader = reader
         return reader
 
     @property
@@ -1005,34 +1026,34 @@ class _WireNode(_Node):
 
     def writer(self) -> Callable[[object], str]:
         """Fully unrolled function that writes a value of exactly this type to a JSON string (only for types that write all fields -- built on first use)."""
-        return self._writer or self._compile_writer()
+        return self._mut_writer or self._compile_writer()
 
     def _compile_writer(self) -> Callable[[object], str]:
         """Build and remember, as one fully unrolled function, the function that writes a value of a type that writes all fields (_whole) to a JSON string (same reason and construction as _compile_reader).
         The answer is the same as the field loop of text (a value of exactly str and None are spelled as they are; others use the checker's text)."""
-        texts = self._texts
+        texts = self._mut_texts
         count = len(texts)
         names = [f"v{index}" for index in range(count)]
         written = [
             _writer_part(index, _nullable_body(field.node) or field.node)
-            for index, field in enumerate(self.fields)
+            for index, field in enumerate(self.mut_fields)
         ]
         namespace: dict[str, object] = {
             "encode_string": _ENCODE_STRING,
             "int_text": int.__repr__,
-            "values_of": self._values_of,
-            "name0": self.fields[0].python if count else None,
+            "values_of": self._mut_values_of,
+            "name0": self.mut_fields[0].python if count else None,
             **{
                 f"h{index}": ("{" if index == 0 else ",") + head
                 for index, (head, _text) in enumerate(texts)
             },
             **{f"w{index}": text for index, (_head, text) in enumerate(texts)},
-            **{name: bound for _part, bindings in written for name, bound in bindings.items()},
+            **{name: bound for part in written for name, bound in part.bindings.items()},
         }
         parts = [
             part
-            for index, (expression, _bindings) in enumerate(written)
-            for part in (f"h{index}", expression)
+            for index, written_part in enumerate(written)
+            for part in (f"h{index}", written_part.expression)
         ]
         body = (
             ("    return '{}'",)
@@ -1044,7 +1065,7 @@ class _WireNode(_Node):
         )
         source = "\n".join(("def write(value):", *body))
         writer = cast(Callable[[object], str], _compiled(source, namespace, "write", self.wire_type))
-        self._writer = writer
+        self._mut_writer = writer
         return writer
 
     def _bare_built(self, arguments: dict[str, object]) -> object:
@@ -1053,7 +1074,7 @@ class _WireNode(_Node):
         -- 18 µs → 6 µs for one TurnRow). arguments are all fields in declaration order."""
         made = object.__new__(self.wire_type)
         object.__setattr__(made, "__dict__", arguments)
-        post_init = self._post_init
+        post_init = self._mut_post_init
         if post_init is not None:
             try:
                 post_init(made)
@@ -1063,7 +1084,7 @@ class _WireNode(_Node):
                 raise _refuse("assertion_error", f"Assertion failed, {error}") from None
         return made
 
-    def _fast_fallback(self, value: object, room: int) -> tuple[object, int]:
+    def _fast_fallback(self, value: object, room: int) -> _Counted:
         """Read an object that does not fit the fast-path forms by copying only that spot with _plain and reading it with decode_counted (same as _Node.fast)."""
         try:
             plain = _plain(value, room)
@@ -1076,21 +1097,21 @@ class _WireNode(_Node):
         # A field without a default is written even when None (null).
         if not isinstance(value, self.wire_type):
             return _inferred(value, raw)
-        values_of = self._values_of
+        values_of = self._mut_values_of
         if values_of is None:  # zero or one field (attrgetter returns a value, not a tuple, for a single name)
             items: tuple[object, ...] = tuple(
-                getattr(value, field.python) for field in self.fields
+                getattr(value, field.python) for field in self.mut_fields
             )
         else:
             items = values_of(value)
         if self._whole:
             return {
                 wire: encode(item, raw)
-                for (wire, encode), item in zip(self._writes, items, strict=True)
+                for (wire, encode), item in zip(self._mut_writes, items, strict=True)
             }
         return {
             wire: encode(item, raw)
-            for (wire, encode), field, item in zip(self._writes, self.fields, items, strict=True)
+            for (wire, encode), field, item in zip(self._mut_writes, self.mut_fields, items, strict=True)
             if not field.omits(item)
         }
 
@@ -1102,10 +1123,10 @@ class _WireNode(_Node):
             return _Node.text(self, value)
         if self._whole:
             return self.writer()(value)
-        values_of = self._values_of
+        values_of = self._mut_values_of
         if values_of is None:
             items: tuple[object, ...] = tuple(
-                getattr(value, field.python) for field in self.fields
+                getattr(value, field.python) for field in self.mut_fields
             )
         else:
             items = values_of(value)
@@ -1120,7 +1141,7 @@ class _WireNode(_Node):
                     if item is None
                     else text(item)
                 )
-                for (head, text), item in zip(self._texts, items, strict=True)
+                for (head, text), item in zip(self._mut_texts, items, strict=True)
             ]
         else:
             texts = [
@@ -1132,7 +1153,7 @@ class _WireNode(_Node):
                     if item is None
                     else text(item)
                 )
-                for (head, text), field, item in zip(self._texts, self.fields, items, strict=True)
+                for (head, text), field, item in zip(self._mut_texts, self.mut_fields, items, strict=True)
                 if not field.omits(item)
             ]
         return "{" + ",".join(texts) + "}"
@@ -1149,8 +1170,8 @@ class _WireNode(_Node):
     def definition(self, defs: "_Definitions") -> _Schema:
         """Object shape of this type (fields use wire names, required are fields without a default, :unknown :reject gives additionalProperties false, title is
         the type name, and the defwire docstring is the description -- tidied with inspect.cleandoc as pydantic does) -- the same shape as the current pydantic json_schema (section 3b)."""
-        properties: _Schema = {field.wire: _field_schema(field, defs) for field in self.fields}
-        required: list[_Json] = [field.wire for field in self.fields if field.required]
+        properties: _Schema = {field.wire: _field_schema(field, defs) for field in self.mut_fields}
+        required: list[_Json] = [field.wire for field in self.mut_fields if field.required]
         shape: _Schema = {
             "properties": properties,
             "title": self.wire_type.__name__,
@@ -1160,7 +1181,7 @@ class _WireNode(_Node):
             **({"description": inspect.cleandoc(self.description)} if self.description else {}),
             **shape,
             **({"required": required} if required else {}),
-            **({"additionalProperties": False} if self._reject else {}),
+            **({"additionalProperties": False} if self._mut_reject else {}),
         }
 
 
@@ -1230,18 +1251,18 @@ class _Union(_Node):
                 except _RefusedError:
                     continue
             return _NO_ARM
-        best: tuple[object, int] | None = None
+        best: _Counted | None = None
         for arm in self._by_kind["object"]:
             try:
                 if isinstance(arm, _WireNode):
                     counted = arm.decode_counted(value)
-                    if best is None or counted[1] > best[1]:
+                    if best is None or counted.filled > best.filled:
                         best = counted
                 else:
                     return arm.decode(value)
             except _RefusedError:
                 continue
-        return _NO_ARM if best is None else best[0]
+        return _NO_ARM if best is None else best.value
 
     def fast(self, value: object, room: int) -> object:
         # Arm choice is the same as decode (rules 1-4). If an arm rejects, go to the next arm (the content of the rejection is not read -- if all reject, Codec collects the
@@ -1273,7 +1294,7 @@ class _Union(_Node):
     def _fast_object(self, value: object, room: int) -> object:
         """Rule 3 of the fast path (arms that accept an object in declaration order -- a dict arm wins; for defwire arms, the one with more fields filled from the input. If none accepts,
         _NO_ARM).""" 
-        best: tuple[object, int] | None = None
+        best: _Counted | None = None
         for arm in self._by_kind["object"]:
             try:
                 if not isinstance(arm, _WireNode):
@@ -1281,9 +1302,9 @@ class _Union(_Node):
                 counted = arm.fast_counted(value, room)
             except _RefusedError:
                 continue
-            if best is None or counted[1] > best[1]:
+            if best is None or counted.filled > best.filled:
                 best = counted
-        return _NO_ARM if best is None else best[0]
+        return _NO_ARM if best is None else best.value
 
     def encode(self, value: object, raw: bool) -> _Json:
         # Choosing the arm to write is the same as the current pydantic: the exact-type arm in declaration order (strict); if none, the arm that can be rewritten in declaration order (lax -- a float arm also takes
@@ -1363,7 +1384,7 @@ def _compiled(
     return cast(Callable[..., object], namespace[name])
 
 
-def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
+def _writer_part(index: int, node: _Node) -> _WriterPart:
     """The expression that spells one field (value v<index>, checker node -- for (| T None), T) of the function that _WireNode._compile_writer builds, and the names the expression reads. Every expression
     gives the same answer as the checker's text (w<index>): a value of exactly str is that string, None is null (every checker writes it the same -- see the note on _WireNode.text),
     an exact int in an int field, a member in a defenum field, and a value of exactly the nested type in a field of a nested type that writes all fields are spelled without calling the checker."""
@@ -1373,14 +1394,14 @@ def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
         f" else w{index}({item})"
     )
     if node is _INT:
-        return f"(int_text({item}) if type({item}) is int else {rest})", {}
+        return _WriterPart(f"(int_text({item}) if type({item}) is int else {rest})", {})
     if isinstance(node, _Enum):
-        return (
+        return _WriterPart(
             f"(q{index}[{item}] if type({item}) is e{index} else {rest})",
             {f"q{index}": node.quoted, f"e{index}": node.enum_type},
         )
     if isinstance(node, _WireNode) and node.whole:
-        return (
+        return _WriterPart(
             f"(n{index}({item}) if type({item}) is c{index} else {rest})",
             {f"n{index}": node.writer(), f"c{index}": node.wire_type},
         )
@@ -1397,11 +1418,11 @@ def _writer_part(index: int, node: _Node) -> tuple[str, dict[str, object]]:
         else:
             each = f"encode_string(e) if type(e) is str else i{index}(e)"
             bindings = {f"i{index}": element.text}
-        return (
+        return _WriterPart(
             f"('[' + ','.join([{each} for e in {item}]) + ']' if {array} else {rest})",
             bindings,
         )
-    return f"({rest})", {}
+    return _WriterPart(f"({rest})", {})
 
 
 def _nullable_body(node: _Node) -> _Node | None:
