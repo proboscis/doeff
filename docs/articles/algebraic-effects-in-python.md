@@ -4,9 +4,9 @@ Algebraic effects in Python, with doeff, an open-source library whose core is wr
 
 This post stacks such handlers around one small program, one layer at a time; if you know what `yield` does, you know most of what you need.
 
-First, the idea of doeff in a minute: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
+First, the idea in a short video: what algebraic effects are, then how doeff writes them: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
 
-[![Video (1:04): what doeff is: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/aYGCqwXx0hk/maxresdefault.jpg)](https://youtu.be/aYGCqwXx0hk)
+[![Video (2:28): what algebraic effects are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/iIVO9eOcmZc/maxresdefault.jpg)](https://youtu.be/iIVO9eOcmZc)
 
 [The same video as an mp4 file (2:28)](../assets/videos/article-concept.mp4)
 
