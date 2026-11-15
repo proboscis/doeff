@@ -13,7 +13,9 @@
 ;;;                 runs the answer Program in its own run on a separate thread (asyncio.to_thread) and answers (probe-answer). It counts one ticket
 ;;;   Request ports A request matching the http-shortcuts of HttpListen (http-shortcut-for -- method and path, no ws Upgrade) whose body was read ahead in full (body reading below) has its
 ;;;                 answer run on the request ports' own thread (one worker -- answers run one at a time in the order the bodies were read, so an answer may read and replace a value
-;;;                 the previous answer placed) in its own run (http-shortcut-outcome). An HttpProbeAnswer is sent from the listener loop and the request never lines up; None (or a failure,
+;;;                 the previous answer placed) in its own run (http-shortcut-outcome). An HttpProbeAnswer is sent from the listener loop and the request never lines up; an
+;;;                 HttpShortcutCarried lines the request up as an already answered HttpRequestArrived carrying its value (no ticket wait, no body left to read) and sends its
+;;;                 answer from the listener loop without waiting for the main body; None (or a failure,
 ;;;                 announced in one line) lines the request up as before with the body read ahead still readable once. It counts one ticket
 ;;;   Listening     Stand up the aiohttp server on the listener loop (HttpListen). Assign a ticket to each request, line up the event
 ;;;                 HttpRequestArrived (containing the headers and the sender's address = request.remote) in the queue, wait for a command (with a ticket), and then fire the real I/O -- the caller only fires and does not wait, so
@@ -86,7 +88,8 @@
                                                 WS-REFUSAL-TEXT WS-CUT-REASON WsCloseFrame carries-content ws-refusal-status
                                                 send-overflows closing-of HttpProbe probe-for probe-answer
                                                 WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage
-                                                HttpProbeAnswer HttpShortcut HttpShortcutFailed http-shortcut-for http-shortcut-outcome])
+                                                HttpProbeAnswer HttpShortcut HttpShortcutCarried HttpShortcutFailed http-shortcut-for
+                                                http-shortcut-outcome])
 (import aiohttp.web_protocol [PayloadAccessError])
 (import doeff [run])
 
@@ -430,18 +433,32 @@
     (setv answer (await (asyncio.to-thread probe-answer probe)))
     (web.Response :status answer.status :body answer.body :headers (lfor header answer.headers #(header.name header.value))))
 
-  (defn :async #^ (| web.Response None) answer-shortcut [self #^ web.Request request #^ (| HttpBodyOutcome None) early]
-    "To answer one request on a request port without lining it up (header note): for a request matching a port whose body was read ahead in full, run answer on the ports' one worker
-     thread in its own run, and give the response to send for an HttpProbeAnswer. None = line the request up as before (no port matched, the body was not read ahead in full, the answer was
-     None, or it failed -- a failure is announced in one line)."
+  (defn #^ HttpRequestArrived arrival-of [self #^ str ticket #^ web.Request request #^ float received-at #^ object carried]
+    "To make the event of one request that lines up (carried = the value a request port handed to the main body -- None for a request the main body answers)."
+    (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
+                        :upgrade (upgrade-asked request)
+                        :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
+                        :received-at received-at
+                        :remote request.remote
+                        :carried carried))
+
+  (defn #^ web.Response shortcut-response [self #^ web.Request request #^ HttpProbeAnswer answer]
+    "To make the response a request port sends on the spot (the body of a HEAD, 1xx, 204 or 304 answer is not sent -- carries-content)."
+    (web.Response :status answer.status :body (if (run (carries-content request.method answer.status)) answer.body None)
+                  :headers (lfor header answer.headers #(header.name header.value))))
+
+  (defn :async #^ (| (get tuple #(web.Response object)) None) answer-shortcut [self #^ web.Request request #^ (| HttpBodyOutcome None) early]
+    "To answer one request on a request port without waiting for the main body (header note): for a request matching a port whose body was read ahead in full, run answer on the ports'
+     one worker thread in its own run, and give the response to send with the value to carry to the main body (None for an HttpProbeAnswer -- the request never lines up; the value of an
+     HttpShortcutCarried -- the request lines up already answered). None = line the request up as before (no port matched, the body was not read ahead in full, the answer was None, or it
+     failed -- a failure is announced in one line)."
     (setv shortcut (run (http-shortcut-for self.http-shortcuts request.method request.path (upgrade-asked request))))
     (when (or (is shortcut None) (not (isinstance early HttpBodyRead)))
       (return None))
     (setv outcome (await (.run-in-executor (asyncio.get-running-loop) self.shortcut-worker http-shortcut-outcome shortcut early.data)))
     (match outcome
-      (HttpProbeAnswer :status status :headers headers :body body)
-        (web.Response :status status :body (if (run (carries-content request.method status)) body None)
-                      :headers (lfor header headers #(header.name header.value)))
+      (HttpProbeAnswer) #((self.shortcut-response request outcome) None)
+      (HttpShortcutCarried :answer answer :carried carried) #((self.shortcut-response request answer) carried)
       (HttpShortcutFailed :reason reason)
         (do (relay-failed (.format "could not answer {} {} on the spot (lining it up for the main body): {}" request.method request.path reason))
             None)
@@ -491,18 +508,17 @@
     (setv early (await (self.prefetch ticket request)))
     (setv answered (await (self.answer-shortcut request early)))
     (when (is-not answered None)
-      ;; Answered on the spot by a request port: the request never lines up (no command will come for this ticket).
+      ;; Answered on the spot by a request port: no command will come for this ticket. A carried value lines the request up as already answered (no body to read).
       (.pop self.waiting ticket)
       (.discard self.oversized ticket)
-      (return answered))
+      (setv [response carried] answered)
+      (when (is-not carried None)
+        (.put self.arrivals (self.arrival-of ticket request received-at carried)))
+      (return response))
     (if (is early None)
         (setv (get self.unread ticket) request)
         (setv (get self.prefetched ticket) early))
-    (.put self.arrivals (HttpRequestArrived :ticket ticket :method request.method :path request.path :target request.raw-path
-                                            :upgrade (upgrade-asked request)
-                                            :headers (tuple (gfor [name value] (.items request.headers) (HttpHeader :name name :value value)))
-                                            :received-at received-at
-                                            :remote request.remote))
+    (.put self.arrivals (self.arrival-of ticket request received-at None))
     (setv [command unclaimed] (await waiting))
     ;; The body of a ticket that has received a command is no longer read (hand-over removed it at the tick of handing over). A ticket whose body was refused at the limit closes the connection after the answer is sent.
     (setv cut-off (in ticket self.oversized))
