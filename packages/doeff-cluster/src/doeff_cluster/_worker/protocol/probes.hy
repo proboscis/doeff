@@ -33,7 +33,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveProbes])
 (import doeff_cluster._worker.core.worker_rules [probe-refusal])
 (import doeff_cluster._worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-entry-place shim-argv])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix root-venv-path])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_cluster._worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
                                                probe-settle probe-command probe-step ProbeSettle ProbeStep])
@@ -89,6 +89,7 @@
   (var allowed #())
   (var root-place None)
   (var pycache None)
+  (var venv None)
   (when runtime-env
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read)
@@ -96,10 +97,12 @@
     (:= root-place found)
     ;; 検めの子も root の .pyc の置き場を子と同じく受ける(root の完成の印の pycachePrefix — 無ければ渡さない)。
     (<- placed (| str None) (root-pycache-prefix code-path))
-    (:= pycache placed))
+    (:= pycache placed)
+    (<- root-venv str (root-venv-path code-path))
+    (:= venv root-venv))
   (<- place (| str None) (child-entry-place runtime-env root-place))
   (val targets (tuple (dict.fromkeys (gfor spec specs target (probe-targets spec place) target))))
-  (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :layout settings.layout
+  (<- plan JobLaunch (probe-command code-path runtime-env targets :venv venv :hy-command settings.hy-command :layout settings.layout
                                     :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir
                                     :pycache-prefix pycache))
   (val runs-dir (+ settings.probe-dir "/runs"))

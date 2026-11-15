@@ -1,14 +1,14 @@
 ;;; 丁寧な模擬の fake の uv(test_env_careful.hy が PATH の先頭に置く sh の包みから起こす)。本物の準備の process(env_handlers の翻訳 env-translation)が呼ぶ 4 つの命令だけを模す:
 ;;;
 ;;;   uv sync --frozen --project P --python X --no-default-groups [--group g]… [--no-install-package n]…
-;;;       P/.venv を作る: bin/python は検の interpreter への symlink・bin/hy はその python の hy の入口の script、
+;;;       venv(本物の uv と同じく env UV_PROJECT_ENVIRONMENT が在ればそこ・無ければ P/.venv — project-venv)を作る: bin/python は検の interpreter への symlink・bin/hy はその python の hy の入口の script、
 ;;;       site-packages の .pth が検の環境の site-packages を足す
 ;;;       (doeff・hy・cloudpickle を本物のまま使う)。uv.lock の行(名==版)のうち cache に無い物を「download」と数えて log に書く。
 ;;;       行に ` fake-top=名` が在れば、その名の package を site-packages に置く(根の名前の影の反例)。
 ;;;   uv build --wheel --out-dir D S        S の中身のキーで保存先を引き、無い時だけ組んで log に build と書く(在れば build-stored)。
 ;;;                                          D に wheel を置き、env DOEFF_WHEEL_REPORT が在れば組んだかを 1 行の JSON で足す
 ;;;   uv pip install --no-deps --python PY W…   log に書くだけ
-;;;   uv run --no-sync --frozen --project P CMD ARGS…   P/.venv の python で CMD(hy / python)を exec する
+;;;   uv run --no-sync --frozen --project P CMD ARGS…   同じ venv の python で CMD(hy / python)を exec する
 ;;;
 ;;; 設定は包みが export する環境変数: FAKE_UV_PYTHON(検の interpreter)・FAKE_UV_SITE(検の環境の site-packages)・
 ;;; FAKE_UV_DIR(log・cache・失敗の指定の file を置く dir)。FAKE_UV_DIR/fail に kind(lock-stale・sync-failed・python-unavailable・
@@ -42,9 +42,17 @@
   (get args (+ (.index args flag) 1)))
 
 
+(defk project-venv [project]
+  {:pre [(: project Path)] :post [(: % Path)] :tags {:context "doeff-cluster-test" :role "foundation"}}
+  "本物の uv と同じ規則で project の venv の置き場を決めるため: env UV_PROJECT_ENVIRONMENT が在ればそこ(worker は root の直下の
+   venv を渡す — project の木の外)・無ければ <project>/.venv。"
+  (val given (os.environ.get "UV_PROJECT_ENVIRONMENT"))
+  (if given (Path given) (/ project ".venv")))
+
+
 (defk sync [args]
   {:pre [(: args list)] :post [(: % (type None))] :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "uv sync の代わり: P/.venv を作り、cache に無い lock の行を download と数えて log に書く。"
+  "uv sync の代わり: project の venv(project-venv)を作り、cache に無い lock の行を download と数えて log に書く。"
   (<- kind str (failure))
   (cond
     (= kind "lock-stale")
@@ -55,7 +63,7 @@
     (= kind "sync-failed")
       (do (print "error: Failed to build `broken==1.0`" :file sys.stderr) (sys.exit 1)))
   (val project (Path (! (option args "--project"))))
-  (val venv (/ project ".venv"))
+  (val venv (! (project-venv project)))
   (val real (os.path.realpath (get os.environ "FAKE_UV_PYTHON")))
   (val version (.format "{}.{}" sys.version-info.major sys.version-info.minor))
   (val abi (if (getattr sys "_is_gil_enabled" None) (if (sys._is-gil-enabled) "" "t") ""))
@@ -132,17 +140,18 @@
 (defk run-command [args]
   {:pre [(: args list)] :post [(: % "答えない — os.execve でこの process を CMD に置き換える")]
    :tags {:context "doeff-cluster-test" :role "foundation"}}
-  "uv run --project P CMD の代わり: P/.venv の python で CMD(hy / python)を exec する。"
+  "uv run --project P CMD の代わり: project の venv(project-venv)の python で CMD(hy / python)を exec する。"
   (val project (Path (! (option args "--project"))))
+  (val venv (! (project-venv project)))
   (val rest (cut args (+ (.index args "--project") 2) None))
-  (val python (str (/ project ".venv" "bin" "python")))
+  (val python (str (/ venv "bin" "python")))
   (val command (get rest 0))
   (val argv (cond (= command "hy") [python "-m" "hy" #* (cut rest 1 None)]
                   (= command "python") [python #* (cut rest 1 None)]
                   True rest))
   (<- (log-line (.format "run project={} command={}" project command)))
-  (val env (| (dict os.environ) {"VIRTUAL_ENV" (str (/ project ".venv"))
-                                 "PATH" (+ (str (/ project ".venv" "bin")) ":" (.get os.environ "PATH" ""))}))
+  (val env (| (dict os.environ) {"VIRTUAL_ENV" (str venv)
+                                 "PATH" (+ (str (/ venv "bin")) ":" (.get os.environ "PATH" ""))}))
   (os.execve python argv env))
 
 

@@ -49,7 +49,9 @@
    走り続ける(本物の入口 warm_child の読み込みの後の形)。"
   (val argv (list request.argv))
   (val ready (get argv (+ (.index argv "--ready") 1)))
-  (<- (WriteText ARGV-RECORD (json.dumps {"argv" argv "env" (sorted (gfor e (or request.env #()) e.name))}) :replace True))
+  (<- (WriteText ARGV-RECORD (json.dumps {"argv" argv "env" (sorted (gfor e (or request.env #()) e.name))
+                                          "uvProjectEnvironment" (next (gfor e (or request.env #()) :if (= e.name "UV_PROJECT_ENVIRONMENT") e.value) None)})
+                  :replace True))
   (<- (WriteText ready (json.dumps {"pid" 1 "threads" 1 "vmLive" [0 0 0]}) :replace True))
   (<- running ProcessOutcome (timed-out-outcome "" ""))
   running)
@@ -88,7 +90,9 @@
               "--root" "/roots/env-a" "--socket" "/tmp/doeff-warm-34cffbd0c0a40c52ba5ecfb6/sock" "--ready" "/state/warm/env-a/ready.json"
               "--preload" "app.jobs" "--preload" "app.models"])
           record)
-  (assert (= (get record "env") ["HOME" "PATH"]) record)
+  ;; uv には root の venv(印の無い root は project の木の外の <root>/.venv)を UV_PROJECT_ENVIRONMENT で渡す。
+  (assert (= #((get record "env") (get record "uvProjectEnvironment")) #(["HOME" "PATH" "UV_PROJECT_ENVIRONMENT"] "/roots/env-a/.venv"))
+          record)
   ;; 準備完了の印を読んだ観測(判断が準備済みに数える形)。
   (assert (= (tuple (gfor v ready #(v.key v.mark v.exit-code))) #(#("env-a" (WarmChildMark :threads 1 :vm-live #(0 0 0) :pid 1) None))) ready)
   ;; 止めた待ちの子は TERM で終わり、止めた訳が残る。
@@ -206,6 +210,19 @@
     (assert (= (get argv (+ (.index argv "-m") 1)) wanted) #(marker argv))))
 
 
+(deftest test-the-warm-child-uv-runs-on-the-root-venv-the-marker-names
+  ;; 待ちの子の uv run --project は、root の venv(project の木の外)を UV_PROJECT_ENVIRONMENT で受ける — 渡さないと uv は
+  ;; <project>/.venv を引く。venv は root の完成の印から読む: 今の印は欄 venv・欄の無い前の形の印は project の木の中の venv。
+  (val script (ProcessScript :commands #((ScriptedCommand :name "uv" :run warm-child-starts)) :env SCRIPT-ENV))
+  (for [#(marker wanted) #(#({"entryPlace" "doeff_cluster._worker.entry" "venv" ".venv"} "/roots/env-a/.venv")
+                           #({"env" {"project" {"repo" "app" "path" "."}}} "/roots/env-a/app/.venv"))]
+    (<- roots MemoryFiles (roots-with-marker marker))
+    (val record (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler roots) (scripted-process-handler script)
+                                     (warm-host SETTINGS)]
+                       (warm-lifecycle))))
+    (assert (= (get (get record 4) "uvProjectEnvironment") wanted) #(marker (get record 4)))))
+
+
 (defk bad-mark [commands request]
   {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "台本の uv: 印の file に印の形でない JSON を書いて走り続ける(読めない印の失敗ケースのため)。"
@@ -314,7 +331,7 @@
   (val env (run (with-handlers [(state) (sync-time-handler) slog-handler (memory-file-handler ROOTS) (scripted-process-handler script)
                                 (scripted-warm-process-handler warm) fork-recorded (process-host settings)]
                   (fork-env-of spec))))
-  (assert (= #((get env "PATH") (get env "VIRTUAL_ENV")) #("/roots/env-a/app/.venv/bin:/usr/bin" "/roots/env-a/app/.venv")) env)
+  (assert (= #((get env "PATH") (get env "VIRTUAL_ENV")) #("/roots/env-a/.venv/bin:/usr/bin" "/roots/env-a/.venv")) env)
   (assert (not-in "SECRET_TOKEN" env) env))
 
 

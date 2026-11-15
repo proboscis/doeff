@@ -8,7 +8,8 @@
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [CodeLayout WorkerPolicy])
-(import doeff_cluster._worker.core.launch [job-launch shim-argv uv-run-environ JobLaunch])
+(import doeff_cluster._worker.core.launch [job-launch shim-argv uv-run-environ venv-of-marker JobLaunch])
+(import doeff_cluster._shared.core.runtime_env [root-venv])
 (import doeff_cluster [shim-spans]
         doeff_cluster._worker.core.shim_timing [ShimSpans])
 
@@ -20,7 +21,7 @@
   (val spec (JobSpec "svc" "app.main" #("service") "rev1" :environ #(#("MODE" "fast"))))
   ;; shim の猶予は本番の方針から導いた値(数を検に写さない — #2940)。
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {"DOEFF_WORKER_NAME" "w1"}
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :venv None :python "/py" :hy-command "/bin/hy" :extra-env {"DOEFF_WORKER_NAME" "w1"}
                                  :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
                                  :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (val env (dfor e plan.env e.name e.value))
@@ -42,7 +43,7 @@
 (deftest test-a-runtime-env-job-inherits-only-the-allowed-worker-environment
   (val spec (JobSpec "task/t1" "doeff_cluster._worker.entry.job_entry" #("task") "rev1" :runtime-env RUNTIME :env-key "k1"))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {}
+  (<- plan JobLaunch (job-launch spec "/roots/env-k1" "1-abc" 1 :entry spec.entry :venv "/roots/env-k1/.venv" :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path "/state/programs/s.json"
                                  :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/task_t1" :shim-grace-ms shim.shim-grace-ms
                                  :notice-env "DOEFF_NOTICE_FD"))
@@ -50,12 +51,12 @@
   ;; 許可表の名と LC_* だけを継ぎ、資格を運びうる名・PYTHONPATH は置かない。宣言の env-vars と Program の file を足し、root の venv の 2 つ
   ;; (PATH の頭・VIRTUAL_ENV — uv run が足していた物)を足す(worker の VIRTUAL_ENV は継がない)。
   (assert (= #((get env "PATH") (get env "VIRTUAL_ENV") (get env "LC_ALL") (get env "DECLARED") (get env "DOEFF_PROGRAM_FILE"))
-             #("/roots/env-k1/app/.venv/bin:/usr/bin" "/roots/env-k1/app/.venv" "C.UTF-8" "1" "/state/programs/s.json")) env)
+             #("/roots/env-k1/.venv/bin:/usr/bin" "/roots/env-k1/.venv" "C.UTF-8" "1" "/state/programs/s.json")) env)
   (assert (not (& (set env) #{"SECRET_TOKEN" "PYTHONPATH"})) env)
   (assert (= plan.env-mode EnvMode.REPLACE) plan.env-mode)
   (assert (= (cut plan.argv 5 9) #("--stamp-lines" "--notice-env" "DOEFF_NOTICE_FD" "--")) plan.argv)
-  ;; 本体は uv run を挟まずに root の venv の hy を直に起こす。
-  (assert (= (cut plan.argv 9 None) #("/roots/env-k1/app/.venv/bin/hy" "-m" "doeff_cluster._worker.entry.job_entry"
+  ;; 本体は uv run を挟まずに root の venv(project の木の外 — 呼び手が完成の印から読んで渡す)の hy を直に起こす。
+  (assert (= (cut plan.argv 9 None) #("/roots/env-k1/.venv/bin/hy" "-m" "doeff_cluster._worker.entry.job_entry"
                                       "task" "--program" "/state/programs/s.json")) plan.argv)
   (assert (= #(plan.cwd plan.work-dir plan.last-used) #("/jobs/task_t1" "/jobs/task_t1" "/roots/env-k1/.last-used")) plan)
   ;; 環境変数は名の順(StartProcess の env にそのまま渡せる形)。
@@ -69,20 +70,38 @@
   ;; 木の job は待ちの子から分けない(warm_rules.forks-from-warm-child)ので、分ける道の環境を持たない。
   (val spec (JobSpec "task/t2" "app.main" #("task") "rev1" :once True))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {}
+  (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :venv None :python "/py" :hy-command "/bin/hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env BASE :worker-pid 42 :program-path None :program-env "DOEFF_PROGRAM_FILE"
                                  :work-dir "/jobs/task_t2" :shim-grace-ms shim.shim-grace-ms :notice-env "DOEFF_NOTICE_FD"))
   (assert (= plan.entry-env #()) plan.entry-env))
 
 
-(deftest test-uv-run-environ-puts-the-project-venv-at-the-head-like-uv
-  ;; uv の足し方(本物の uv との突き合わせは tests/test_task_venv_on_both_paths.hy): --project の path を字面で正規化し(末尾の / と
-  ;; . を落とす・symlink は解かない)、PATH の頭に venv の bin を足す。PATH が無ければ bin だけ。他の名と、在った VIRTUAL_ENV は venv で上書き。
-  (<- with-path dict (uv-run-environ "/roots/env-k1/app/./" {"PATH" "/boot/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/boot/.venv" "HOME" "/home/w"}))
-  (assert (= with-path {"PATH" "/roots/env-k1/app/.venv/bin:/boot/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/roots/env-k1/app/.venv" "HOME" "/home/w"})
+(deftest test-uv-run-environ-puts-the-root-venv-at-the-head-like-uv
+  ;; uv の足し方(本物の uv との突き合わせは tests/test_task_venv_on_both_paths.hy): PATH の頭に root の venv の bin を足す。PATH が
+  ;; 無ければ bin だけ。他の名と、在った VIRTUAL_ENV は venv で上書き。root の venv の path は root を字面で正規化する(末尾の / と . を
+  ;; 落とす・symlink は解かない — runtime_env.root-venv)。
+  (<- venv str (root-venv "/roots/env-k1/./"))
+  (assert (= venv "/roots/env-k1/.venv") venv)
+  (<- with-path dict (uv-run-environ venv {"PATH" "/boot/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/boot/.venv" "HOME" "/home/w"}))
+  (assert (= with-path {"PATH" "/roots/env-k1/.venv/bin:/boot/.venv/bin:/usr/bin" "VIRTUAL_ENV" "/roots/env-k1/.venv" "HOME" "/home/w"})
           with-path)
-  (<- without-path dict (uv-run-environ "/roots/env-k1/app" {"HOME" "/home/w"}))
-  (assert (= without-path {"PATH" "/roots/env-k1/app/.venv/bin" "VIRTUAL_ENV" "/roots/env-k1/app/.venv" "HOME" "/home/w"}) without-path))
+  (<- without-path dict (uv-run-environ venv {"HOME" "/home/w"}))
+  (assert (= without-path {"PATH" "/roots/env-k1/.venv/bin" "VIRTUAL_ENV" "/roots/env-k1/.venv" "HOME" "/home/w"}) without-path))
+
+
+(deftest test-the-root-venv-is-read-from-the-marker-and-an-old-root-keeps-its-venv-in-the-tree
+  ;; 子・待ちの子・入口の検めが引く venv は root の完成の印から読む: 今の準備の印(欄 venv)は project の木の外の <root>/.venv・欄の無い
+  ;; 前の形の印は印の宣言の project の木の中の venv(次の掃除で消えるまで使う)・印の読めない root は木の外の venv。
+  (val declared {"project" {"repo" "app" "path" "svc"}})
+  (val rows
+    #(#("今の印" (json.dumps {"env" declared "venv" ".venv"}) "/roots/env-k1/.venv")
+      #("前の形の印(欄 venv が無い)" (json.dumps {"env" declared}) "/roots/env-k1/app/svc/.venv")
+      #("前の形の印(project の path が .)" (json.dumps {"env" {"project" {"repo" "app" "path" "."}}}) "/roots/env-k1/app/.venv")
+      #("印が無い" None "/roots/env-k1/.venv")
+      #("印が壊れている" "{" "/roots/env-k1/.venv")))
+  (for [#(label text expected) rows]
+    (<- venv str (venv-of-marker "/roots/env-k1" text))
+    (assert (= venv expected) #(label venv))))
 
 
 (deftest test-the-job-log-is-stamped-and-the-probe-output-is-carried-as-is
@@ -105,7 +124,7 @@
       #("recreate の service" service #())
       #("寿命つきの handoff の task" (replace service :handoff True :retired-ms 18000000 :once True) #())))
   (for [#(label spec expected) rows]
-    (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :python "/py" :hy-command "/bin/hy" :extra-env {}
+    (<- plan JobLaunch (job-launch spec "/cache/rev1" "1-abc" 1 :entry spec.entry :venv None :python "/py" :hy-command "/bin/hy" :extra-env {}
                                    :layout (CodeLayout) :allowed-env {} :worker-pid 42 :program-path None
                                    :program-env "DOEFF_PROGRAM_FILE" :work-dir "/jobs/svc" :shim-grace-ms shim.shim-grace-ms
                                    :notice-env "DOEFF_NOTICE_FD"))

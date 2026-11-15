@@ -171,11 +171,11 @@
   (assert (= #(ready.downloaded ready.built) #(3 1)))
   (assert (>= (- ended started) 120.0) "冷たい sync と build でそれぞれ 60 秒(仮想の時間)")
   ;; bytecode を作った interpreter は root の venv の物(マーカーで読める)
-  (assert (= ready.interpreter (.format "{}/app/.venv/bin/python" ready.root)))
+  (assert (= ready.interpreter (.format "{}/.venv/bin/python" ready.root)))
   (<- files dict (files-under ready.root))
   (assert (in (.format "{}/app/uv.lock" ready.root) files))
   (assert (in (.format "{}/lib/native/core/lib.rs" ready.root) files))
-  (assert (= (get files (.format "{}/app/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" ready.root)))
+  (assert (= (get files (.format "{}/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" ready.root)))
   (val marker (json.loads (get files (.format "{}/{}" ready.root ENV-MARKER))))
   (assert (= (get marker "key") ready.key))
   (assert (= (get marker "interpreter") ready.interpreter))
@@ -317,7 +317,7 @@
   (<- ready (prepare env #()))
   (assert (isinstance ready EnvReady) ready)
   (<- files dict (files-under ready.root))
-  (val site (.format "{}/app/.venv/lib/python3.14/site-packages" ready.root))
+  (val site (.format "{}/.venv/lib/python3.14/site-packages" ready.root))
   (val unbaked (lfor top ["httpx" "hy" "click"]
                      :if (not-in (.format "{}/{}/__pycache__/__init__.cpython-314.pyc" site top) files)
                      top))
@@ -356,7 +356,7 @@
   ;; 本物の handler の読み: uv が editable の package ごとに置く .pth(dir の絶対 path 1 行)のうち root の中の dir だけ・import の根の
   ;; .pth と import の行と root の外の dir は除く。
   (val root (/ tmp-path "root"))
-  (val site (/ root "app" ".venv" "lib" "python3.14" "site-packages"))
+  (val site (/ root ".venv" "lib" "python3.14" "site-packages"))
   (for [d ["lib" "lib/packages/core/src" "app"]] (.mkdir (/ root d) :parents True :exist-ok True))
   (.mkdir site :parents True)
   (.mkdir (/ tmp-path "outside"))
@@ -492,7 +492,7 @@
   (<- files dict (files-under second.root))
   (assert (= (get files (.format "{}/app/app/__init__.py" second.root)) "V = 2\n"))
   (assert (not (any (gfor p files (and (in "/.venv/wheels/" p) (in first.root p))))) "写しは元の root の venv を持ち越さない")
-  (assert (in (.format "{}/app/.venv/bin/python" second.root) files) "venv は新しい root の下に在る")
+  (assert (in (.format "{}/.venv/bin/python" second.root) files) "venv は新しい root の下に在る")
   (assert (not (any (gfor #(p text) (.items files) (and (in "/.venv/" p) (.endswith p ".pth") (in first.root text)))))
           #("写した venv の .pth は前の root の path を持たない(.pth は新しい root を指す)" (lfor #(p text) (.items files) :if (and (in "/.venv/" p) (.endswith p ".pth") (in first.root text)) #(p text))))
   True)
@@ -520,8 +520,8 @@
   (assert (= (- after.syncs before.syncs) 0) "venv を写すので sync しない")
   (<- files dict (files-under second.root))
   (<- earlier dict (files-under first.root))
-  (val site (.format "{}/app/.venv/lib/python3.14/site-packages" second.root))
-  (val old-site (.format "{}/app/.venv/lib/python3.14/site-packages" first.root))
+  (val site (.format "{}/.venv/lib/python3.14/site-packages" second.root))
+  (val old-site (.format "{}/.venv/lib/python3.14/site-packages" first.root))
   (assert (= (get files (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) files)
   (assert (= (get files (+ site "/_editable_impl_lib_extra.pth")) (.format "{}/lib/extra/src" second.root)))
   (assert (= (get files (+ site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" second.root)))
@@ -531,6 +531,57 @@
   (<- left dict (files-under second.root))
   (assert (= (get left (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) "前の root を消しても写した venv は残る")
   True)
+
+
+(defk venv-moved-into-tree [ready]
+  {:pre [(: ready EnvReady)] :post [(: % None)]}
+  "完成した root を、venv を木の外へ移す前の形(venv が project の木の中の <root>/app/.venv)に作り直すため: venv の file を木の中へ写し、
+   中身の venv の path も木の中の path に替え、bin に venv の python を頭に書いた script を 1 つ足し、木の外の venv を消す。"
+  (val outside (.format "{}/.venv" ready.root))
+  (val inside (.format "{}/app/.venv" ready.root))
+  (<- files dict (files-under (+ outside "/")))
+  (for [#(path text) (.items (| files {(+ outside "/bin/hy") (.format "#!{}/bin/python\nimport hy\n" outside)}))]
+    (<- (WriteText (+ inside (cut path (len outside) None)) (.replace text (+ outside "/") (+ inside "/")))))
+  (<- (RemoveTree outside))
+  None)
+
+
+(defk old-form-venv-scenario []
+  {:pre [] :post [(: % bool)]}
+  "venv が project の木の中に在る前の形の完成済みの root(次の掃除で消えるまで残る)から、project の commit だけ変えた root を準備する:
+   venv は前の形の root の木の中から写して使い回し(sync しない)、新しい root では project の木の外の <root>/.venv に置く。写した file の
+   venv の path は木の外の venv を、root の path は新しい root を指す(写し元の venv の path → 新しい venv・写し元の root → 新しい root の
+   2 段の書き換え)。"
+  (<- first EnvReady (prepare-app "app-editable" "lib-1" #() EDITABLE-LOCK))
+  (<- (venv-moved-into-tree first))
+  (<- before EnvWorldLog (read-world-log))
+  (<- known tuple (known-of first))
+  (<- second (prepare-app "app-editable-2" "lib-1" known EDITABLE-LOCK))
+  (<- after EnvWorldLog (read-world-log))
+  (assert (isinstance second EnvReady) second)
+  (assert (= (- after.syncs before.syncs) 0) "前の形の root の木の中の venv を写すので sync しない")
+  (<- files dict (files-under second.root))
+  (val site (.format "{}/.venv/lib/python3.14/site-packages" second.root))
+  (assert (= (get files (.format "{}/.venv/bin/hy" second.root)) (.format "#!{}/.venv/bin/python\nimport hy\n" second.root))
+          "bin の script の頭は新しい root の木の外の venv の python")
+  (assert (= (get files (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) "editable の .pth は新しい root の木")
+  (assert (= (get files (+ site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" second.root)))
+  (assert (not (any (gfor p files (in "/app/.venv/" p)))) "新しい root の project の木の下に venv を置かない")
+  (val copied (dfor #(p text) (.items files) :if (.startswith p (.format "{}/.venv/" second.root)) p text))
+  (assert (not (any (gfor text (.values copied) (or (in (+ first.root "/") text) (in "/app/.venv/" text)))))
+          #("写した venv の file は前の root の path も木の中の venv の path も持たない"
+            (lfor #(p text) (.items copied) :if (or (in (+ first.root "/") text) (in "/app/.venv/" text)) p)))
+  True)
+
+
+(deftest test-a-root-whose-venv-is-in-the-tree-still-lends-its-venv
+  (<- world EnvWorld (base-world))
+  (<- a1 WorldCommit (app-commit "app-editable" EDITABLE-LOCK "V = 5\n"))
+  (<- a2 WorldCommit (app-commit "app-editable-2" EDITABLE-LOCK "V = 6\n"))
+  (<- ok bool (run-in-world (replace world :remotes (tuple (gfor r world.remotes
+                                                                 (if (= r.url APP-URL) (replace r :commits (+ r.commits #(a1 a2))) r))))
+                            (old-form-venv-scenario)))
+  (assert ok))
 
 
 (deftest test-a-commit-only-change-reuses-the-venv-with-paths-rewritten
@@ -1083,7 +1134,7 @@
   (<- files dict (files-under ready.root))
   (for [name ["app" "lib" "tools"]]
     (assert (any (gfor p files (.startswith p (.format "{}/{}/" ready.root name)))) name))
-  (assert (= (get files (.format "{}/app/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH))
+  (assert (= (get files (.format "{}/.venv/lib/python3.14/site-packages/{}" ready.root ROOTS-PTH))
              (.format "{0}/tools/src\n{0}/app\n{0}/lib\n" ready.root)))
   True)
 

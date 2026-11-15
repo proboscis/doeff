@@ -68,7 +68,7 @@
   "木の束の検めの本体を worker の起こし方(probe-command の木の道 — worker の hy・木の PYTHONPATH・cwd = 木)で撃ち、対象ごとの結果を
    返すため(木 = この package の根 — 検の app と同じく doeff_cluster を持たない木で、子は worker の venv の doeff を解く)。shim は
    挟まない(shim の下の起こしは検め全体の検 test_entry_probe の側)。"
-  (val plan (! (probe-command (str PACKAGE-ROOT) None targets :hy-command HY :layout (CodeLayout) :allowed-env {}
+  (val plan (! (probe-command (str PACKAGE-ROOT) None targets :venv None :hy-command HY :layout (CodeLayout) :allowed-env {}
                               :probe-dir (str PACKAGE-ROOT))))
   (val done (subprocess.run (list plan.argv) :cwd plan.cwd :capture-output True :text True :timeout 120
                             :env (| (dict os.environ) (dfor e plan.env e.name e.value))))

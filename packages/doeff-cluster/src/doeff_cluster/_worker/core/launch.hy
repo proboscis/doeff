@@ -15,6 +15,7 @@
 (import doeff_cluster._shared.intent.job_model [JobSpec CHILD-ENTRY-PLACES LEGACY-ENTRY-PLACE])
 (import doeff_cluster._shared.intent.runtime_env_model [WITHHELD-ENV-NAMES])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout])
+(import doeff_cluster._shared.core.runtime_env [root-venv ROOT-VENV])
 
 
 (defk entry-place-of-marker [text]
@@ -114,29 +115,37 @@
       (.format "{}/{}/{}" root (get project "repo") (get project "path"))))
 
 
-(defk project-venv [project-dir]
-  {:pre [(: project-dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
-  "実行環境の root の project の venv の path を 1 か所で決めるため: <project-dir>/.venv — uv が --project の path を symlink を解かずに
-   字面で正規化して置く所と同じ(uv sync が作る — tests/test_task_venv_on_both_paths.hy が本物の uv で確かめる)。"
-  (posixpath.join (posixpath.normpath project-dir) ".venv"))
+(defk venv-of-marker [root text]
+  {:pre [(: root str) (: text (| str None))] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "root の完成の印の中身 text(None = 印が無い・読めない)から、子・待ちの子・入口の検めが引く root の venv の path を読むため。準備が
+   欄 venv に書いた root からの相対 path(今の準備は project の木の外の .venv — runtime_env.root-venv)。欄の無い印は venv を木の外へ移す
+   前の worker が準備した root なので、印の宣言の project の木の中の venv(<project の dir>/.venv — 次の掃除で消えるまで使う)。
+   印の読めない root は木の外の venv(準備の済んでいない root で、子はどの path でも venv を見つけられずに落ちる)。"
+  (val marker (if (is text None) None (try (json.loads text) (except [ValueError] None))))
+  (val declared (if (isinstance marker dict) (.get marker "env") None))
+  (cond
+    (and (isinstance marker dict) (isinstance (.get marker "venv") str))
+      (posixpath.join (posixpath.normpath root) (get marker "venv"))
+    (and (isinstance declared dict) (isinstance (.get declared "project") dict))
+      (do (<- project-dir str (env-project-dir root declared))
+          (posixpath.join (posixpath.normpath project-dir) ROOT-VENV))
+    True (! (root-venv root))))
 
 
-(defk project-hy [project-dir]
-  {:pre [(: project-dir str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+(defk project-hy [venv]
+  {:pre [(: venv str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "実行環境の job と入口の検めの本体を起こす hy(root の venv の bin/hy — uv sync が置く入口の script)を決めるため。uv run を挟まずに
-   この path を直に起こす(uv run は子を spawn して待つだけで 1 本 6 MB を持っていた)。"
-  (<- venv str (project-venv project-dir))
+   この path を直に起こす(uv run は子を spawn して待つだけで 1 本 6 MB を持っていた)。venv = root の venv の path(venv-of-marker)。"
   (posixpath.join venv "bin" "hy"))
 
 
-(defk uv-run-environ [project-dir env]
-  {:pre [(: project-dir str) (: env (get dict #(str str)))] :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
-  "`uv run --project <project-dir>` が子へ渡していた環境を、渡した env から導くため: project の venv
-   (project-venv)の bin を PATH の頭に足し(PATH が無ければ bin だけ)、VIRTUAL_ENV にその venv を置く。実行環境の job は shim の下の
-   道も待ちの子から分ける道も uv を通らない(shim の下は root の venv の hy を直に起こす)ので、job-launch と
+(defk uv-run-environ [venv env]
+  {:pre [(: venv str) (: env (get dict #(str str)))] :post [(: % (get dict #(str str)))] :tags {:context "worker" :role "judgment"}}
+  "`uv run --project <project の dir>`(UV_PROJECT_ENVIRONMENT = root の venv)が子へ渡していた環境を、渡した env から導くため: root の
+   venv(venv — venv-of-marker)の bin を PATH の頭に足し(PATH が無ければ bin だけ)、VIRTUAL_ENV にその venv を置く。実行環境の job は
+   shim の下の道も待ちの子から分ける道も uv を通らない(shim の下は root の venv の hy を直に起こす)ので、job-launch と
    probe-command がこの関数で 2 つを足した環境を子に置く — 名で hy・python を起こす task が、どの道でも同じ root の venv を引く。
    uv の足し方と字面が合う事は tests/test_task_venv_on_both_paths.hy が本物の uv で確かめる。"
-  (<- venv str (project-venv project-dir))
   (val bin (posixpath.join venv "bin"))
   (val path (.get env "PATH" ""))
   (| env {"PATH" (if path (+ bin ":" path) bin) "VIRTUAL_ENV" venv}))
@@ -235,9 +244,9 @@
   (setv #^ (get tuple #(EnvEntry ...)) entry-env #()))
 
 
-(defk job-launch [spec code-path instance attempt * entry python hy-command extra-env layout allowed-env worker-pid program-path program-env work-dir
+(defk job-launch [spec code-path instance attempt * entry venv python hy-command extra-env layout allowed-env worker-pid program-path program-env work-dir
                   shim-grace-ms notice-env [pycache-prefix None]]
-  {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: entry str) (: python str) (: hy-command str)
+  {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: entry str) (: venv (| str None)) (: python str) (: hy-command str)
          (: extra-env dict) (: layout CodeLayout) (: allowed-env dict) (: worker-pid int) (: program-path (| str None)) (: program-env str) (: work-dir str)
          (: shim-grace-ms int) (: notice-env str) (: pycache-prefix (| str None))]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
@@ -252,7 +261,8 @@
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
    fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。
    entry = `-m` へ渡す子の入口の名(spec.entry-at を child-entry-place の置き場で — 実行環境の job は root の完成の印の置き場・
-   木の job は WORKER-ENTRY-PLACE。呼び手が選ぶ)。pycache-prefix = root の .pyc の置き場(実行環境の job だけ — 呼び手が root の完成の印から
+   木の job は WORKER-ENTRY-PLACE。呼び手が選ぶ)。venv = 実行環境の job の root の venv の path(呼び手が root の完成の印から
+   venv-of-marker で読む — 木の job は読まず None)。pycache-prefix = root の .pyc の置き場(実行環境の job だけ — 呼び手が root の完成の印から
    読む env_store の root-pycache-prefix・None = 置き場を使わない root)— 在れば入口の環境に PYTHONPYCACHEPREFIX で足す(pycache-environ)。"
   (<- context dict (process-context-environ spec instance attempt))
   (val worker-env (| context {"DOEFF_WORKER_PID" (str worker-pid)}
@@ -270,11 +280,11 @@
       (do (val declared (json.loads spec.runtime-env))
           (<- child-env dict (child-environment allowed-env extra-env (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
                                                 worker-env))
-          (<- project-dir str (env-project-dir code-path declared))
-          (<- venv-env dict (uv-run-environ project-dir child-env))
+          (when (is venv None)
+            (raise (ValueError (.format "実行環境の job {} の root {} の venv の path が渡されていない" spec.name code-path))))
+          (<- venv-env dict (uv-run-environ venv child-env))
           (<- entry-env dict (pycache-environ venv-env pycache-prefix))
-
-          (<- root-hy str (project-hy project-dir))
+          (<- root-hy str (project-hy venv))
           (val entry-entries (tuple (gfor k (sorted entry-env) (EnvEntry :name k :value (get entry-env k)))))
           (JobLaunch :argv (+ shim #(root-hy "-m" entry) spec.args program-args)
                      :cwd work-dir

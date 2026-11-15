@@ -330,45 +330,50 @@
 
 
 (defclass [(dataclass :frozen True)] SyncProject [EffectBase]
-  "project の依存を lock どおりに venv へ入れる(no-install = wheel で後から入れる package)。
-   答え = SyncReport か EnvFailure(sync-failed・python-unavailable — lock-stale は --frozen の準備では出ない・#2730)。"
+  "project の依存を lock どおりに venv へ入れる(venv = root の venv の path — project の木の外・runtime_env.root-venv・no-install = wheel で
+   後から入れる package)。答え = SyncReport か EnvFailure(sync-failed・python-unavailable — lock-stale は --frozen の準備では出ない・#2730)。"
   (#^ str project-dir)
+  (#^ str venv)
   (#^ str python)
   (#^ tuple groups)
   (#^ tuple no-install))
 
 
 (defclass [(dataclass :frozen True)] InstallWheels [EffectBase]
-  "wheel を依存なしで venv へ入れる。答え = None か EnvFailure(sync-failed)。"
+  "wheel を依存なしで venv(root の venv の path)へ入れる。答え = None か EnvFailure(sync-failed)。"
   (#^ str project-dir)
+  (#^ str venv)
   (#^ tuple wheels))
 
 
 (defclass [(dataclass :frozen True)] WriteImportRoots [EffectBase]
-  "venv の site-packages に import の根の .pth を置く(roots = 絶対 path・宣言の順)。答え = None。"
-  (#^ str project-dir)
+  "venv(root の venv の path)の site-packages に import の根の .pth を置く(roots = 絶対 path・宣言の順)。答え = None。"
+  (#^ str venv)
   (#^ tuple roots))
 
 
 (defclass [(dataclass :frozen True)] ReadEditableRoots [EffectBase]
-  "project の venv に editable で入る package の dir のうち、root の中に在る物(2026-09-27)。答え = root からの相対 path
+  "root の venv(venv の path)に editable で入る package の dir のうち、root の中に在る物(2026-09-27)。答え = root からの相対 path
    \"<repo の名>/<repo の中の相対の dir>\"(repo の根そのものは \"<repo の名>\")の tuple(venv の .pth の名の順・import の根の .pth は除く)。"
-  (#^ str project-dir)
+  (#^ str venv)
   (#^ str root))
 
 
 (defclass [(dataclass :frozen True)] ReadHyVersion [EffectBase]
   "project の venv に入った Hy の compiler の版(site-packages の hy の dist-info の名から読む — Hy の .pyc は compiler の版が同じ時だけ
-   引き継げるので、bytecode の引き継ぎ元の候補を比べるため・#3706)。答え = 版の str か None(venv に site-packages か Hy が無い)。"
-  (#^ str project-dir))
+   引き継げるので、bytecode の引き継ぎ元の候補を比べるため・#3706 — venv = root の venv の path)。答え = 版の str か None(venv に
+   site-packages か Hy が無い)。"
+  (#^ str venv))
 
 
 (defclass [(dataclass :frozen True)] CompileTrees [EffectBase]
   "焼く根を持つ repo の木の全部の bytecode を、root の venv の interpreter で 1 回の焼きで作る(project-dir = その venv の project・
+   venv = root の venv の path・
    trees = BytecodeTree の列・entries = 焼く範囲の入口の module — 全部の木に共通で、import を木をまたいで辿った閉包だけを焼く・空 = 全部の
    木の根の下を全部 — 宣言の bytecode-entries・jobs = 焼く道具の並べる数 — None = 道具の既定 = cgroup の CPU の上限・天井 BAKE-JOBS-CEILING・2026-10-08)。
    答え = BytecodeReport(木ごとの問題は problems)か EnvFailure(焼く道具そのものが答えを返さなかった)。"
   (#^ str project-dir)
+  (#^ str venv)
   (#^ tuple trees)
   (#^ tuple entries)
   (#^ (| int None) jobs)
@@ -380,9 +385,10 @@
 
 
 (defclass [(dataclass :frozen True)] ProbeImports [EffectBase]
-  "子と同じ起こし方で root を読む(roots = 絶対 path・pycache = 子と同じく PYTHONPYCACHEPREFIX で渡す root の .pyc の置き場 — None =
-   置き場を使わない root)。答え = ProbeReport か EnvFailure(env-incompatible)。"
+  "子と同じ起こし方で root を読む(venv = root の venv の path・roots = 絶対 path・pycache = 子と同じく PYTHONPYCACHEPREFIX で渡す root の
+   .pyc の置き場 — None = 置き場を使わない root)。答え = ProbeReport か EnvFailure(env-incompatible)。"
   (#^ str project-dir)
+  (#^ str venv)
   (#^ tuple roots)
   (setv #^ (| str None) pycache None))
 

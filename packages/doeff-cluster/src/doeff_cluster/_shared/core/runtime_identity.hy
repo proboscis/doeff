@@ -10,8 +10,8 @@
 ;;;      platform から env-key で計算し直したキー・渡されたキー(DOEFF_RUNTIME_ENV_KEY)・印のキー。キーの材料は root の中身を決める欄
 ;;;      (repo と commit・project・import の根)だけなので、env-vars や tools だけ違う宣言が同じ root を使い回しても不一致にしない
 ;;;      (丸ごとの等しさで比べない)。印は「この root の木はキーの宣言を展開した物」を言う。
-;;;   2. 確かめる module ごとに、import した file がその root の中の宣言の repo の dir(`<root>/<repo の名>/`)の下に在り、project の
-;;;      venv(`.venv` — 第三者の package の置き場)の中ではない — image の venv・別の checkout・venv に残った古い wheel から
+;;;   2. 確かめる module ごとに、import した file がその root の中の宣言の repo の dir(`<root>/<repo の名>/`)の下に在り、root の
+;;;      venv(`<root>/.venv` か前の形の木の中の `.venv` — 第三者の package の置き場)の中ではない — image の venv・別の checkout・venv に残った古い wheel から
 ;;;      import していない(env_handlers の PROBE-PROGRAM と同じ規則)。
 ;;;
 ;;; 失敗の kind(IdentityFailureKind):
@@ -38,19 +38,20 @@
 (import doeff_hy._wire [Malformed parse])
 (import doeff_cluster._shared.intent.runtime_identity_model [IdentityFailureKind ModuleOrigin RootMarker RuntimeFacts RepoCommit
                                                            RuntimeIdentity RuntimeIdentityMismatch ProcessFacts ReadRuntimeFacts])
-(import  doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT] doeff_cluster._shared.core.runtime_env [project-dir])
+(import  doeff_cluster._shared.intent.env_marker_model [ENV-MARKER-FORMAT] doeff_cluster._shared.core.runtime_env [ROOT-VENV])
 
 
 (defk outside-origins [declared root origins]
   {:pre [(: declared RuntimeEnv) (: root str) (: origins tuple)] :post [(: % tuple)]}
-  "宣言の repo の dir の下に無い・project の venv の中・import できない module の置き場(判断 2 段目)。"
-  (<- pdir str (project-dir declared root))
-  (val venv (+ (.rstrip pdir "/") "/.venv/"))
-  (val bases (tuple (gfor r declared.repos (+ (.rstrip root "/") "/" r.name "/"))))
+  "宣言の repo の dir の下に無い・root の venv の中・import できない module の置き場(判断 2 段目)。venv は root の直下の .venv(repo の
+   dir の外)だが、木の中に venv を持つ前の形の root の process でも同じ答えにするため、root の下の .venv の dir の中も外す(準備の確かめ
+   PROBE-PROGRAM と同じ規則)。"
+  (val base (.rstrip root "/"))
+  (val bases (tuple (gfor r declared.repos (+ base "/" r.name "/"))))
   (tuple (gfor o origins
                :if (not (and o.file
                              (any (gfor b bases (.startswith o.file b)))
-                             (not (.startswith o.file venv))))
+                             (not-in (+ "/" ROOT-VENV "/") (cut o.file (len base) None))))
                o)))
 
 

@@ -14,7 +14,9 @@
 ;;;   4 lock      FileSha256                                 展開した uv.lock が宣言の sha256 と違えば lock-mismatch
 ;;;   4b venv     FileSha256 / CopyVenv                      依存のキー(dependency-key)の同じ完成済みの root が在り、project の pyproject.toml が
 ;;;                                                          同じなら、その venv を hardlink で写して絶対 path を書き換える(写せば 5〜7 を走らせない —
-;;;                                                          新しい commit の root は source の木と bytecode だけを置く)。写せなければ 5〜7 へ
+;;;                                                          新しい commit の root は source の木と bytecode だけを置く)。写せなければ 5〜7 へ。
+;;;                                                          venv は project の木の外の <root>/.venv(runtime_env.root-venv)— 木を読み専用で
+;;;                                                          置けるように。前の形の root(venv が木の中)からも写す(venv-source-path)
 ;;;   5 native    EnsureNativeWheel                          build の口を通した wheel(--out-dir に出た file・無ければ口が組む — native-build-failed)
 ;;;   6 依存      SyncProject                                uv sync --frozen(sync-failed・python-unavailable — lock は宣言の sha256 で縛り済み・#2730)
 ;;;   7 wheel     InstallWheels                              native の wheel を入れる
@@ -50,7 +52,7 @@
                                                        SUPPORTED-CHILD-PROTOCOLS])
 (import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 (import doeff_cluster._shared.core.runtime_env_rules [env-failure root-split runtime-env->json repo-source-material dependency-key])
-(import doeff_cluster._shared.core.runtime_env [project-dir])
+(import doeff_cluster._shared.core.runtime_env [project-dir root-venv tree-venv ROOT-VENV])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
 (import doeff_cluster._worker.core.env_upkeep [LayerSample])
 (import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256 ROOT-PYCACHE])
@@ -202,7 +204,10 @@
    "entryPlace" marker.entry-place
    ;; pycachePrefix(root の .pyc の置き場 — worker が root の venv で起こす子へ PYTHONPYCACHEPREFIX で渡す・worker/protocol/env_store の
    ;; root-pycache-prefix)。null と欄の無い印(足す前の worker の印)の root は木の中の __pycache__ を使う形で、子へ渡さない。
-   "pycachePrefix" marker.pycache-prefix})
+   "pycachePrefix" marker.pycache-prefix
+   ;; venv(root の venv の root からの相対 path — 子の起動・待ちの子・入口の検めが引く venv)。欄の無い印(venv を木の外へ移す前の
+   ;; worker の印)の root は venv が project の木の中(runtime_env.tree-venv)と読む(launch の venv-of-marker)。
+   "venv" ROOT-VENV})
 
 
 ;; /proc/self/mountinfo の 1 行: `<id> <親> <major:minor> <根> <mount の点> <選択> [<任意の欄>…] - <fs の型> <mount の元> <super の選択>`。
@@ -373,6 +378,16 @@
   best)
 
 
+(defk venv-source-path [source]
+  {:pre [(: source KnownRoot)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "写し元の完成済みの root の venv の path を選ぶため: root の直下の venv(root-venv)に pyvenv.cfg が在ればそれ、無ければ venv を木の外へ
+   移す前の形の root の、project の木の中の venv(tree-venv — 次の掃除で消えるまで写し元に残る)。"
+  (<- held (| str None) (FileSha256 (.format "{}/pyvenv.cfg" (root-venv source.root))))
+  (if (is-not held None)
+      (root-venv source.root)
+      (tree-venv source.env source.root)))
+
+
 (defk stage-venv [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
   "同じ依存のキーの完成済みの root が在れば、その venv を写して使い回す(写した準備は native・依存・wheel の処理ステージを走らせない)。
@@ -389,8 +404,9 @@
   (when (or (is own None) (!= own theirs))
     (<- (PrepareNote (.format "venv を root {} から写さない: project の pyproject.toml が違う(写し元 {}・新しい木 {})" source.root theirs own)))
     (return state))
+  (<- from-venv str (venv-source-path source))
   (<- copied (| VenvCopied VenvRefused)
-      (CopyVenv (.format "{}/.venv" from-dir) (.format "{}/.venv" pdir) source.root request.root))
+      (CopyVenv from-venv (root-venv request.root) source.root request.root))
   (match copied
     (VenvRefused :reason reason)
     (do (<- (PrepareNote (.format "venv を root {} から写せず uv sync で作る: {}" source.root reason)))
@@ -443,7 +459,7 @@
   (<- pdir str (project-dir request.env request.root))
   (val project request.env.project)
   (<- report (| SyncReport EnvFailure)
-      (SyncProject pdir project.python project.groups (tuple (gfor w project.native w.package))))
+      (SyncProject pdir (root-venv request.root) project.python project.groups (tuple (gfor w project.native w.package))))
   (match report
     (EnvFailure) report
     (SyncReport :downloaded n) (replace state :downloaded n)))
@@ -455,16 +471,15 @@
   (<- pdir str (project-dir request.env request.root))
   (if (not state.wheels)
       state
-      (do (<- done (InstallWheels pdir state.wheels))
+      (do (<- done (InstallWheels pdir (root-venv request.root) state.wheels))
           (if (isinstance done EnvFailure) done state))))
 
 
 (defk stage-roots [request state]
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
   "import の根を venv の .pth に宣言の順で並べる(子に PYTHONPATH を置かずに根を解くため)。書く file は .pth の 1 つ(#3676)。"
-  (<- pdir str (project-dir request.env request.root))
   (<- roots tuple (absolute-roots request.env request.root))
-  (<- (WriteImportRoots pdir roots))
+  (<- (WriteImportRoots (root-venv request.root) roots))
   (replace state :written 1))
 
 
@@ -536,8 +551,9 @@
    写し元からの差の大きさ)。
    焼く前に venv の Hy の compiler の版を読む(完成マーカーに残す — #3706)。"
   (<- pdir str (project-dir request.env request.root))
-  (<- editable tuple (ReadEditableRoots pdir request.root))
-  (<- hy-version (| str None) (ReadHyVersion pdir))
+  (<- venv str (root-venv request.root))
+  (<- editable tuple (ReadEditableRoots venv request.root))
+  (<- hy-version (| str None) (ReadHyVersion venv))
   (val with-hy (replace state :hy-version hy-version))
   (<- trees tuple (bytecode-trees request with-hy editable))
   ;; .pyc と焼きの記録は木の外の root の置き場へ(ADR-DOE-BUILD-002 R3d — 木を読み専用で置ける・木の中へ hardlink を張らない)。写し元の
@@ -549,7 +565,7 @@
       with-hy
       (do (<- (StageStarted BYTECODE-STAGE))
           (<- report (| BytecodeReport EnvFailure)
-              (CompileTrees pdir trees request.env.bytecode-entries request.compile-jobs pycache :inherit-pycache inherit-pycache))
+              (CompileTrees pdir venv trees request.env.bytecode-entries request.compile-jobs pycache :inherit-pycache inherit-pycache))
           (<- (StageStarted BYTECODE-STAGE))
           (<- outcome (| PrepareState EnvFailure) (bytecode-outcome trees report with-hy))
           (match outcome
@@ -562,7 +578,7 @@
   "子と同じ起こし方で root を読み、子の約束の版と根の名前の影を確かめる(cloudpickle の参照が送り手と同じ source に解けるため)。"
   (<- pdir str (project-dir request.env request.root))
   (<- roots tuple (absolute-roots request.env request.root))
-  (<- report (| ProbeReport EnvFailure) (ProbeImports pdir roots :pycache state.pycache-prefix))
+  (<- report (| ProbeReport EnvFailure) (ProbeImports pdir (! (root-venv request.root)) roots :pycache state.pycache-prefix))
   (match report
     (EnvFailure) report
     ;; 欄の名に - を含むので、型だけで受けて欄は属性で読む(match のキーワードの型は - の欄へ写らない)。

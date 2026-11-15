@@ -47,7 +47,7 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix root-venv-path])
 
 
 (defrecord HostSettings
@@ -454,15 +454,19 @@
   ;; 分ける道が同じ名を使う。
   (var root-place None)
   (var pycache None)
+  (var venv None)
   (when spec.runtime-env
     (<- found (| str None) (root-entry-place action.code-path))
     (:= root-place found)
     ;; root の .pyc の置き場(root の完成の印の pycachePrefix — 子へ PYTHONPYCACHEPREFIX で渡す・無い印の root は渡さない)。
     (<- placed (| str None) (root-pycache-prefix action.code-path))
-    (:= pycache placed))
+    (:= pycache placed)
+    ;; 子を起こす hy と PATH・VIRTUAL_ENV の venv も root の完成の印から読む(木の外の venv か、前の形の root の木の中の venv)。
+    (<- root-venv str (root-venv-path action.code-path))
+    (:= venv root-venv))
   (<- place (| str None) (child-entry-place spec.runtime-env root-place))
   (val entry (.entry-at spec place))
-  (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :entry entry :python settings.python :hy-command settings.hy-command
+  (<- plan JobLaunch (job-launch spec action.code-path instance action.attempt :entry entry :venv venv :python settings.python :hy-command settings.hy-command
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
                                  :program-path program-path

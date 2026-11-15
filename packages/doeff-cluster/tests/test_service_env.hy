@@ -153,15 +153,15 @@
   (val spec (JobSpec "quiet" "doeff_cluster._worker.entry.job_entry" #("service" "--identity" "0123456789abcdef")
                      "env-k" :runtime-env (json.dumps env-json :sort-keys True) :program (* "a" 64) :versions #()))
   ;; 検めの子の起こし方の判断(probe-command — #2465)を、子を起こさずに見る。
-  (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec None)) :hy-command "/worker/bin/hy"
+  (<- plan JobLaunch (probe-command "/state/roots/env-k" spec.runtime-env (tuple (probe-targets spec None)) :venv "/state/roots/env-k/.venv" :hy-command "/worker/bin/hy"
                                     :layout (CodeLayout) :allowed-env {} :probe-dir (str tmp-path)))
   (val argv (list plan.argv))
   (val cwd plan.cwd)
   (val environment (dfor e plan.env e.name e.value))
   ;; root の venv の hy を uv run を挟まずに直に起こし、uv run が足していた venv の 2 つを環境に置く。
-  (assert (= (cut argv 0 2) ["/state/roots/env-k/app/.venv/bin/hy" "-c"]) argv)
-  (assert (= #((get environment "VIRTUAL_ENV") (.startswith (get environment "PATH") "/state/roots/env-k/app/.venv/bin"))
-             #("/state/roots/env-k/app/.venv" True)) environment)
+  (assert (= (cut argv 0 2) ["/state/roots/env-k/.venv/bin/hy" "-c"]) argv)
+  (assert (= #((get environment "VIRTUAL_ENV") (.startswith (get environment "PATH") "/state/roots/env-k/.venv/bin"))
+             #("/state/roots/env-k/.venv" True)) environment)
   ;; Program の job の検めは入口の module の import だけ(詰めた Program の版と復元は起こした子が検める)。
   (assert (= (probe-targets spec None) ["doeff_cluster._worker.entry.job_entry"]))
   (assert (in "doeff_cluster._worker.entry.job_entry" argv) argv)
