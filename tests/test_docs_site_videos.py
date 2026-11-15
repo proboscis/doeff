@@ -33,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 ARTICLE = DOCS / "articles" / "algebraic-effects-in-python.md"
 ARTICLE_2 = DOCS / "articles" / "yield-and-async.md"
+ARTICLE_4 = DOCS / "articles" / "record-and-replay.md"
 README = ROOT / "README.md"
 TTS = ROOT / "tools" / "docs-video" / "tts.py"
 # A chapter video: the trailer GIF (or the still) of assets/videos/<name> linked to the same video on YouTube.
@@ -214,6 +215,20 @@ def test_the_two_videos_of_the_second_article_sit_at_their_section_heads() -> No
         )
         assert re.search(where, article, re.MULTILINE), (
             f"the second article has no line for video {video_id} ({name}) at its section head"
+        )
+        assert (VIDEOS / f"{name}.mp4").is_file()
+
+
+def test_the_three_videos_of_the_fourth_article_sit_at_their_section_heads() -> None:
+    article = ARTICLE_4.read_text(encoding="utf-8")
+    for name, where in (
+        ("article4-opening", r"{line}\n## The program asks, and a handler answers$"),
+        ("article4-tape-file", r"^## Keep the tape in a file\n\n{line}"),
+        ("article4-live", r"^## I/O: record from a live server, replay with it stopped\n\n{line}"),
+    ):
+        line = rf"\[The same video as an mp4 file \(\d:\d\d\)\]\(\.\./assets/videos/{name}\.mp4\)\n"
+        assert re.search(where.format(line=line), article, re.MULTILINE), (
+            f"the fourth article has no line for video {name} at its section head"
         )
         assert (VIDEOS / f"{name}.mp4").is_file()
 

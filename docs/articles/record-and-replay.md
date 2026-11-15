@@ -8,6 +8,8 @@ Say a program reaches the world only through the effects it yields. Each one goe
 
 If you write asyncio code, compare it with an `await client.get(url)` deep inside a coroutine. That coroutine sends the request itself, so recording it means reaching into the client. With effects, the request is a value that leaves the program, and the recorder is one more handler on its way out.
 
+[The same video as an mp4 file (2:06)](../assets/videos/article4-opening.mp4)
+
 ## The program asks, and a handler answers
 
 `latest_releases` asks the GitHub API for the latest release of each repository:
@@ -139,6 +141,8 @@ LookupError: not recorded: GET https://api.github.com/repos/acme/docs/releases/l
 
 ## Keep the tape in a file
 
+[The same video as an mp4 file (1:59)](../assets/videos/article4-tape-file.mp4)
+
 The dict lives as long as the process. doeff has the recorder and the player as one handler, `make_memo_rewriter`. It keeps its answers through three effects of its own, and a handler of a few lines answers them from a file:
 
 ~~~python
@@ -235,6 +239,8 @@ print(recorded(latest_releases(REPOS, "ci-dummy"), keyed, offline, method_and_ur
 Choose the key per API. Whatever the key leaves out is not told apart on replay, so if the answers depend on a header, such as `Accept`, put it in. With either key, the token is not in the file: the keys are `GET https://...` strings or hashes, and the stored answers are the response bodies. The bodies are stored whole, though, and they can carry personal data. Read the file before you commit it.
 
 ## I/O: record from a live server, replay with it stopped
+
+[The same video as an mp4 file (1:42)](../assets/videos/article4-live.mp4)
 
 So far `github` has answered from a dict. `send` sends each request over HTTP with urllib from the standard library. `live.py` starts a local HTTP server that answers like the GitHub API, records with `send`, stops the server, and replays from the file:
 

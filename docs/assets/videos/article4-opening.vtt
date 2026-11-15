@@ -1,0 +1,109 @@
+WEBVTT
+
+o1
+00:00:00.250 --> 00:00:04.400
+This video shows how to record a program and replay it.
+
+o2
+00:00:04.950 --> 00:00:09.250
+doeff is a library for algebraic effects in Python.
+
+o3
+00:00:09.800 --> 00:00:14.600
+We follow latest_releases, which asks GitHub for tags.
+
+o4
+00:00:15.950 --> 00:00:19.300
+A program asks the world questions and gets answers.
+
+o5
+00:00:19.850 --> 00:00:22.750
+Write down each question with its answer.
+
+o6
+00:00:23.300 --> 00:00:26.500
+Later, answer the same questions from those notes.
+
+o7
+00:00:27.050 --> 00:00:31.450
+The program runs the same way, with nobody on the other end.
+
+o8
+00:00:32.800 --> 00:00:39.050
+In doeff, a question is a value. Here it is HttpRequest.
+
+o9
+00:00:39.600 --> 00:00:43.700
+It holds a method, a URL and headers.
+
+o10
+00:00:44.250 --> 00:00:49.450
+latest_releases starts with an empty dict of tags.
+
+o11
+00:00:50.000 --> 00:00:53.650
+For each repository, it yields an HttpRequest.
+
+o12
+00:00:54.200 --> 00:00:58.400
+It pauses there. A handler gets the request and its k.
+
+o13
+00:00:58.950 --> 00:01:02.500
+k is the rest of the function, and it resumes once.
+
+o14
+00:01:03.050 --> 00:01:06.250
+With the body back, it keeps the tag_name.
+
+o15
+00:01:06.800 --> 00:01:09.300
+Then it returns the tags.
+
+o16
+00:01:10.650 --> 00:01:14.350
+github counts each request it gets as sent.
+
+o17
+00:01:14.900 --> 00:01:17.900
+It finds the repository in the URL.
+
+o18
+00:01:18.450 --> 00:01:22.750
+It resumes that k with a body, as the API would.
+
+o19
+00:01:23.300 --> 00:01:27.100
+Run it under github: two requests, two tags.
+
+o20
+00:01:27.650 --> 00:01:29.850
+And sent says 2.
+
+o21
+00:01:31.200 --> 00:01:34.500
+Now put recording(tape) between them.
+
+o22
+00:01:35.050 --> 00:01:39.450
+record yields the same request on, and github answers.
+
+o23
+00:01:40.000 --> 00:01:44.350
+It keeps the answer in the tape, then resumes that k.
+
+o24
+00:01:45.700 --> 00:01:50.050
+Then take github away, and run under replaying(tape).
+
+o25
+00:01:50.600 --> 00:01:53.900
+replay finds each request in the tape and answers it.
+
+o26
+00:01:54.450 --> 00:01:57.750
+Same tags, and sent stays at 0.
+
+o27
+00:01:59.100 --> 00:02:03.800
+latest_releases never changed. Only the handlers did.
