@@ -17,7 +17,9 @@ from doeff import Pass, handler, run
 seen: list[str] = []
 
 
-def watched(name: str):  # writes down each request that reaches this point of the stack, then passes it on
+def watched(
+    name: str,
+):  # writes down each request that reaches this point of the stack, then passes it on
     @handler
     def watch(effect: HttpRequest, k):
         seen.append(f"{name}: {effect.method} {effect.url.removeprefix('https://api.github.com')}")
@@ -48,7 +50,10 @@ sent.clear()
 
 # o6: recording(tape) between them: the requests reach github through record, and the tape keeps the answers.
 tape: dict = {}
-print("o6 recorded:", run(github(watched("github gets")(recording(tape)(latest_releases(REPOS, "secret"))))))
+print(
+    "o6 recorded:",
+    run(github(watched("github gets")(recording(tape)(latest_releases(REPOS, "secret"))))),
+)
 print("o6 order:", seen)
 print("o6 sent:", sent.total())
 for key, answer in tape.items():
@@ -57,6 +62,9 @@ sent.clear()
 seen.clear()
 
 # o7: github taken away, replaying(tape) alone.
-print("o7 replayed:", run(watched("outside replay")(replaying(tape)(latest_releases(REPOS, "secret")))))
+print(
+    "o7 replayed:",
+    run(watched("outside replay")(replaying(tape)(latest_releases(REPOS, "secret")))),
+)
 print("o7 reached outside replay:", seen)
 print("o7 sent:", sent.total())
