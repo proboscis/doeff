@@ -33,7 +33,8 @@
 # 自己起動(WORKER_DOEFF_COMMIT が在る時 — 土台だけの image・deploy/base/Dockerfile。設計 D13・E13):
 #   image に焼いた script の受け持ちは展開と引き継ぎだけ: WORKER_DOEFF_URL(既定 https://github.com/proboscis/doeff.git)の
 #   (置き場 $WORK_DIR/boot/doeff.git に無い commit の取り寄せは、下の「読み取りの鍵の表」が在ればそれを通す — doeff を非公開の repo から
-#   読む機体は、表に doeff の鍵つきの行を置けば https の url のまま鍵で読める。表が無ければ鍵なし)
+#   読む機体は、表に doeff の鍵つきの行を置けば https の url のまま鍵で読める。表が無ければ鍵なし。取り寄せの元は置き場の在る機体でも
+#   毎回 WORKER_DOEFF_URL — 置き場の origin を合わせてから取る)
 #   WORKER_DOEFF_COMMIT を $WORK_DIR/boot/roots/<sha> に展開し(展開の済んだ印 .doeff-boot-extracted)、root の中の同じ commit の
 #   packages/doeff-cluster/deploy/boot.sh へ exec で引き継ぐ(DOEFF_BOOT_FROM_ROOT=1 — 中身が同じでも引き継ぐ)。root の準備(venv と
 #   doeff-vm の wheel・完成の印 .doeff-boot-ready)と役の起動は引き継いだ先 — 宣言した commit の script — がする。だから準備の手順を
@@ -197,7 +198,9 @@ export DOEFF_BOOT_STARTED_MS
 
 # doeff の置き場($boot/doeff.git)を作り、$commit を取り寄せる(doeff_extract の boot.lock の下)。読み取りの鍵の表が在れば、それを組んで
 # git をそこへ向けてから取り寄せる — 向けはこの subshell の中だけに置き、表の鍵が欠けても取り寄せの失敗として返す(役 coordinator・drain
-# の起動を表の組みで止めない・役 worker は後の repo_access で止まる)。答え = 置き場に $commit が在るか。
+# の起動を表の組みで止めない・役 worker は後の repo_access で止まる)。置き場が既に在る時も、origin の url を $from へ合わせてから取る —
+# 置き場は node の dir に残るので、起動の source の repo を替えた(WORKER_DOEFF_URL を替えた)機体が、最初に clone した repo から
+# 取り続けて新しい repo の commit を取れなかった。答え = 置き場に $commit が在るか。
 doeff_fetch() (
   # repo_access は url を自分の変数に使うので、取り寄せの url を先に取っておく。
   from=$url
@@ -208,6 +211,8 @@ doeff_fetch() (
     rm -rf "$boot/doeff.git.tmp"
     git clone -q --bare "$from" "$boot/doeff.git.tmp" || exit 1
     mv "$boot/doeff.git.tmp" "$boot/doeff.git" || exit 1
+  else
+    git -C "$boot/doeff.git" remote set-url origin "$from" || exit 1
   fi
   git -C "$boot/doeff.git" fetch -q origin "+refs/heads/*:refs/heads/*" || true
   git -C "$boot/doeff.git" cat-file -e "$commit^{commit}" 2>/dev/null ||
