@@ -134,11 +134,13 @@
   {:pre [(: marks TreeWrites)] :post [(: % bool)]}
   "app の commit だけが変わった 2 つ目の root の準備で、木の dir へ張る hardlink と消す file の合計が、変わった app の木の file の数を
    越えない事・両方の木が mount で置かれて新しい commit の中身を見せる事を確かめる。"
-  (<- first (| EnvReady EnvFailure) (prepare (env-of "app-1" "lib-1" LOCK) #()))
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- first (| EnvReady EnvFailure) (prepare env-1 #()))
   (assert (isinstance first EnvReady) first)
   (<- known tuple (known-of first))
   (val before #(marks.linked marks.removed))
-  (<- second (| EnvReady EnvFailure) (prepare (env-of "app-2" "lib-1" LOCK) known))
+  (<- second (| EnvReady EnvFailure) (prepare env-2 known))
   (assert (isinstance second EnvReady) second)
   (<- app-2 WorldCommit (app-commit "app-2" LOCK "V = 2\n"))
   (val written (+ (- marks.linked (get before 0)) (- marks.removed (get before 1))))
@@ -164,10 +166,12 @@
   {:pre [] :post [(: % bool)]}
   "代役の daemon が app-2 の commit を断る時、2 つ目の root の準備が通り、app の木は前の root の木からの hardlink の写しで置かれ、断りが
    準備の記録の行に残る事を確かめる(断られなかった lib は mount のまま)。"
-  (<- first (| EnvReady EnvFailure) (prepare (env-of "app-1" "lib-1" LOCK) #()))
+  (<- env-1 RuntimeEnv (env-of "app-1" "lib-1" LOCK))
+  (<- env-2 RuntimeEnv (env-of "app-2" "lib-1" LOCK))
+  (<- first (| EnvReady EnvFailure) (prepare env-1 #()))
   (assert (isinstance first EnvReady) first)
   (<- known tuple (known-of first))
-  (<- second (| EnvReady EnvFailure) (prepare (env-of "app-2" "lib-1" LOCK) known))
+  (<- second (| EnvReady EnvFailure) (prepare env-2 known))
   (assert (isinstance second EnvReady) second)
   (<- hows dict (tree-hows second))
   (assert (= (get hows "lib") "mount") hows)

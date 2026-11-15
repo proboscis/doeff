@@ -320,8 +320,10 @@
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- ready (prepare env #()))
   (assert (isinstance ready EnvReady) ready)
-  (<- files dict (files-under ready.root))
-  (val site (.format "{}/.venv/lib/python3.14/site-packages" ready.root))
+  ;; sync した venv は share の処理ステージが共有の venv へ移すので、第三者の package は共有の venv(interpreter の在る venv)に在る。
+  (val shared (posixpath.dirname (posixpath.dirname ready.interpreter)))
+  (<- files dict (files-under (+ shared "/")))
+  (val site (.format "{}/lib/python3.14/site-packages" shared))
   (val unbaked (lfor top ["httpx" "hy" "click"]
                      :if (not-in (.format "{}/{}/__pycache__/__init__.cpython-314.pyc" site top) files)
                      top))
@@ -1258,7 +1260,7 @@
                                                                                        :commits #(tools-commit)))))))
   (<- ok bool ((state) ((sim-time-handler :clock (SimClock)) (with-handlers (+ handlers [(seen-stages marks)]) (one-bake-scenario)))))
   (assert ok)
-  (assert (= marks.names #("disk" "mirror" "tree" "tree" "tree" "tree" "lock" "venv" "native" "sync" "wheels" "roots" "bytecode" "bytecode" "bytecode" "probe"))
+  (assert (= marks.names #("disk" "mirror" "tree" "tree" "tree" "tree" "lock" "venv" "native" "sync" "wheels" "share" "roots" "bytecode" "bytecode" "bytecode" "probe"))
           marks.names))
 
 
