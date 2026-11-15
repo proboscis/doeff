@@ -20,7 +20,7 @@
 (require doeff-hy.macros [defk deftest <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; used by the defrecord expansion
-(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsTextArrived HttpProbe HttpProbeAnswer WsShortcut HttpShortcut]
+(import doeff_core_effects [HttpAddress HttpBodyBytes HttpBodyFailed HttpBodyFileRange HttpBodyOutcome HttpBodyRead HttpBodyTooLarge HttpEvent HttpForward HttpHeader HttpListen HttpNextRequest HttpNoBody HttpReadBody HttpRequestArrived HttpRespond HttpServerClosed HttpShutdown TakeWsSendReport WsAccept WsBinaryArrived WsClose WsClosed WsForward WsOpened WsSendReport WsSendText WsSendTextEach WsTextArrived HttpProbe HttpProbeAnswer WsShortcut HttpShortcut HttpShortcutCarried]
         doeff_core_effects._http_server_effects [WS-CUT-REASON WS-REFUSAL-TEXT WsShortcutAhead WsShortcutCarried])
 (import http_server_contract_handlers [ContractWorld PeerAnswer PeerAnswers PeerRequest PeerSend UPSTREAM-STATUS World])
 
@@ -636,3 +636,56 @@
               #(200 b"program:keep2")])
           served.answers)
   (assert (= (! (header-values (get served.answers 2) "Content-Type")) ["text/plain; charset=utf-8"]) served.answers))
+
+
+(defk carried-answer [data]
+  {:pre [(: data bytes)] :post [(: % (| HttpShortcutCarried None))] :tags {:context "http-server-test" :role "program"}}
+  "answer of a request hook that answers on the spot and still hands a value to the body (closed - uses no effect): a body starting with \"seen\" is answered 204 on the spot and carries
+   \"carried:\" and its body to the body; any other body is passed to the body (None)."
+  (if (.startswith data b"seen")
+      (HttpShortcutCarried :answer (HttpProbeAnswer :status 204 :headers #() :body b"") :carried (+ "carried:" (.decode data "utf-8")))
+      None))
+
+
+(defk serve-carried [requests shortcuts reaching]
+  {:pre [(: requests tuple) (: shortcuts tuple) (: reaching int)] :post [(: % tuple)] :tags {:context "http-server-test" :role "program"}}
+  "Contract Program with a request hook that carries values: open a listener, make the peer send requests, never answer a request that arrives already answered (carried) - only collect its
+   value - and answer the others with 200 \"program:\" and their body; close when `reaching` requests have arrived. Answer the arrived events' shapes with their carried values and what the
+   peer received."
+  (<- bound HttpAddress (HttpListen :address (HttpAddress :host "127.0.0.1" :port 0) :http-shortcuts shortcuts))
+  (<- (PeerSend :address bound :requests requests))
+  (var events #())
+  (var reached 0)
+  (var open True)
+  (while open
+    (<- event HttpEvent (HttpNextRequest))
+    (match event
+      (HttpServerClosed) (:= open False)
+      (HttpRequestArrived :ticket t :carried carried)
+      (do (<- shape tuple (event-shape event))
+          (:= events (+ events #(#(shape carried))))
+          (when (is carried None)
+            (<- body HttpBodyOutcome (HttpReadBody :ticket t :max-bytes 64))
+            (<- (respond t 200 #() (HttpBodyBytes :data (+ b"program:" (if (isinstance body HttpBodyRead) body.data b"?"))))))
+          (:= reached (+ reached 1))
+          (when (= reached reaching)
+            (<- (HttpShutdown :reason SHUTDOWN-REASON :drain-seconds 0.5))))
+      _ None))
+  (<- answers tuple (PeerAnswers))
+  #(events answers))
+
+
+(deftest test-a-request-shortcut-answers-on-the-spot-and-carries-a-value-to-the-program
+  {:interpreters ["aiohttp-http-server" "scripted-http-server"]}
+  ;; An answer that answers HttpShortcutCarried is sent on the spot, and the request still reaches the body as an already answered HttpRequestArrived carrying the value: the body never
+  ;; answers it (no command, no body read), and the peer still receives the spot answer. Requests the answer passes (None) reach the body as before, with carried None, in arrival order.
+  (val shortcuts #((HttpShortcut :method "POST" :path "/draft" :answer carried-answer)))
+  (val requests #((PeerRequest :method "POST" :target "/draft" :body b"seen1") (PeerRequest :method "POST" :target "/draft" :body b"keep1")
+                  (PeerRequest :method "POST" :target "/draft" :body b"seen2")))
+  (<- served tuple (serve-carried requests shortcuts 3))
+  (val events (get served 0))
+  (val answers (get served 1))
+  (assert (= events #(#(#("request" "1" "POST" "/draft" "/draft" False) "carried:seen1") #(#("request" "2" "POST" "/draft" "/draft" False) None)
+                      #(#("request" "3" "POST" "/draft" "/draft" False) "carried:seen2")))
+          events)
+  (assert (= (lfor a answers #(a.status a.body)) [#(204 b"") #(200 b"program:keep1") #(204 b"")]) answers))
