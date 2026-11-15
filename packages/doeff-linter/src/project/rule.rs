@@ -1,6 +1,7 @@
 //! The closed list of layer rules (rules judged across the repo). The ID, title, statement, and default one-line fix are written only here.
 
 use serde::Serialize;
+use super::declaration_items::Decl;
 
 /// The rule family (a closed classification that groups rules in the editor's list).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -645,6 +646,99 @@ impl ProjectRule {
             | ProjectRule::SemanticPlainCallable
             | ProjectRule::SemanticClassRole
             | ProjectRule::SemanticMixedConcerns => false,
+        }
+    }
+
+    /// The declaration items (beyond the ones every rule reads) whose change can change this rule's hits in files a commit does not touch. The commit hook promotes a rule to
+    /// the whole-repo comparison only when a declaration change changed one of these items (`declaration_items::promoted`). Every rule also reads, without naming them here,
+    /// `Decl::Population` (where files sit: root, layer locations and membership, exclude, …), its own `[tool.doeff-linter.rules.<ID>]`, its laws, its layer exemptions, and the
+    /// registry rows that name it. An empty list = the rule reads nothing more (a comment-only change of architecture.hy promotes no rule). Place a new rule here too (an
+    /// exhaustive match) — the items come from the reads in `run_with` (the `architecture.<field>` and settings section each judgment takes).
+    pub fn reads_declarations(self) -> &'static [Decl] {
+        use Decl::*;
+        match self {
+            // Hits on the config file or architecture.hy themselves (a staged path — measured with the staged paths), and per-file reads or matches.
+            ProjectRule::UnknownConfigKey | ProjectRule::UnreadableFile | ProjectRule::MatchFieldHyphen => &[],
+            ProjectRule::LayerImportDirection => &[LayerImports, ServicePlaces],
+            ProjectRule::LayerForbiddenModule => &[LayerForbidModules],
+            ProjectRule::LayerTypesOnly => &[LayerTypesOnly],
+            // The context tag must be a declared service, and the role one the layer allows.
+            ProjectRule::ModuleDeclaresTags => &[LayerRoles, ServicePlaces],
+            ProjectRule::RoleMatchesLayer => &[LayerRoles],
+            ProjectRule::RawSideEffectDirect => &[WorldReach, BoundaryParts, RawIoRoots, RawSideEffects],
+            ProjectRule::RawSideEffectVia | ProjectRule::WorldHandlerNamedOutsideList => &[WorldReach, RawIoRoots, RawSideEffects],
+            ProjectRule::WorldHandlerMisplaced => &[WorldReach, RawSideEffects],
+            ProjectRule::EnvironmentName => &[EnvironmentNames],
+            // Reads across services (service_dependencies): the dependency targets, the layers others may read, and the crossings DOEFF117 counts.
+            ProjectRule::ServiceBoundary | ProjectRule::ServiceDependency | ProjectRule::UnusedDependency => {
+                &[ServicePlaces, ServiceDependencies, OpenLayers, LayerDependencyLayers]
+            }
+            ProjectRule::ContextMatchesService | ProjectRule::UndeclaredPlace | ProjectRule::UndeclaredDirectory => &[ServicePlaces],
+            ProjectRule::PlacedDependency => &[PlacedDependencies, ServicePlaces],
+            // The rules on how definitions are written (`[tool.doeff-linter.definitions]`), with the smells' settings and the accepted reasons of plain functions.
+            ProjectRule::DefnForbidden
+            | ProjectRule::DefinitionTagsRequired
+            | ProjectRule::TestIsDeftest
+            | ProjectRule::ClassWithBehaviour
+            | ProjectRule::DefkCalledBare
+            | ProjectRule::EffectsDisagreeWithInference
+            | ProjectRule::StaleOutcomeBranch => &[Definitions],
+            ProjectRule::DeffNeedsReason => &[Definitions, PlainCallableReasons],
+            ProjectRule::ShapeCheckInJudgment
+            | ProjectRule::FailureRethrow
+            | ProjectRule::BindThenReturn
+            | ProjectRule::FieldsJoinedIntoText
+            | ProjectRule::RebuiltAccumulator => &[Definitions, Smells],
+            ProjectRule::JsonValueOutsideWire => &[WireModules],
+            ProjectRule::TranslationEmitsIntent => &[TranslationEffects],
+            ProjectRule::LowerLayerInDomain => &[TranslationEffects, BusinessFakes],
+            ProjectRule::EnvironmentBranch => &[EnvironmentBranches],
+            ProjectRule::WireInWireFreeLayer | ProjectRule::BareMapInWireFreeLayer | ProjectRule::DictOutsideItsPlace => &[LayerWireFree],
+            // The definition graph (definition_graph reads :world-handlers, :static-readers, :systems) and the edge declarations.
+            ProjectRule::TestKindMismatch | ProjectRule::WorldHandlerWithoutContractTest => &[WorldReach],
+            ProjectRule::ServiceUntestedOnSim => &[WorldReach, ServicePlaces, ServiceInvariants],
+            ProjectRule::TestFormNotDeftest => &[TestForms],
+            ProjectRule::VocabularyOutsideSinglePoint => &[SinglePointVocabulary],
+            ProjectRule::SpellingOutsideItsFiles => &[ConfinedSpellings],
+            ProjectRule::SpellingCountDiffers => &[CountedSpellings],
+            ProjectRule::EffectOutsideCensus => &[EffectCensus],
+            ProjectRule::FieldHoldersDiffer => &[FieldHolders],
+            ProjectRule::ServiceInvariantsMissing => &[ServicePlaces, ServiceInvariants],
+            ProjectRule::ServiceSystemMissing => &[ServicePlaces, ServiceInvariants, ServiceSystem],
+            ProjectRule::SystemAccessUnwritten => &[ServicePlaces, ServiceSystem, OutsideWriters, BusinessFakes, WorldReach],
+            ProjectRule::RecordChangeWakesJob | ProjectRule::PollingOnTimer => &[BusinessFakes],
+            ProjectRule::ProgramSleepsOnWallClock => &[ProgramSleep],
+            ProjectRule::TestSleepsOnWallClock => &[TestSleep],
+            ProjectRule::BlindDefinitionReads => &[BlindDefinitions],
+            ProjectRule::DefinitionCallsUnlistedHead => &[AllowedHeads],
+            ProjectRule::CallOutsideDeclaredSites => &[CallSites],
+            ProjectRule::BroadCatchOutsideCarrier => &[BroadCatches],
+            ProjectRule::RetiredWord => &[RetiredWords],
+            // Calls inside boundary parts are checked against the part's :touches (retired::PartCalls).
+            ProjectRule::RetiredCall => &[RetiredCalls, BoundaryParts],
+            ProjectRule::HandlerArgumentHoldsState => &[HandlerArguments],
+            ProjectRule::UntypedStructuredValue => &[TypedValues],
+            ProjectRule::RecordStubNotKwOnly => &[RecordStubs],
+            // judge_business_fakes reads :business-fakes and :assembly-shape over the definition graph, per declared service (and its invariants and clauses).
+            ProjectRule::BusinessEffectFake
+            | ProjectRule::StaleCounterexampleRow
+            | ProjectRule::TestOnlyFake
+            | ProjectRule::IntentAnswererNotTranslation
+            | ProjectRule::IntentEffectUncovered
+            | ProjectRule::IntentFakedInVerification => &[BusinessFakes, AssemblyShape, WorldReach, ServicePlaces, ServiceInvariants],
+            ProjectRule::ServiceWithoutCounterexample | ProjectRule::ClauseWithoutCounterexample => {
+                &[BusinessFakes, AssemblyShape, WorldReach, ServicePlaces, ServiceInvariants, ServiceClauses]
+            }
+            ProjectRule::AssemblyShapeBroken | ProjectRule::AssemblyAnswerMisplaced => &[BusinessFakes, AssemblyShape, WorldReach, ServicePlaces],
+            // An added registry row may match nothing. A row left unmatched because a declaration change removed another rule's hits is left to the merge gate and the
+            // whole-repo verification (judging it means running every rule the registry names).
+            ProjectRule::RegistryEntryStale => &[RegistryRows],
+            // Jev rules are not applied by the hook or the gate.
+            ProjectRule::SemanticBusinessDecision
+            | ProjectRule::SemanticTransportKnowledge
+            | ProjectRule::SemanticPlainCallable
+            | ProjectRule::SemanticClassRole
+            | ProjectRule::SemanticMixedConcerns => &[],
         }
     }
 
