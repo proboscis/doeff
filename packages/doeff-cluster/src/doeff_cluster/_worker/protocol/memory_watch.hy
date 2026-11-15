@@ -13,6 +13,9 @@
 ;;;                      機体の空きの最低・PSI の full avg10 の最大・container の memory.current と memory.peak。5 秒ごとの読みの最大なので、
 ;;;                      1 分の跳ねも落ちない(10 分ごとの 1 点の測りでは落ちた)。
 ;;;   JOB-PEAK-LOG       job が終わった(根が観測から消えた)時に 1 行: その job の memory の最大と、最大を読んだ刻。
+;;; task ごとの山(2026-11-15): 回ごとに、走っている job の最大と、終わってから ENDED-PEAK-KEEP-MS の内の job の最大(JOB-PEAK-LOG と同じ値)を
+;;; 入れ物 eviction の peaks に置き、heartbeat の測りが task の分を欄 taskPeakMiB として名乗る。coordinator はこの値で task の行の山を書く
+;;; (前は heartbeat の今の使いの最大を山にし、heartbeat の間の短い山と終わる前の最後の伸びを取り逃がした — 行の山が log の山より最大 274 MiB 小さい)。
 ;;;   MEMORY-LEVEL-LOG   機体の様子(CALM・TIGHT・DANGER)が変わった時に 1 行: 機体の空き・PSI・大きい単位の上位。
 ;;;   MEMORY-KILL-LOG    止めた時に 1 行: job・単位の頭の pid と命令の名・単位の memory・送った process の数・機体の空き。
 ;;;   MEMORY-SWARM-KILL-LOG  止める候補の単位が無く、1 つの job の木が機体の大きな割合を持つ時に、その job の小さい単位をまとめて止めた
@@ -76,6 +79,8 @@
 (val OVER-NEED-KILL-LOG "worker: 上に載る系の残す線を割ったので、要りを越えて伸びた task を止めた")
 ;; 様子の行に並べる大きい単位の数。
 (val LEVEL-UNITS 5)
+;; 終わった job の最大を heartbeat の測りが名乗り続ける長さ(頭の註の task ごとの山)。task の終わりの報告と次の heartbeat の間を十分に覆う。
+(val ENDED-PEAK-KEEP-MS (* 10 60 1000))
 
 
 (defrecord MemoryWatchSettings
@@ -124,6 +129,13 @@
   (#^ int at-ms))
 
 
+(defrecord EndedPeak
+  "終わった job 1 つの最大(頭の註の task ごとの山 — heartbeat が終わりから ENDED-PEAK-KEEP-MS の間名乗る): peak = 最大(JobPeak)・ended-ms =
+   根が観測から消えたのを読んだ刻(epoch ms)。"
+  (#^ JobPeak peak)
+  (#^ int ended-ms))
+
+
 (defrecord JobMax
   "最大の行の間の job 1 つ(名ごと)の memory の最大: job = job の名・bytes = 最大の値。"
   (#^ str job)
@@ -148,10 +160,10 @@
    新しい間が後・steady-windows 個まで)・window-killed = 今の最大の行の間に見張りが止めた job の名(その間の最大を steady に残さない)・
    eviction = 追い出しの線の読みの入れ物(worker/protocol/eviction_line の EvictionCell — heartbeat の測りも最後の線を読む)・
    pss = 常駐の job の木ごとの最後に読めた PSS(#(job の名 根の pid) → #(byte 読んだ刻 本体の Anonymous の byte) — 頭の註)・pss-read-ms = 最後に PSS を読んだ刻
-   (None = まだ)。
+   (None = まだ)・ended = 終わった job の最大(EndedPeak の列 — ENDED-PEAK-KEEP-MS を過ぎた物は読みごとに除く・頭の註の task ごとの山)。
    scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
   (defn #^ None __init__ [self]
-    (setv self.closing False self.level MemoryLevel.CALM self.peaks #() self.window None self.last-kill-ms None
+    (setv self.closing False self.level MemoryLevel.CALM self.peaks #() self.ended #() self.window None self.last-kill-ms None
           self.told-no-victim False self.unread "" self.failure "" self.kills #() self.steady #() self.window-killed (frozenset)
           self.eviction (EvictionCell) self.pss {} self.pss-read-ms None)))
 
@@ -246,6 +258,13 @@
     (<- (slog JOB-PEAK-LOG :level "info" :job ended.job :pid ended.pid :peak-mib (// ended.bytes (* 1024 1024))
               :at (.isoformat (datetime-of-epoch-ms ended.at-ms)))))
   (setv cell.peaks (tuple (gfor peak kept :if (in #(peak.job peak.pid) alive) peak)))
+  ;; 終わった job の最大を ENDED-PEAK-KEEP-MS の間残し、走っている job の最大と合わせて heartbeat の測りへ渡す(頭の註の task ごとの山)。
+  (setv cell.ended (+ (tuple (gfor e cell.ended :if (< (- now-ms e.ended-ms) ENDED-PEAK-KEEP-MS) e))
+                      (tuple (gfor peak kept :if (not-in #(peak.job peak.pid) alive) (EndedPeak :peak peak :ended-ms now-ms)))))
+  ;; 同じ名の根が 2 つ在る(置き直した task)時は大きい方(小さい順に並べ、後の大きい方が勝つ)。
+  (val largest (dfor peak (sorted (+ cell.peaks (tuple (gfor e cell.ended e.peak))) :key (fn [peak] peak.bytes))
+                     peak.job peak))
+  (setv cell.eviction.peaks (tuple (gfor peak (.values largest) (JobUse :job peak.job :pid peak.pid :bytes peak.bytes :processes 0))))
   None)
 
 

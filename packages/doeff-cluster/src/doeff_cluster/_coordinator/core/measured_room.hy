@@ -29,19 +29,29 @@
 ;;; (小さい側 = node-h の 11-09 16:52 UTC — 名乗り 3584 MiB の task 3 本を名乗る空き約 9.7 GiB に置き、8 分後に各 14 GiB を使った。大きい側 =
 ;;; 11-11 16:4x の機体 — 名乗り 8192 MiB の task の山 882 MiB・名乗り 5632 MiB の task の山 1888 MiB など、名乗りが実の山の 4〜9 倍で、置き済みの
 ;;; task の予約の和 18,967 MiB に対し実の使いは約 3,800 MiB。機体に約 26,000 MiB の空きが在るのに memory の空きは −3,484 MiB と数えた)。
-;;; coordinator は worker の測りが名乗る task ごとの今の使いの最大を行の山(peak-mib)に持ち、形(shape — 送り手が同じ程の memory を使う
+;;; coordinator は worker の測りが名乗る task ごとの山(下の余裕 PEAK-STEP-MIB の訳)を行の山(peak-mib)に持ち、形(shape — 送り手が同じ程の memory を使う
 ;;; 仕事に付ける印)ごとに、保持の間の行(終わった行を含む)の山の最大と、終わり(finished)まで走った行が在るか(settled)を読む
 ;;; (task_claims.shape-peaks-of — ShapePeak)。task の要りは(learned-need):
-;;;   同じ形に終わりまで走った行が在る   要り = min(⌈max(この task の山, 同じ形の山の最大) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, 線 − 床)
+;;;   同じ形に終わりまで走った行が在る   要り = min(⌈max(この task の山, 同じ形の山の最大) × 形の余裕⌉ + PEAK-STEP-MIB, 線 − 床)
+;;;   形の余裕 = min(SHAPE-MARGIN-CAP, max(SHAPE-PEAK-MARGIN, 同じ形の近い回の finished の山の最大 / 最小))(shape-margin-of)
 ;;;   無い(形を名乗らない・初めての形)  要り = max(名乗った要り, min(max(この task の山, 同じ形の山の最大), 線 − 床))
 ;;; 名乗りは、終わりまで測った山の無い仕事の見込みにだけ使う — 同じ形の山を知った後は、送り手が見込みの数を名乗っても予約にならない
 ;;; (送り手の数を手で下げる直しは、新しい送り手が見込みを名乗る度に同じ失敗を戻す)。終わりまで走った行を待つのは、走っている行の山は
 ;;; まだ伸びる途中の値だから(日次の回は 15〜20 分かけて伸びる — 上の memory の要りの予約の節)。終わりの前に止まった行(lost・failed)の山は
 ;;; 最大には数える(止まった時までの山は要りの下限)が、終わりまでの測りには数えない。
-;;; 余裕 SHAPE-PEAK-MARGIN と PEAK-STEP-MIB の訳: 行の山は前の山から PEAK-STEP-MIB 伸びた heartbeat でだけ書き直すので、実の山より最大で
-;;; その分小さい。同じ形の回どうしの揺れは、11-11 17:2x の保持の間(約 48 時間)に終わりまで走った同じ形の続く回の山を前の回までの最大と
-;;; 比べると、固い仕事を名乗る送り手の 24 組のうち 23 組が 1.25 倍の内だった(残りの 1 組は 1.69 倍)。保持の間の最大を使うので、大きく
-;;; 伸びた回が 1 度在れば、その形の次の回はその山で数える。
+;;; 余裕 PEAK-STEP-MIB の訳: 行の山は worker が task ごとに測った山(heartbeat の測りの task-peak-MiB — 見張りの 5 秒ごとの読みの最大で、
+;;; log の「job の memory の最大」と同じ値)で書く。走っている行は前の山から PEAK-STEP-MIB 伸びた heartbeat でだけ書き直すので、実の山より
+;;; 最大でその分小さい。終わった行は、worker が終わった後も名乗る最後の山で 1 度だけ書き直す(cluster_policy.task-peaks-noted)。以前は
+;;; heartbeat の今の使いの最大を山にし、heartbeat の間の短い山と、終わる前の最後の伸びを取り逃がした(11-10〜11-12 の行の山が worker の
+;;; log の山より最大 274 MiB 小さい — t47120 は 666 / 940 MiB)。
+;;; 形ごとの余裕(2026-11-15): 同じ形の回どうしの揺れは、11-11 17:2x の保持の間(約 48 時間)に終わりまで走った同じ形の続く回の山を前の
+;;; 回までの最大と比べると、固い仕事を名乗る送り手の 24 組のうち 23 組が 1.25 倍の内だった(残りの 1 組は 1.69 倍)。固定の 1.25 倍だけでは、
+;;; 回ごとに中身の違う仕事を 1 つの形で名乗る送り手や伸びる日次の回の要りが実の山を下回った(11-10〜11-12 の 127 本中 4 本 — 前の回までの
+;;; 最大からの伸びは 1.32〜1.55 倍)。形の近い回の finished の山の散らばり(最大 / 最小 — ShapePeak.spread)が 1.25 倍より大きい形は、その
+;;; 散らばりを余裕にする。上限 SHAPE-MARGIN-CAP は、散らばりの大きい形(何もしない回の山 600 MiB と組む回の山 2,500 MiB が混ざる日次の回)の
+;;; 要りが区画を独りで埋めない値 — 11-15 の保持の間の 137 本で、要りが山を下回る本数は上限 1.5〜2.0 のどれでも 7 本(固定の 1.25 倍は 8 本)で、
+;;; 要りの和 / 山の和は 1.6 で 1.88 倍・2.0 で 2.02 倍(固定は 1.72 倍)。残りの 7 本は、近い回が全部小さい山だった形が初めて大きく伸びた回で、
+;;; どの散らばりからも読めない(越えた分は jobs の層の上限が止める)。
 ;;; 山は worker の線 − 床(memory-line-mib)で切る — 線より大きく測れた山(線の外の使いを数えた読み)で、その形の task がどの worker にも
 ;;; 置けなくならない。置いた後に要りを越えて伸びる分は、worker が jobs の層の上限で止める(worker/core/eviction_rules の頭の註 — jobs の層の
 ;;; memory.max は追い出しの線の手前に掛かり、上に載る系が残す線を割った回は名乗りを越えた task だけを止める。worker が要りの越えを読むのは
@@ -191,8 +201,11 @@
 ;; task の測った山を書き直す刻み(MiB — 山が前の山からこれだけ伸びた heartbeat だけ行を書く — cluster_policy.task-peaks-noted。伸びる task の
 ;; 行を heartbeat ごとに書かない)。行の山は実の山より最大でこの分小さいので、同じ形の山で数える要りに足す(頭の註の測った山で数える要り)。
 (val PEAK-STEP-MIB 256)
-;; 同じ形の山で数える要りに掛ける率(頭の註の測った山で数える要り — 同じ形の続く回の山の揺れ)。
+;; 同じ形の山で数える要りに掛ける率の下限(頭の註の測った山で数える要り — 同じ形の続く回の山の揺れ)。形の近い回の散らばり
+;; (ShapePeak.spread)がこれより大きい形は散らばりを率にする。
 (val SHAPE-PEAK-MARGIN 1.25)
+;; 散らばりから取る率の上限(頭の註の形ごとの余裕 — 散らばりの大きい形の要りが区画を独りで埋めない)。
+(val SHAPE-MARGIN-CAP 1.6)
 ;; 予約 = 上限のこの分の 1。
 (val RESERVE-SHARE 6)
 ;; 積んでからこの長さを越えて memory の空きだけで置けない task に、worker の空きを取っておく(頭の註の長く待った task の取っておき)。
@@ -264,15 +277,27 @@
   (if (is memory-mib None) UNDECLARED-TASK-MIB memory-mib))
 
 
+(defk shape-margin-of [shape-peak]
+  {:pre [(: shape-peak (| ShapePeak None))] :post [(: % float) (<= SHAPE-PEAK-MARGIN % SHAPE-MARGIN-CAP)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "同じ形の山で数える要りに掛ける率を知るため(頭の註の形ごとの余裕): min(SHAPE-MARGIN-CAP, max(SHAPE-PEAK-MARGIN, 形の近い回の散らばり
+   shape-peak.spread))。形の山の無い task(None)は SHAPE-PEAK-MARGIN。"
+  (if (is shape-peak None)
+      (float SHAPE-PEAK-MARGIN)
+      (float (min SHAPE-MARGIN-CAP (max SHAPE-PEAK-MARGIN shape-peak.spread)))))
+
+
 (defk learned-need [declared peak shape-peak line]
   {:pre [(: declared (| int None)) (: peak (| int None)) (: shape-peak (| ShapePeak None)) (: line (| int None))] :post [(: % int)]
    :tags {:context "coordinator" :role "judgment"}}
   "task の要り(MiB)を、名乗った要りと測った山から知るため(頭の註の測った山で数える要り): declared = 名乗った要り(None = 名乗らない —
    need-of)・peak = この task の測った山・shape-peak = 同じ形の行の測った山(ShapePeak — None = 測っていない・形を名乗らない)・line = 置き先の
    worker の線 − 床(memory-line-mib — None = 測りの無い worker で、山を線で切らない)。同じ形に終わりまで走った行が在れば
-   min(⌈max(peak, 形の山) × SHAPE-PEAK-MARGIN⌉ + PEAK-STEP-MIB, line)(名乗りを見ない)、無ければ max(need-of declared, min(max(peak, 形の山), line))。"
+   min(⌈max(peak, 形の山) × 余裕⌉ + PEAK-STEP-MIB, line)(名乗りを見ない — 余裕 = shape-margin-of)、無ければ
+   max(need-of declared, min(max(peak, 形の山), line))。"
   (val measured (max (or peak 0) (if (is shape-peak None) 0 shape-peak.mib)))
-  (val learned (+ (ceil (* measured SHAPE-PEAK-MARGIN)) PEAK-STEP-MIB))
+  (<- margin float (shape-margin-of shape-peak))
+  (val learned (+ (ceil (* measured margin)) PEAK-STEP-MIB))
   (when (and (is-not shape-peak None) shape-peak.settled)
     (return (if (is line None) learned (min learned line))))
   (<- need int (need-of declared))

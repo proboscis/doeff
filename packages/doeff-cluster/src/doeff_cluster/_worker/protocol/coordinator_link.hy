@@ -1038,6 +1038,11 @@
       (when (is-not state.eviction None)
         (<- told (| tuple None) (task-uses-of state.eviction.uses state.eviction.uses-at-ms now-ms))
         (:= task-uses told))
+      ;; 同じ読みの task ごとの山を添える(終わった task の最後の山も — memory_watch の頭の註の task ごとの山。古さの決めは今の使いと同じ)。
+      (var task-peaks None)
+      (when (is-not state.eviction None)
+        (<- told (| tuple None) (task-uses-of state.eviction.peaks state.eviction.uses-at-ms now-ms))
+        (:= task-peaks told))
       ;; 見張りの最後の読みの常駐の job ごとの CPU と memory を添える(古い読みは名乗らない — load_rules.job-meters-told)。
       (var job-meters None)
       (when (is-not state.eviction None)
@@ -1080,7 +1085,7 @@
       (when (is-not state.eviction None)
         (<- told (| int None) (prepare-wait-of line state.eviction.prepare-wait))
         (:= prepare-wait told))
-      (val load (if (is reading None) None (replace reading.load :task-uses task-uses :jobs-room-mib jobs-room
+      (val load (if (is reading None) None (replace reading.load :task-uses task-uses :task-peaks task-peaks :jobs-room-mib jobs-room
                                                     :urgent-jobs-room-mib urgent-jobs-room
                                                     :lend-jobs-room-mib lend-jobs-room
                                                     :hosted-lend-mib held-lend

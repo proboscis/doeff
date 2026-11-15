@@ -19,7 +19,7 @@
 (import doeff_cluster._coordinator.core.task_claims [shape-peaks-of task-need-of families-noted])
 (import doeff_cluster._coordinator.core.cluster_policy [state-view])
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached Reply])
-(import doeff_cluster._coordinator.core.measured_room [SHAPE-PEAK-MARGIN PEAK-STEP-MIB])
+(import doeff_cluster._coordinator.core.measured_room [SHAPE-PEAK-MARGIN SHAPE-MARGIN-CAP PEAK-STEP-MIB])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json shape-family-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
@@ -110,12 +110,13 @@
                {"next" (! (task-of "next" shape))}))
   (<- table (table-from-rows rows))
   (<- need int (task-need-of (.row table "next") None (! (shape-peaks-of table))))
-  (<- expected int (learned-of (max recent-peaks)))
+  ;; 近い回の finished の山は 614〜7,025 MiB に散る(11 倍)ので、余裕は上限 SHAPE-MARGIN-CAP(measured_room の頭の註の形ごとの余裕)。
+  (val expected (+ (ceil (* (max recent-peaks) SHAPE-MARGIN-CAP)) PEAK-STEP-MIB))
   (assert (= need expected) #(need expected))
   ;; まだ終わっていない同じ形の行の山は近い回に入る(伸びている今の回は要りの下限)。
   (<- running (table-from-rows (| rows {"run" (replace (! (task-of "run" shape)) :phase "assigned" :worker "a" :started-ms 0 :peak-mib 12000)})))
   (<- with-running int (task-need-of (.row running "next") None (! (shape-peaks-of running))))
-  (assert (= with-running (! (learned-of 12000))) with-running))
+  (assert (= with-running (+ (ceil (* 12000 SHAPE-MARGIN-CAP)) PEAK-STEP-MIB)) with-running))
 
 
 (deftest test-a-run-stopped-over-its-claim-raises-the-next-claim

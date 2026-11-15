@@ -21,7 +21,7 @@
 (import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-memory-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld MachineCompartmentsView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ClaimedSum YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES TaskClaim])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ErrorReply TaskAccepted TaskProgress TaskMissing TaskResultTaken BoardTally BoardUsage BoardWritten BoardConflict BoardRefused WorkerInfo TaskOffer WarmOffer HeartbeatReply ServiceView WorkerView StatusView StateView GroupLimitView GroupHeld MachineCompartmentsView BoardRow WorkerReport GenerationOrder Placement ClusterState TaskRecord EnvFailed HandoffPhase UnplacedKind UnplacedView TaskUnplacedKind WorkerLoad ClaimedSum YieldCandidate YieldPlan PlacementClass ACCEPTED-FORMATS PLACED-PHASES ENDED-PHASES TaskClaim])
 (import doeff_cluster._coordinator.intent.cluster_model [NodeLabelsSeen KeepMark KnownExit SupersededRun HandoverBlocker GenerationRow])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit])
 (import doeff_cluster._shared.intent.compartment_model [HeldCompartment])
@@ -759,18 +759,26 @@
 (defk task-peaks-noted [tasks worker measured]
   {:pre [(: tasks (get Table TaskRecord)) (: worker str) (: measured (| MeasuredLoad None))] :post [(: % (get Table TaskRecord))]
    :tags {:context "coordinator" :role "judgment"}}
-  "worker の heartbeat の測りが名乗る task ごとの今の使い(measured.task-memory-MiB)で、その worker に置いた task の測った山(peak-mib)を
-   書き直すため(measured_room の頭の註の測った山で数える要り): 山が無い行は今の使い、在る行は今の使いが山 + PEAK-STEP-MIB 以上の時だけ。
-   測りの無い・task の使いを名乗らない heartbeat は表のまま。"
-  (when (or (is measured None) (is measured.task-memory-MiB None))
+  "worker の heartbeat の測りが名乗る task ごとの山(measured.task-peak-MiB — worker が task ごとに測った山。名乗らない前の版の worker は
+   今の使い measured.task-memory-MiB)で、その worker の task の測った山(peak-mib)を書き直すため(measured_room の頭の註の余裕
+   PEAK-STEP-MIB の訳): 置いた行は、山が無いか名乗りが山 + PEAK-STEP-MIB 以上の時だけ(伸びる task の行を heartbeat ごとに書かない)。
+   終わった行(ENDED-PHASES)は、山を名乗る worker(終わった task の最後の山も名乗り続ける)の名乗りが山より大きい時に 1 度だけ(終わりの
+   山は worker の log の山と同じ値になる — 今の使いは終わった行を書かない)。測りの無い・task の山も使いも名乗らない heartbeat は表のまま。"
+  (when (is measured None)
     (return tasks))
-  (setv writes [])
-  (for [#(id use) (.items measured.task-memory-MiB)]
-    (setv t (.row tasks id))
-    (when (and (is-not t None) (= t.worker worker) (in t.phase PLACED-PHASES)
-               (or (is t.peak-mib None) (>= use (+ t.peak-mib PEAK-STEP-MIB))))
-      (.append writes (TableWrite id (replace t :peak-mib use)))))
-  (if writes (.with-writes tasks (tuple writes)) tasks))
+  (val peaks-told (is-not measured.task-peak-MiB None))
+  (val told (if peaks-told measured.task-peak-MiB measured.task-memory-MiB))
+  (when (is told None)
+    (return tasks))
+  (val writes (tuple (gfor #(id peak) (.items told)
+                           :setv t (.row tasks id)
+                           :if (and (is-not t None) (= t.worker worker)
+                                    (or (and (in t.phase PLACED-PHASES)
+                                             (or (is t.peak-mib None) (>= peak (+ t.peak-mib PEAK-STEP-MIB))))
+                                        (and peaks-told (in t.phase ENDED-PHASES)
+                                             (or (is t.peak-mib None) (> peak t.peak-mib)))))
+                           (TableWrite id (replace t :peak-mib peak)))))
+  (if writes (.with-writes tasks writes) tasks))
 
 
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]

@@ -187,7 +187,7 @@
    "jobs" (lfor s view.services (| (job-to-json s.job) {"resourceVersion" s.resource-version}))
    ;; memoryMiB = 枠の file の行の常駐の job の memory の予算(名乗った worker だけに載せる)。measured = 機体の測った空き
    ;; (heartbeat の measured の写し {atMs cpus cpuBusy memoryTotalMiB memoryAvailableMiB cpuSomeAvg10 cpuFullAvg10 memorySomeAvg10
-   ;; memoryFullAvg10 cpuNice taskCpuSomeAvg10 taskMemoryMiB jobsRoomMiB prepareWaitMiB jobUses jobUsesAtMs} — 測れた worker だけに載せる。
+   ;; memoryFullAvg10 cpuNice taskCpuSomeAvg10 taskMemoryMiB taskPeakMiB jobsRoomMiB prepareWaitMiB jobUses jobUsesAtMs} — 測れた worker だけに載せる。
    ;; jobUses = 常駐の job ごとの [{job pid cpuMs rssMiB processes pssMiB pssAtMs bodyAnonymousMiB startedAtMs}])。taskRoom = 置き先の判断と同じ数えで、いま task を置ける数(測った空き
    ;; から — 測りの無い worker は 0)。taskMemoryRoomMiB = 置き先の判断と同じ数えで、いま置ける task の memory の要りの最大(測った空き −
    ;; 床 − 置いた task の「要り − 今の使い」の和 — 負は詰めすぎ)。claimedMiB = 置いた task の memory の申告の和(tasks 区画の和 —
