@@ -1,6 +1,8 @@
 //! Embeds the doeff commit this binary was built from as env DOEFF_LINTER_COMMIT (reported by `--version` and by `linter` in editor-json).
 //!
 //! - Automatic rebuilds (dotfiles agentcli doeff_linter_follow) pass a 40-digit sha in env DOEFF_LINTER_BUILD_COMMIT — it is used as is.
+//!   The wheel build entry (tools/doeff_cargo_backend.py — uv sync, uv build) also passes it: the last commit that changed a key file of
+//!   this package, which it puts in the wheel store key (`[tool.doeff-cargo-backend]` in pyproject.toml).
 //! - For a manual build, use `git rev-parse HEAD`. If the linter or indexer dir has uncommitted changes, append `+dirty`
 //!   (so a binary carrying local changes does not claim the mainline commit). Without git, `unknown`.
 use std::path::{Path, PathBuf};

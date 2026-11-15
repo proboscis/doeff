@@ -29,6 +29,13 @@ the rustc version is not part of the key. The key is needed before the store loo
 held a wheel for the same source -- slot sync on node-h, 2026-10-07. What determines a wheel's contents is the source, the Python
 ABI, the machine, the environment variables that change the build, and the build settings; the ABI exposed to Python is the C-API, so the rustc version does not leak outside the wheel).
 
+build commit (_build_commit, ADR-DOE-BUILD-001 R4 addendum 3): a package whose build.rs embeds the doeff commit it was built from (doeff-linter -- `--version` names it, and
+agora-controllers' commit hook looks it up in its doeff checkout) declares the env build.rs reads it from in `[tool.doeff-cargo-backend] build-commit-env`. For that package the
+entry decides the commit itself -- the caller's value in that env, else the last commit reachable from HEAD that changed a key file (`+dirty` when the key files differ from it,
+`unknown` without git) -- puts it in the key, and passes it to build.rs while building. Before this, build.rs read git's HEAD, which the key did not see: a wheel built in a
+checkout whose HEAD was a commit nobody else had (not pushed) was taken by every checkout with the same source, and their linter named that commit (2026-11-12). The commit is read with git (the one child process of key creation -- only for a declaring package; a missing or failing git gives `unknown` and never
+fails the key).
+
 store (_wheel_slot, _store_wheel): `<store>/<package>-<key>/<wheel>` plus a used marker `.used` (replaced on every use to advance the dir's mtime).
 The store = env DOEFF_WHEEL_CACHE, else `$XDG_CACHE_HOME/doeff-cargo-wheels` (else under ~/.cache). The layout is the same as doeff-cluster's worker
 wheel store (state/wheels/<package>-<key>/ and .used -- shared/core/native_wheel.py), and the daily verification shares it by passing the worker's /work/state/wheels as the
@@ -77,6 +84,7 @@ import json
 import os
 import platform
 import shutil
+import subprocess
 import sys
 import sysconfig
 import tempfile
@@ -116,6 +124,11 @@ BUILD_ENV_PREFIXES = ("CARGO_PROFILE_", "CARGO_BUILD_", "MATURIN_", "PYO3_")
 # Names that match the prefixes above but only change where and how many jobs build, not the contents -- including them in the key would split the store per working tree or machine load
 # and defeat sharing.
 PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", BUILD_DIR_ENV, "CARGO_BUILD_JOBS"})
+# Table of the package's pyproject.toml where a package declares the env through which its build.rs embeds the doeff commit it was built from (key build-commit-env --
+# the build commit from the header note).
+BUILD_COMMIT_TABLE = "doeff-cargo-backend"
+# Commit named when there is no git or the files have no git history (the same word build.rs uses).
+UNKNOWN_COMMIT = "unknown"
 # Suffixes of native extension module files (the build products that editable places in the venv's products dir).
 NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 
@@ -138,6 +151,15 @@ class StoredWheel:
     def built(self) -> bool:
         """Whether this call built it (it was in neither the local store nor the remote store, or it was corrupt)."""
         return self.source == "built"
+
+
+@dataclass(frozen=True)
+class BuildCommit:
+    """The doeff commit a package's build embeds (build commit from the header note): env = the env through which build.rs reads it (the package's declaration);
+    value = the commit passed there (40-digit sha, `+dirty` appended when the key files differ from it, or `unknown`)."""
+
+    env: str
+    value: str
 
 
 @dataclass(frozen=True)
@@ -221,7 +243,8 @@ def _maturin_wheel(target: Path, wheel_directory: str, config_settings: ConfigSe
 def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_wheel: Compile) -> StoredWheel:
     """Look up the wheel for the package's source key in the local store; if absent (or corrupt), fetch it from the off-machine store; if absent there too, build and
     store it -- the core of the entry for building and fetching Rust components (header note). Answer = the wheel in the store. One line on stderr (reused / fetched / seconds to build)."""
-    slot = _wheel_slot(package, config_settings)
+    claim = _build_commit(package)
+    slot = _wheel_slot(package, config_settings, claim)
     match _intact_wheel(slot):
         case Path() as found:
             _mark_used(slot)
@@ -236,7 +259,7 @@ def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_
             pass
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="doeff-wheel-out-") as out:
-        with cargo_target_dir() as target:
+        with cargo_target_dir() as target, _build_commit_env(claim):
             name = compile_wheel(target, out, config_settings)
         stored = _store_wheel(slot, Path(out) / name)
     print(f"doeff_cargo_backend: wheel built ({time.monotonic() - started:.0f} s) -- {name} placed in {slot}", file=sys.stderr)
@@ -368,11 +391,15 @@ def build_editable(
     return editable_from_store(wheel_directory, config_settings, _maturin_wheel)
 
 
-def _source_files(package: Path) -> list[Path]:
-    """List the build-relevant files (globs of the package's tool.uv.cache-keys files, or the default -- the same set uv uses to decide on rebuilds) in relative-path order."""
+def _source_globs(package: Path) -> list[str]:
+    """Globs (from the package dir) of the build-relevant files: the package's tool.uv.cache-keys files, or the default -- the same set uv uses to decide on rebuilds."""
     declared = tomllib.loads((package / "pyproject.toml").read_text(encoding="utf-8")).get("tool", {}).get("uv", {}).get("cache-keys", [])
-    globs = [key["file"] for key in declared if isinstance(key, dict) and isinstance(key.get("file"), str)] or list(DEFAULT_SOURCE_GLOBS)
-    matched = {Path(hit) for pattern in globs for hit in glob.glob(str(package / pattern), recursive=True)}
+    return [key["file"] for key in declared if isinstance(key, dict) and isinstance(key.get("file"), str)] or list(DEFAULT_SOURCE_GLOBS)
+
+
+def _source_files(package: Path) -> list[Path]:
+    """List the build-relevant files (_source_globs) in relative-path order."""
+    matched = {Path(hit) for pattern in _source_globs(package) for hit in glob.glob(str(package / pattern), recursive=True)}
     return sorted((path for path in matched if path.is_file()), key=lambda path: os.path.relpath(path, package))
 
 
@@ -392,6 +419,62 @@ def _build_environment() -> str:
         if (name in BUILD_ENV_NAMES or name.startswith(BUILD_ENV_PREFIXES)) and name not in PLACE_ONLY_ENV_NAMES
     )
     return repr(chosen)
+
+
+def _git(package: Path, args: list[str]) -> str | None:
+    """Run git in the package dir and return its stdout (trimmed) on success; None when git is missing or fails (no git, not a checkout) -- making the key never fails.
+    Env `GIT_*` is removed for the same reason as in build.rs: built inside another repo's git hook, the `GIT_DIR` etc. that git passes to the hook would point git at that repo.
+    """
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    try:
+        done = subprocess.run(["git", *args], cwd=package, env=env, capture_output=True, text=True, check=False)
+    except OSError:
+        return None
+    return done.stdout.strip() if done.returncode == 0 else None
+
+
+def _build_commit(package: Path) -> BuildCommit | None:
+    """The doeff commit the package's build embeds, for a package that declares the env build.rs reads it from (`[tool.doeff-cargo-backend] build-commit-env`); None
+    for a package without the declaration. It goes into the key, and the build passes it to build.rs (the build commit from the header note).
+    A value the caller passes in that env is used as is (build.rs does the same). Otherwise = the last commit, reachable from HEAD, that changed a key file (_source_globs)
+    -- not HEAD: a commit that changed no key file builds the same binary, so the wheel is shared across them, and a commit nobody else has (not pushed) is named only when
+    that commit itself changed the key files, in which case no other checkout has the same key (same commit and same contents). `+dirty` is appended when the key files
+    differ from that commit (uncommitted or untracked changes); `unknown` without git."""
+    match _pyproject(package).get("tool"):
+        case {"doeff-cargo-backend": {"build-commit-env": str() as env}}:
+            pass
+        case _:
+            return None
+    given = os.environ.get(env, "").strip()
+    if given:
+        return BuildCommit(env=env, value=given)
+    pathspecs = [f":(glob){pattern}" for pattern in _source_globs(package)]
+    match _git(package, ["log", "-1", "--format=%H", "--", *pathspecs]):
+        case str() as commit if commit:
+            pass
+        case _:
+            return BuildCommit(env=env, value=UNKNOWN_COMMIT)
+    changed = _git(package, ["status", "--porcelain", "--untracked-files=all", "--", *pathspecs])
+    return BuildCommit(env=env, value=f"{commit}+dirty" if changed else commit)
+
+
+@contextmanager
+def _build_commit_env(claim: BuildCommit | None) -> Iterator[None]:
+    """Pass the build commit (the value in the key) to build.rs through its env while building, then restore the env."""
+    match claim:
+        case None:
+            yield
+        case BuildCommit(env=env, value=value):
+            before = os.environ.get(env)
+            os.environ[env] = value
+            try:
+                yield
+            finally:
+                match before:
+                    case None:
+                        del os.environ[env]
+                    case str():
+                        os.environ[env] = before
 
 
 def _python_abi() -> str:
@@ -414,14 +497,16 @@ def _maturin_config(package: Path) -> dict[str, object]:
             return {}
 
 
-def _wheel_slot(package: Path, config_settings: ConfigSettings | None) -> Path:
-    """Decide the dir for the wheel from a hash of the source contents, tool versions, machine, Python ABI, environment variables that change the build, and build settings
-    (independent of file mtimes and the working tree path -- CARGO_TARGET_DIR and the like, which only change the location, are not included). The dir name is <package>-<key>
+def _wheel_slot(package: Path, config_settings: ConfigSettings | None, claim: BuildCommit | None) -> Path:
+    """Decide the dir for the wheel from a hash of the source contents, tool versions, machine, Python ABI, environment variables that change the build, build settings,
+    and the commit the build embeds (claim -- _build_commit; None for a package that embeds none) (independent of file mtimes and the working tree path -- CARGO_TARGET_DIR and the like, which only change the location, are not included). The dir name is <package>-<key>
     (the working tree's dir name differs per working tree so it is not used; same layout as the worker's wheel store -- header note)."""
     digest = hashlib.sha256()
     lines = (
         _tool_versions(), sys.platform, platform.machine(), repr(platform.libc_ver()), _python_abi(), _build_environment(),
         repr(sorted((config_settings or {}).items())),
+        # Only a package that embeds a commit adds this line, so the other packages keep their keys (and their stored and remote wheels).
+        *([] if claim is None else [repr(claim)]),
     )
     for line in lines:
         digest.update(line.encode("utf-8") + b"\0")
