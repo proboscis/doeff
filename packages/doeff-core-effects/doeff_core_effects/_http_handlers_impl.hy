@@ -24,6 +24,7 @@
 (require doeff-hy.handle [defhandler])
 
 (import hashlib)
+(import doeff._named [named])
 (import json)
 (import pickle)
 (import time)
@@ -197,8 +198,9 @@
    client the first scope had already closed). Also handle ResolveHost — the name lookup alone, with resolver (host -> the
    awaitable of getaddrinfo's rows; the default is the running loop's getaddrinfo, the one the client's connections use)."
   (defn #^ Program scoped-handler [#^ (| Program EffectBase) program]
+    "(documentation given at run time by doeff._named)"
     (_run-with-scoped-client client-factory sleep resolver program))
-  (_copy-handler-metadata scoped-handler (_http-production-handler None None sleep resolver))
+  (setv scoped-handler (_with-handler-metadata scoped-handler (_http-production-handler None None sleep resolver)))
   ;; Put the same declaration in the installer made on every call too -- so that the bundle of stacked_handlers can build the union of the inner handlers' declarations (reading of #3724).
   (setv scoped-handler.__doeff_handles__ HTTP-PRODUCTION-HANDLES
         scoped-handler.__doeff_effects__ HTTP-PRODUCTION-EFFECTS)
@@ -245,16 +247,19 @@
 
 (defn _compose-recording-handler [record-handler production-handler]
   (defn recording-handler [program]
+    "(documentation given at run time by doeff._named)"
     (production-handler (record-handler program)))
-  (_copy-handler-metadata recording-handler record-handler)
-  recording-handler)
+  (_with-handler-metadata recording-handler record-handler))
 
 
-(defn _copy-handler-metadata [target source]
-  (setv target.__doc__ source.__doc__)
+(defn _with-handler-metadata [template source]
+  "template (its docstring doeff._named's TEMPLATE_DOC) made again with source's documentation and handler marks — made under
+   the documentation, not by writing it after (doeff._named: the write stalls the scheduler thread on the free-threaded build)."
+  (setv target (named template template.__name__ template.__qualname__ :doc source.__doc__))
   (setv target._doeff_is_handler_fn True)
   (setv target.__doeff_name__ source.__doeff_name__)
-  (setv target.__doeff_handler_data__ source.__doeff_handler_data__))
+  (setv target.__doeff_handler_data__ source.__doeff_handler_data__)
+  target)
 
 
 (defn _perform-request-with-retries [client gate request sleep]

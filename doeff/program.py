@@ -41,6 +41,8 @@ from doeff_vm import WithHandler as WithHandlerType
 from doeff_vm import WithObserve as WithObserve
 from doeff_vm._effect_types import check_handler_annotation
 
+from doeff._named import named, wrapped_as
+
 if TYPE_CHECKING:
     from typing_extensions import deprecated
     from doeff_vm.doeff_vm import StateHandler
@@ -243,19 +245,22 @@ def _yields_its_control(function: Callable[..., object]) -> Callable[..., object
     """
     from doeff import DoExpr, EffectBase  # doeff imports this module, so read them when called
 
-    @functools.wraps(function)
+    label_of = _handler_label  # a closure, not a global: answer is made in function's module
+
     def answer(*args: object, **kwargs: object) -> object:
+        """(documentation given at run time by doeff._named)"""
         value = function(*args, **kwargs)
         if isinstance(value, (DoExpr, EffectBase)):
             node = type(value).__name__
             raise TypeError(
-                f"{_handler_label(function).qualname} returned {node}(...) without yielding it. "
+                f"{label_of(function).qualname} returned {node}(...) without yielding it. "
                 f"A handler body is a @do function: yield the {node} to run it and return what "
                 f"it gives back — return (yield {node}(...)) (ADR-DOE-CORE-003)"
             )
         return value
 
-    return answer
+    # functools.wraps without writing the names (doeff._named — handlers are built per call).
+    return wrapped_as(answer, function)
 
 
 def _as_do_function(raw_handler: object, caller: str) -> Callable[..., object]:
@@ -363,29 +368,33 @@ def _install_raw(
     # cloudpickle still carries them to a detached task (a weak reference in the closure could not
     # be pickled).
 
+    # The installer is made under its names (doeff._named — writing them after stalls the
+    # scheduler thread on the free-threaded build, and on_raise builds one for every on-raise).
     install: Callable[..., object]
     if former_factory:
 
         def install_former_factory(program: object = _NO_PROGRAM) -> object:
+            """(documentation given at run time by doeff._named)"""
             if program is _NO_PROGRAM:
                 warnings.warn(
                     _called_as_former_factory(installer_name), DeprecationWarning, stacklevel=2
                 )
-                return install_former_factory
+                return install
             return WithHandlerType(body, program)
 
-        install = install_former_factory
+        template = install_former_factory
     else:
 
         def install_handler(program: object = _NO_PROGRAM) -> object:
+            """(documentation given at run time by doeff._named)"""
             if program is _NO_PROGRAM:
                 raise TypeError(_called_without_program(installer_name))
             return WithHandlerType(body, program)
 
-        install = install_handler
-    install.__name__ = installer_name
-    install.__qualname__ = label.qualname if name is None else name
-    install.__doc__ = label.doc
+        template = install_handler
+    install = named(
+        template, installer_name, label.qualname if name is None else name, doc=label.doc
+    )
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
     install_meta.__doeff_handler_data__ = body
@@ -473,8 +482,8 @@ def _rust_handler_installer(raw_handler: "StateHandler") -> ProgramHandler:
             raise TypeError(_called_without_program(install.__name__))
         return WithHandlerType(raw_handler, program)
 
-    install.__name__ = raw_handler.__name__
-    install.__qualname__ = raw_handler.__qualname__
+    # Made under the handler object's names (doeff._named); the closure reads the named one.
+    install = named(install, raw_handler.__name__, raw_handler.__qualname__)
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
     install_meta.__doeff_handler_data__ = raw_handler
@@ -535,12 +544,14 @@ def stacked_handlers(*handlers: Callable[..., object]) -> ProgramHandler:
     installers = tuple(_bundled_installer(value) for value in handlers)
 
     def install(body: object) -> "Program[Any]":
+        """(documentation given at run time by doeff._named)"""
         return with_handlers(installers, body)
 
-    install.__name__ = "stacked_handlers"
-    install.__qualname__ = "stacked_handlers"
-    install.__doc__ = "Handlers stacked as one installer, outermost first: " + ", ".join(
-        _handler_label(installer).name for installer in installers
+    install = named(
+        install,
+        "stacked_handlers",
+        doc="Handlers stacked as one installer, outermost first: "
+        + ", ".join(_handler_label(installer).name for installer in installers),
     )
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
@@ -559,14 +570,13 @@ def _former_factory_stack(name: str, *handlers: Callable[..., object]) -> Former
     bundle = stacked_handlers(*handlers)
 
     def install(program: object = _NO_PROGRAM) -> object:
+        """(documentation given at run time by doeff._named)"""
         if program is _NO_PROGRAM:
             warnings.warn(_called_as_former_factory(name), DeprecationWarning, stacklevel=2)
             return install
         return bundle(cast("Program[Any]", program))
 
-    install.__name__ = name
-    install.__qualname__ = name
-    install.__doc__ = bundle.__doc__
+    install = named(install, name, doc=bundle.__doc__)
     install_meta = cast(Any, install)
     install_meta._doeff_is_handler_fn = True
     for mark in ("__doeff_handles__", "__doeff_effects__"):

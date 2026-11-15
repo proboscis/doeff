@@ -14,13 +14,14 @@ import inspect
 import tokenize
 import warnings
 from collections.abc import Callable, Generator
-from functools import partial, wraps
+from functools import partial
 from textwrap import dedent
 from types import FunctionType, MethodType
 from typing import Any, Never, ParamSpec, TypeVar, overload
 
 from doeff_vm import DoFunction
 
+from doeff._named import wrapped_as
 from doeff.program import Expand
 
 P = ParamSpec("P")
@@ -392,14 +393,18 @@ def program_factory(
     definition = DoFunction(fn, list(tail_resume_lines), _is_generator_function(fn))
     make_call = definition.make_call
 
-    @wraps(fn)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> Expand[Any]:
+        """(documentation given at run time by doeff._named)"""
         return make_call(args, kwargs)
 
+    # Named as fn when it is made, not by writing its names after (doeff._named: a write of a
+    # function's names stalls the scheduler thread on the free-threaded build, and @do runs at
+    # run time for every def decorated inside a call).
+    wrapper = wrapped_as(wrapper, fn)
     # Installed as a handler, the VM calls `fn` directly and runs the generator as
     # the handler's stream (same end state as evaluating the Expand above, without
     # building it per effect) — doeff_vm._effect_types.handler_spec.
-    # @wraps copied fn.__dict__; a spec cached on fn (double @do) must not describe us.
+    # wrapped_as copied fn.__dict__; a spec cached on fn (double @do) must not describe us.
     wrapper.__dict__.pop("__doeff_handler_spec__", None)
     wrapper.__doeff_generator_function__ = fn  # type: ignore[attr-defined]
     wrapper.__doeff_tail_resume_lines__ = tail_resume_lines  # type: ignore[attr-defined]

@@ -41,6 +41,7 @@ from typing import (
 )
 
 from doeff import BindOpener, Call, EffectBase, Err, Expand, IRStream, Ok, Pure
+from doeff._named import named
 from doeff.do import do
 from doeff.program import Pass, ProgramHandler, Transfer, _called_as_former_factory
 from doeff.program import handler as _program_handler
@@ -450,18 +451,24 @@ def _former_factory_boundary(
     emits a DeprecationWarning for one version and returns the handler itself (ADR-DOE-API-002 R3)."""
 
     def install(program: "Bindable" = _NO_PROGRAM) -> object:
+        """(documentation given at run time by doeff._named)"""
         if program is _NO_PROGRAM:
             warnings.warn(_called_as_former_factory(name), DeprecationWarning, stacklevel=2)
             return install
         return clauses(opened(program))
 
-    install.__doc__ = doc
-    return cast(FormerFactoryBoundaryHandler, _marked(install, name, clauses))
+    # The closure reads the named installer (it answers itself when called with no program).
+    install = _marked(install, name, clauses, doc)
+    return cast(FormerFactoryBoundaryHandler, install)
 
 
-def _marked(install: Callable[..., object], name: str, clauses: ProgramHandler) -> BoundaryHandler:
-    install.__name__ = name
-    install.__qualname__ = name
+def _marked(
+    template: Callable[..., object], name: str, clauses: ProgramHandler, doc: object = None
+) -> BoundaryHandler:
+    """The boundary installer ``template`` made under ``name`` (and ``doc`` when given), with the
+    handler marker and the clauses of ``clauses``. Made under its names, not by writing them after
+    (doeff._named — on_raise and absent_as build one for every evaluation)."""
+    install = named(template, name) if doc is None else named(template, name, doc=doc)
     install_meta = cast(Any, install)  # put marker fields on the function (untyped fields -- the same placement as doeff.program's installer)
     install_meta._doeff_is_handler_fn = True
     install_meta.__doeff_handler_data__ = cast(Any, clauses).__doeff_handler_data__  # read the untyped field that the handler places
