@@ -111,7 +111,61 @@
         :update "handoff" :readiness {"windowSeconds" 5}))
 
 
-;; --- 退きの保ちを持つ handoff の service: 仕事を走らせたまま退く知らせを待ち、受けたら退きの保ち(名前付きの lease
+;; --- 動いたまま一時 ready=偽 を名乗る handoff の service(依る service が止まって鮮度が無い間も答え続ける job の代役 — job の Service の
+;; 振り先の検 tests/test_job_endpoints_follow_ready_processes.hy)。起きてから ready-for 秒 Ready を、続く stall-for 秒 ready=偽 を、その後は
+;; また Ready を拍ごとに報告し、止められるまで動き続ける。
+(import doeff_cluster [ReportReady])
+
+
+(defk stalling-beats [ready-for stall-for]
+  {:pre [(: ready-for float) (: stall-for float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "依る service の止まりの代役として、ready-for 秒 Ready・stall-for 秒 ready=偽・その後 Ready を 1 秒ごとに報告するため(止められるまで)。"
+  (<- started int (now-epoch-ms))
+  (while True
+    (<- at int (now-epoch-ms))
+    (val age (/ (- at started) 1000))
+    (val ready (not (<= ready-for age (+ ready-for stall-for))))
+    (<- (ReportReady ready (if ready "書けた" "依る service が止まっている(検の版)")))
+    (<- (Delay 1.0)))
+  None)
+
+
+(defk stalling-body [prefix ready-for stall-for]
+  {:pre [(: prefix str) (: ready-for float) (: stall-for float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "準備の報告(stalling-beats)を並べ、盤に起きた刻を書き、止められるまで動き続けるため。"
+  (<- ctx RunContext (Ask HOST-CONTRACT.run-context-key))
+  (<- _beats Task (Spawn (stalling-beats ready-for stall-for)))
+  (<- begun int (now-epoch-ms))
+  (<- (WriteShared (.format "{}/{}/begun" prefix ctx.instance) (OpaqueJson.of {"at" begun})))
+  (<- (Delay 3600.0))
+  "kept")
+
+
+(defk stalling-program [foundation prefix ready-for stall-for]
+  {:pre [(: foundation Callable) (: prefix str) (: ready-for float) (: stall-for float)] :post [(: % str)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service: stalling-body を土台で包む。"
+  (<- reason str (foundation (stalling-body prefix ready-for stall-for)))
+  reason)
+
+
+(defsystem stalling-hosts [#^ Callable foundation]
+  "見本の系: handoff で入れ替える、起きて 30 秒後から 20 秒 ready=偽 を名乗り、その後 Ready に戻る service"
+  (server (stalling-program foundation "serve" 30.0 20.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "handoff"
+          :readiness {"windowSeconds" 5}))
+
+
+;; 世代をまたぐ入れ替えの間に旧い世代の server が ready=偽 を名乗る形: server は起きて 80 秒後から 60 秒 ready=偽(新しい世代の server は
+;; 起きてすぐ Ready)・slow は起きてから 60 秒 Ready を報告しない(新しい世代の受け渡しを止め、旧い世代の server を動かし続ける)。
+(defsystem stalling-beside-slow-start [#^ Callable foundation]
+  "見本の系: handoff で入れ替える service 2 つ — server(起きて 80 秒後から 60 秒 ready=偽)と slow(起きてから 60 秒 Ready を報告しない)"
+  (server (stalling-program foundation "serve" 80.0 60.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}
+          :update "handoff" :readiness {"windowSeconds" 5})
+  (slow (retiring-program foundation "slow" True 1.0 60.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}
+        :update "handoff" :readiness {"windowSeconds" 5}))
+
+
+;; --- 退きの保ちを持つ handoff の service:仕事を走らせたまま退く知らせを待ち、受けたら退きの保ち(名前付きの lease
 ;; RETIREMENT-HOLD)を取り、仕事の終わりを待って保ちを返し、退いた刻を書いて自分で終わる(上に載る系が、受付を渡した後に走っている仕事を
 ;; 終わりまで回す形)。保ちを取らない版(hold = 偽)は、寿命の上限で止められる対照。土台は名前付きの lease の担い手を並べた物
 ;; (tests/fixtures/lease_programs.hy の lease-sim-foundation)。

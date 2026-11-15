@@ -39,7 +39,7 @@
 (import doeff_cluster [sim-cluster SimWorker SimGeneration RollWorker CrashGeneration GenerationsOf ProcessesOf ReportsOf ReadCoordinator
                        KubeCalls StopCoordinator KillWorker])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.working_programs [serving-beside-slow-start serving-hosts])
+(import tests.fixtures.working_programs [serving-beside-slow-start serving-hosts stalling-hosts stalling-beside-slow-start])
 
 (val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"])))
 ;; 偽の k8s の job の Service(上に載る系の deploy の宣言の形 — selector を持たず、label で job を名指す)。
@@ -183,3 +183,117 @@
   (assert (= seen.during seen.before) seen)
   ;; 起き直して落ち着いた後は、黙った世代の Pod を振り先から外す。
   (assert (= seen.after (frozenset)) seen))
+
+
+;; --- 動いたまま ready=偽 を名乗る job(依る service の止まりの代役 — 2026-11-12 08:41:48〜08:52:48 UTC)--------------------------------
+;; 出自: job の process は 1 つだけ動いていて、依る service が止まっている間も cache で答え続け、準備の報告に ready=偽(鮮度が無い)を
+;; 名乗った。coordinator は振り先を ready で active な process の在る Pod だけにしていたので、その Service の振り先を 11 分 空にし、
+;; cluster の中から Connection refused になった。求める姿: 振り先は job を動かしている process の在る Pod で、ready=偽 で空にならない。
+;; ready は候補の中の絞りにだけ使う(入れ替えの間、ready の新しい process が在れば旧い ready=偽 の process の Pod へ振らない)。
+
+
+(defrecord StallSample
+  "1 刻の姿: at = 刻・pods = 生きている w1 の世代の Pod の IP・routed = coordinator が書いた振り先・ready = 生きている server の process の
+   最新の準備の報告の ready(報告が無ければ None)。"
+  (#^ int at)
+  (#^ frozenset pods)
+  (#^ frozenset routed)
+  (#^ (| bool None) ready))
+
+
+(defk latest-ready [job pids]
+  {:pre [(: job str) (: pids frozenset)] :post [(: % (| bool None))] :tags {:context "doeff-cluster-test" :role "program"}}
+  "job の process のうち pid が pids に在り生きている物から coordinator に届いた、最新の準備の報告の ready を知るため(無ければ None)。"
+  (<- processes tuple (ProcessesOf job))
+  (<- reports tuple (ReportsOf job))
+  (val instances (frozenset (gfor p processes :if (and (is p.ended-ms None) (in p.pid pids)) p.instance)))
+  (val mine (tuple (gfor r reports :if (and (= r.kind "readiness") (in r.instance instances)) r)))
+  (if mine (. (get mine -1) ready) None))
+
+
+(defk sample-stall [seconds]
+  {:pre [(: seconds int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 秒ごとに seconds 回、刻ごとの姿(StallSample)を読む。"
+  (var samples #())
+  (for [_ (range seconds)]
+    (<- (Delay 1.0))
+    (<- at int (now-epoch-ms))
+    (<- generations tuple (GenerationsOf "w1"))
+    (val live (tuple (gfor g generations :if (not g.down) g)))
+    (<- routed frozenset (routed-ips at))
+    (<- ready (| bool None) (latest-ready "server" (frozenset (gfor g live pid g.pids pid))))
+    (:= samples (+ samples #((StallSample :at at :pods (frozenset (gfor g live g.pod-ip)) :routed routed :ready ready)))))
+  samples)
+
+
+(defk served-through-a-stall []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: server が Ready になった後(25 秒)から 40 秒、1 秒ごとに読む(server は起きて 30 秒後から 20 秒 ready=偽 を名乗り、Ready に戻る)。"
+  (<- (Delay 25.0))
+  (<- samples tuple (sample-stall 40))
+  samples)
+
+
+(deftest test-the-route-keeps-the-only-running-process-while-it-claims-not-ready
+  (<- samples tuple (sim-cluster :notice-broker (MemoryBroker) :workers #(W1) :services SERVICES :timing (ClusterTiming)
+                                 (stalling-hosts sim-foundation) (served-through-a-stall)))
+  ;; 筋書きの検: ready=偽 を名乗る刻と、その後 Ready に戻った刻が在る。
+  (val stalled (tuple (gfor s samples :if (is s.ready False) s)))
+  (assert (>= (len stalled) 15) samples)
+  (assert (any (gfor s samples :if (> s.at (. (get stalled -1) at)) (is s.ready True))) samples)
+  ;; 各刻に、job を動かしている唯一の process の在る Pod が振り先に在る(ready=偽 の間も空にならない)。
+  (for [sample samples]
+    (assert (= (len sample.pods) 1) sample)
+    (assert (= sample.routed sample.pods) sample)))
+
+
+(defrecord HandoverSample
+  "入れ替えの間の 1 刻の姿: elder-ip / younger-ip = 旧い・新しい世代の Pod の IP・elder-ready / younger-ready = その世代の生きている
+   server の process の最新の準備の報告の ready(process か報告が無ければ None)・routed = coordinator が書いた振り先。"
+  (#^ int at)
+  (#^ str elder-ip)
+  (#^ str younger-ip)
+  (#^ (| bool None) elder-ready)
+  (#^ (| bool None) younger-ready)
+  (#^ frozenset routed))
+
+
+(defk sample-handover [elder seconds]
+  {:pre [(: elder str) (: seconds int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "1 秒ごとに seconds 回、旧い世代 elder と新しい世代の刻ごとの姿(HandoverSample)を読む。"
+  (var samples #())
+  (for [_ (range seconds)]
+    (<- (Delay 1.0))
+    (<- at int (now-epoch-ms))
+    (<- generations tuple (GenerationsOf "w1"))
+    (val old (next (gfor g generations :if (= g.boot elder) g)))
+    (val new (next (gfor g generations :if (and (not g.elder) (!= g.boot elder)) g)))
+    (<- routed frozenset (routed-ips at))
+    (<- elder-ready (| bool None) (latest-ready "server" (if old.down (frozenset) (frozenset old.pids))))
+    (<- younger-ready (| bool None) (latest-ready "server" (frozenset new.pids)))
+    (:= samples (+ samples #((HandoverSample :at at :elder-ip old.pod-ip :younger-ip new.pod-ip :elder-ready elder-ready
+                                             :younger-ready younger-ready :routed routed)))))
+  samples)
+
+
+(defk elder-stalled-during-handover []
+  {:pre [] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: 両方の job が Ready になった後(70 秒)に w1 の新しい世代を先に起こし(slow は新しい世代でまだ Ready を名乗らないので受け渡しは
+   済まず、旧い世代の server は動き続ける)、旧い世代の server が ready=偽 を名乗る間(起きて 80 秒後から)を含む 30 秒を読む。"
+  (<- (Delay 70.0))
+  (<- elder (| str None) (RollWorker "w1"))
+  (assert (is-not elder None))
+  (<- (Delay 15.0))
+  (<- samples tuple (sample-handover elder 30))
+  samples)
+
+
+(deftest test-the-route-narrows-to-the-ready-process-while-the-old-one-claims-not-ready-during-a-handover
+  (<- samples tuple (sim-cluster :notice-broker (MemoryBroker) :workers #(W1) :services SERVICES :timing (ClusterTiming)
+                                 (stalling-beside-slow-start sim-foundation) (elder-stalled-during-handover)))
+  ;; 筋書きの検: 旧い世代の server が動いたまま ready=偽・新しい世代の server が Ready の刻が在る。
+  (val narrowed (tuple (gfor s samples :if (and (is s.elder-ready False) (is s.younger-ready True)) s)))
+  (assert (>= (len narrowed) 10) samples)
+  ;; その刻の振り先は新しい世代の Pod だけ(ready の process の在る Pod へ絞る)。
+  (for [sample narrowed]
+    (assert (= sample.routed (frozenset [sample.younger-ip])) sample)))

@@ -2,9 +2,15 @@
 ;;; intent/kube_model の FollowJobServices・ApplyEndpointSlice)。
 ;;;
 ;;; job の Service(label kube_service_model.JOB-ENDPOINTS-LABEL を持つ k8s の Service)は selector を持たず、振り先を coordinator が job
-;;; ごとの Ready から書く:
-;;;   振り先 = lease の内の worker の世代のうち、その job の process を running と報告し、その process から window の内に ready で
-;;;            role active の準備の報告を受けている世代の Pod の IP の組(heartbeat の podIp)。
+;;; を動かしている process から書く:
+;;;   候補   = lease の内の worker の世代のうち、その job の process を running と報告し、その process から window の内に role active の
+;;;            準備の報告(ready の真偽を問わない)を受けている世代の Pod の IP の組(heartbeat の podIp)。
+;;;   振り先 = 候補のうち ready の報告を送った process の在る Pod。1 つも無ければ候補の全部。
+;;; 振り先は ready=偽 で空にならない: 準備の報告の ready は job の仕事の健康の印(入れ替えの合図・Rollout・Service の Ready が読む)で、
+;;; job は依る service が止まって鮮度が無い間も、答え続けながら ready=偽 を名乗る。答え続けている process を振り先から外す印ではない
+;;; (role active が「仕事をしている」を名乗る)。ready は候補の中の絞りにだけ使う — 入れ替えの間、まだ同期していない新しい process へ
+;;; 振らない。以前は ready で active の process の在る Pod だけを振り先にしたので、依る service の短い止まりの間、答え続けている唯一の
+;;; process の振り先が空になり、cluster の中から Connection refused になった(2026-11-12 08:41:48〜08:52:48 UTC の 11 分)。
 ;;; 世代をまたぐ受け渡し(RollingUpdate — 新しい Pod は受け渡しが済むまで NotReady・AL-D2k)の間も、job を今動かしている process の在る
 ;;; Pod へ振る: 新旧どちらも active の間は両方・standby の process しか無い世代は入れない・lease の切れた世代(黙った Pod)は外す。Pod の
 ;;; Ready(readinessProbe)は Deployment の入れ替えの進みにだけ使い、振り先には使わない。
@@ -32,7 +38,7 @@
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff_cluster._shared.intent.job_model [JobPhase])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState JobEndpointSlice JobServicesSeen SliceWritten SliceRefused])
-(import doeff_cluster._coordinator.core.resource_policy [active-ready-senders])
+(import doeff_cluster._coordinator.core.resource_policy [active-senders active-ready-senders])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [earliest-due])
 
@@ -60,17 +66,25 @@
 (defk serving-addresses [state job now timing]
   {:pre [(: state ClusterState) (: job str) (: now int) (: timing ClusterTiming)] :post [(: % (get tuple #(str ...)))]
    :tags {:context "coordinator" :role "judgment"}}
-  "job の Service の振り先の Pod の IP の組(重ねない・順)を決めるため(頭の註): lease の内の世代の報告のうち、job の process(名が job か、
-   入れ替えで job から退いた process)を running と報告し、その process から ready で role active の準備の報告を受けている世代の Pod の IP。
+  "job の Service の振り先の Pod の IP の組(重ねない・順)を決めるため(頭の註): 候補 = lease の内の世代の報告のうち、job の process(名が
+   job か、入れ替えで job から退いた process)を running と報告し、その process から window の内に role active の準備の報告(ready の
+   真偽を問わない)を受けている世代の Pod の IP。候補のうち ready の報告を送った process の在る Pod が在ればそれだけ、無ければ候補の全部。
    readiness を宣言しない job は running の process の在る世代。Pod の IP を名乗らない世代(Pod の外・旧い worker)は数えない。"
-  (<- senders (| frozenset None) (active-ready-senders state job now))
+  (<- active (| frozenset None) (active-senders state job now))
+  (<- ready (| frozenset None) (active-ready-senders state job now))
   (<- reports tuple (generation-reports state now timing))
-  (tuple (sorted (set (gfor #(worker report) reports
-                            :if (and report.pod-ip
-                                     (any (gfor row report.jobs
-                                                :if (and (= (or row.retired-from row.name) job) (= row.phase JobPhase.RUNNING.value) row.instance)
-                                                (or (is senders None) (in #(worker row.instance) senders)))))
-                            report.pod-ip)))))
+  ;; 候補の世代ごとの #(Pod の IP job の process の送り手の組)— 送り手は running の job の process のうち active の報告を送った物。
+  (val candidates (tuple (gfor #(worker report) reports
+                               :if report.pod-ip
+                               :setv senders (tuple (gfor row report.jobs
+                                                          :if (and (= (or row.retired-from row.name) job) (= row.phase JobPhase.RUNNING.value)
+                                                                   row.instance (or (is active None) (in #(worker row.instance) active)))
+                                                          #(worker row.instance)))
+                               :if senders
+                               #(report.pod-ip senders))))
+  ;; ready の報告を送った process の在る候補(入れ替えの間、まだ同期していない新しい process へ振らない)。無ければ候補の全部。
+  (val readied (tuple (gfor #(ip senders) candidates :if (or (is ready None) (any (gfor s senders (in s ready)))) ip)))
+  (tuple (sorted (set (or readied (gfor #(ip _) candidates ip))))))
 
 
 (defk settled-from [state job]

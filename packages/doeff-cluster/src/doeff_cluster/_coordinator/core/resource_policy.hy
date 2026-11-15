@@ -316,12 +316,27 @@
     True (| (verdict "Ready" report.reason) {"role" role})))
 
 
+(defk active-senders [state name now]
+  {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % (| frozenset None))] :tags {:context "coordinator" :role "judgment"}}
+  "Service name の準備の報告のうち、window の内に受けた role active の報告(ready の真偽を問わない)を送った process の
+   #(worker 世代の名) の組 — job の Service の振り先(endpoints_policy.serving-addresses)の候補を、job を動かしている process の在る
+   worker の世代の Pod にするため。ready=偽 は job の仕事の健康の印(依る service が止まって鮮度が無い間も答え続ける process が名乗る)で、
+   振り先から外す印ではない。読む表と window は active-ready-senders と同じ。宣言が無い・readiness を持たない Service は None。"
+  (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (if (or (is job None) (is job.readiness None))
+      None
+      (do (val window-ms (int (* 1000 (get job.readiness "windowSeconds"))))
+          (frozenset (gfor r (or (.row state.observations.readiness name) #())
+                           :if (and (= r.role ROLE-ACTIVE) (< now (report-expired-from r window-ms)))
+                           #(r.origin.worker r.origin.instance))))))
+
+
 (defk active-ready-senders [state name now]
   {:pre [(: state ClusterState) (: name str) (: now int)] :post [(: % (| frozenset None))] :tags {:context "coordinator" :role "judgment"}}
   "Service name の準備の報告のうち、window の内に受けた ready で role active の報告を送った process の #(worker 世代の名) の組 — job の
-   Service の振り先(endpoints_policy.serving-addresses)が、その process の在る worker の世代の Pod へ振るため。置き先の process に限らない
-   (世代をまたぐ受け渡しの間は、退いた世代の process も job を動かしている — 振り先は届く process の在る所で、どれを置き先と数えるかの
-   判断〔running-process〕とは別)。宣言が無い・readiness を持たない Service は None(process が running なら振る)。"
+   Service の振り先(endpoints_policy.serving-addresses)が、候補(active-senders)をその process の在る worker の世代の Pod へ絞るため。
+   置き先の process に限らない(世代をまたぐ受け渡しの間は、退いた世代の process も job を動かしている — 振り先は届く process の在る所で、
+   どれを置き先と数えるかの判断〔running-process〕とは別)。宣言が無い・readiness を持たない Service は None(process が running なら振る)。"
   (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
   (if (or (is job None) (is job.readiness None))
       None
