@@ -129,6 +129,17 @@
   (assert (= missing (ServiceReady :name "store" :revision 7)) missing))
 
 
+(deftest test-the-production-client-reads-serving-before-ready
+  ;; status.serving(版を問わず process が答えているか — #3490)が在れば、それで戻りを読む: 宣言の版が NotReady でも serving なら待たずに戻り、
+  ;; Ready でも serving でなければ版の変化を待つ。欄の無い旧い coordinator の返事は今どおり ready を読む(上の 2 つの検)。
+  ;; 失敗ケース: ready だけを読む待ちは、新しい版が組めない間(NotReady・serving)に戻らず、版 7 を待って返る。
+  (<- old-answering ServiceReady (awaited-through (fn [request] (httpx.Response 200 :json {"status" {"ready" "NotReady" "serving" True}}))))
+  (assert (= old-answering (ServiceReady :name "store" :revision 0)) old-answering)
+  (<- silent-answer Callable (after-one-watch (fn [request] (httpx.Response 200 :json {"status" {"ready" "Ready" "serving" False}}))))
+  (<- silent ServiceReady (awaited-through silent-answer))
+  (assert (= silent (ServiceReady :name "store" :revision 7)) silent))
+
+
 (deftest test-the-production-client-names-a-malformed-service-answer
   (with [raised (pytest.raises ValueError :match "ServiceViewWire")]
     (<- _never (awaited-through (fn [request] (httpx.Response 200 :json {"status" "Ready"}))))))

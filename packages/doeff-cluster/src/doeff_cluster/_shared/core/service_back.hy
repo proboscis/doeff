@@ -1,5 +1,5 @@
-;;; 依る Service の短い停止を越える戻りの待ち(#3490)。AwaitServiceReady(#3470)は「名を挙げた Service が今 Ready か」を
-;;; 読んで待つだけなので、呼び手の撃ち直しがまだ届かない時に、coordinator が古い Ready を見ている間は撃ち直しが回り続ける。ここの 2 つがそれを抑える:
+;;; 依る Service の短い停止を越える戻りの待ち(#3490)。AwaitServiceReady(#3470)は「名を挙げた Service の process が今答えているか」(status.serving —
+;;; 宣言の版を問わない)を読んで待つだけなので、呼び手の撃ち直しがまだ届かない時に、coordinator が古い Ready を見ている間は撃ち直しが回り続ける。ここの 2 つがそれを抑える:
 ;;;
 ;;;   service-back         前に読んだ coordinator の版から版が変わるのを上限 SERVICE-BACK-CHANGE-SECONDS まで待ち(上限で返ったら待ち直さない —
 ;;;                        process が生きたまま店だけ止まる止まりは Service が Ready のまま版が動かず、worker の生死も版に入らない)、それから

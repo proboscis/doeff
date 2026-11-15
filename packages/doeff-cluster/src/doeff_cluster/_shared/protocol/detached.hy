@@ -310,8 +310,9 @@
 (defk service-ready-of [status body]
   {:pre [(: status (| int None)) (: body (| dict list str int float bool None))] :post [(: % (| bool None))]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "AwaitServiceReady が読む GET /resources/Service/<名> の返事を、Ready(True)・まだ Ready でない(False)・届かない(None)に分けるため
-   (本番の client と sim の宿が同じ読み — #3470)。200 の本文は ServiceViewWire に解く(形が違えば Malformed で名指して落ちる)。宣言の
+  "AwaitServiceReady が読む GET /resources/Service/<名> の返事を、戻った(True)・まだ戻らない(False)・届かない(None)に分けるため
+   (本番の client と sim の宿が同じ読み — #3470)。戻った = status.serving が真(版を問わず process が答えている — #3490)。serving の欄を
+   出さない旧い coordinator には status.ready が Ready か。200 の本文は ServiceViewWire に解く(形が違えば Malformed で名指して落ちる)。宣言の
    無い 404 は False: 作り直しや置き場の移しの間も越えて待つ(待つ側の上限が切る)。それ以外の status(5xx など)は届かないと同じ。"
   (match status
     None None
@@ -320,7 +321,9 @@
               (Malformed :fields fields)
                 (raise (ValueError (.format "coordinator の Service の返事が ServiceViewWire の形でない: {}"
                                             (.join "・" (gfor f fields (+ f.field " " f.reason))))))
-              _ (= view.status.ready "Ready")))
+              _ (if (is view.status.serving None)
+                    (= view.status.ready "Ready")
+                    view.status.serving)))
     404 False
     _ None))
 
@@ -328,7 +331,7 @@
 (defk service-readiness [cell options sender name]
   {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: name str)] :post [(: % (| bool None))]
    :tags {:context "doeff-cluster" :role "protocol"}}
-  "名を挙げた Service が今 Ready かを coordinator の GET /resources/Service/<名> で読むため(AwaitServiceReady の 1 回の読み — 届かなければ None)。"
+  "名を挙げた Service が今戻っているか(service-ready-of — status.serving)を coordinator の GET /resources/Service/<名> で読むため(AwaitServiceReady の 1 回の読み — 届かなければ None)。"
   (<- read (resent-answer cell options "GET" (+ "/resources/Service/" (url-quote name :safe "")) None None sender.deadline-seconds))
   (match read
     (HttpResponse :status status)

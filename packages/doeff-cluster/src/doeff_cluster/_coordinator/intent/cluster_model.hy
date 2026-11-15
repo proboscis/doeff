@@ -652,6 +652,16 @@
   (setv #^ str pod-ip ""))
 
 
+(defrecord JobCarrier
+  "job の process を今動かしている worker の世代 1 つ(core/resource_policy.job-carriers の答えの要素 — 保存しない・その場で組む): worker =
+   世代の worker の名・report = その世代の最新の報告(Pod の IP を持つ)・senders = その世代の上で job の process(running・role active の
+   準備の報告を window の内に送った物)の #(worker 世代の名) の組。job の Service の振り先と Service の status.serving が同じ列を読む。"
+  {:tags {:context "coordinator" :role "type"}}
+  (#^ str worker)
+  (#^ WorkerReport report)
+  (#^ frozenset senders))
+
+
 (defrecord ServiceBody
   "POST /resources/Service・PUT /resources/Service/<名> の本文を Service の宣言に解いた値(本文を解く所 coordinator/protocol/request_bodies が
    作る — #2448): name = 資源の名(POST は本文の name・PUT は path の名)・job = 宣言の行を読んだ job(owner は本文の owner のまま —

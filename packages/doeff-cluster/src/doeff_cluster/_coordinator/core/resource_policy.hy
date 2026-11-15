@@ -24,6 +24,8 @@
 ;;;   置き直す(送り手 = coordinator の delete — 出来事の記録に残る)。DELETE も同じ外し方。
 ;;; - readiness: Service が Ready か(service-readiness)。process の生存(worker の報告の running)と、宣言が readiness を
 ;;;   持てば ReportReady の直近の報告の両方で決める。
+;;; - serving: Service の process が今答えているか(service-serving — 宣言の版を問わない・status.serving)。依る側の戻りの合図が読み、
+;;;   job の Service の振り先(endpoints_policy.serving-addresses)と同じ答え job-carriers・ready-carriers から作る。
 ;;; - 版の判定: Service の指定の版が実際に仕事をしているか(version-state — 5 値・status.version)。running-process・入れ替えの見張り・
 ;;;   停止の述語(service-stopped — Rollout の相手の観測 api_policy.target-view と共有)を呼んで組み立てる。
 (require doeff-hy.macros [defk deff val var <-])
@@ -34,7 +36,7 @@
 (import doeff_hy._table [Table TableWrite draft-of])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming BodyInvalid])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterJob ClusterState NeedsOverride ErrorReply RowConflict Placement HandoffPhase UnplacedKind NotReadyKind VersionState VersionVerdict LiveProcess ResourceMeta AuditEvent EventsView ServiceBody ServiceObserved WorkerObserved TaskObserved RolloutObserved ObservedDeployment ResourceView ResourceList LegacyJobRow RolloutRow RolloutStatus RolloutTarget RefusedJob WorkerInfo HandoverBlocker TaskRecord
-                                                       ReportOrigin ReadinessReport MetricsReport WorkerReport GenerationRow])
+                                                       ReportOrigin ReadinessReport MetricsReport WorkerReport GenerationRow JobCarrier])
 (import doeff_cluster._coordinator.core.cluster_rules [int-field])
 (import doeff_cluster._shared.core.job_rules [spec-hash spec-hash-matches] doeff_cluster._shared.intent.job_model [JobPhase])
 (import doeff_cluster._coordinator.core.cluster_policy [job-to-json alive effective-needs placeable liveness-deadline still-live-somewhere service-rows unplaced-kind unplaced-text unplaced-memory unplaced-view active-jobs resource-version-of keep-mark-of warms-for
@@ -346,6 +348,72 @@
                            #(r.origin.worker r.origin.instance))))))
 
 
+;; --- job を動かしている process と、答えている process(版を問わない — #3490 の戻りの合図)-------------------------
+;; job の Service の振り先(endpoints_policy.serving-addresses)と Service の status.serving は、同じ 2 つの答え job-carriers・
+;; ready-carriers を読む(振り先が在るのに戻らない・戻ったのに振り先が無い、のずれを作らない)。
+;;   job-carriers   = job の process を running と報告し、その process から window の内に role active の準備の報告(ready の真偽を問わない)
+;;                    を受けている lease の内の世代(振り先の候補)。
+;;   ready-carriers = そのうち、ready の報告を送った process の在る世代(振り先は在ればこれだけ・無ければ候補の全部。status.serving は
+;;                    これが空でない事)。
+;; status.ready(service-readiness)は宣言の版の process だけを数える Rollout と版の判定の答えで、status.serving は「今その Service の
+;; process が ready を報告して答えているか」— 宣言の新しい版が組めない間・入れ替えで新しい版が Ready になるまでも、旧い版の process が
+;; 答えていれば真。
+
+(defk generation-reports [state now timing]
+  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "job を動かしている process の候補の worker の世代の報告 #(worker の名 報告) の列を集めるため: 今の世代(statuses)と退いた世代
+   (retired-statuses — 鍵 <名>/<世代>)のうち、最後の報告が lease の窓の内の物(黙った世代は Pod ごと消えたと読む —
+   cluster_policy.sweep-stopped-generations と同じ窓)。"
+  (+ (tuple (gfor #(name report) (.items state.observations.statuses) :if (<= now (+ report.at timing.lease-ms)) #(name report)))
+     (tuple (gfor #(key report) (.items state.observations.retired-statuses) :if (<= now (+ report.at timing.lease-ms))
+                  #((get (.split key "/" 1) 0) report)))))
+
+
+(defk job-carriers [state job now timing]
+  {:pre [(: state ClusterState) (: job str) (: now int) (: timing ClusterTiming)] :post [(: % (get tuple #(JobCarrier ...)))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "job の process を今動かしている worker の世代の列(generation-reports の順)を知るため(上の註): lease の内の世代の報告のうち、job の
+   process(名が job か、入れ替えで job から退いた process)を running と報告し、その process から window の内に role active の準備の報告
+   (ready の真偽を問わない — active-senders)を受けている世代。readiness を宣言しない job は running の process の在る世代。宣言の版・
+   指紋・置き先は問わない(どれを置き先の process と数えるかは running-process の判断)。Pod の IP は問わない(振り先の側で絞る)。"
+  (<- active (| frozenset None) (active-senders state job now))
+  (<- reports tuple (generation-reports state now timing))
+  (tuple (gfor #(worker report) reports
+               :setv senders (frozenset (gfor row report.jobs
+                                              :if (and (= (or row.retired-from row.name) job) (= row.phase JobPhase.RUNNING.value)
+                                                       row.instance (or (is active None) (in #(worker row.instance) active)))
+                                              #(worker row.instance)))
+               :if senders
+               (JobCarrier :worker worker :report report :senders senders))))
+
+
+(defk ready-carriers [state job carriers now]
+  {:pre [(: state ClusterState) (: job str) (: carriers tuple) (: now int)] :post [(: % (get tuple #(JobCarrier ...)))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "carriers(job-carriers の列か、その一部)のうち、window の内に ready で role active の報告を送った process(active-ready-senders)の在る
+   世代を知るため(上の註 — 入れ替えの間、まだ同期していない新しい process へ振らない・status.serving の答え)。readiness を宣言しない
+   job は carriers の全部。"
+  (<- ready (| frozenset None) (active-ready-senders state job now))
+  (tuple (gfor carrier carriers :if (or (is ready None) (any (gfor s carrier.senders (in s ready)))) carrier)))
+
+
+(defk service-serving [state name now timing]
+  {:pre [(: state ClusterState) (: name str) (: now int) (: timing ClusterTiming)] :post [(: % bool)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "Service name の process が今 ready を報告して答えているかを知るため(Service の status.serving — 依る側の戻りの合図 AwaitServiceReady
+   が読む・上の註)。readiness を宣言する Service は ready-carriers が空でない事(job の Service の振り先と同じ答え)。readiness を宣言
+   しない Service は status.ready が Ready の時(running の process の在る事だけでは答えている証にならないので、戻りの合図は今までの
+   答えのまま)。宣言が無ければ偽。"
+  (val job (next (gfor j state.jobs :if (= j.spec.name name) j) None))
+  (when (is job None)
+    (return False))
+  (when (is job.readiness None)
+    (return (= (get (service-readiness state name now timing) "state") "Ready")))
+  (<- carriers tuple (job-carriers state name now timing))
+  (<- readied tuple (ready-carriers state name carriers now))
+  (> (len readied) 0))
+
+
 ;; --- 版の判定(2026-09-29・#1013)---------------------------------------------------------------
 ;; Service の指定の版(spec.revision)が実際に仕事をしているかを 5 値(cluster_model.VersionState)で答える。running-process の ok は
 ;; 入れ替え(handoff)の途中で「新しい版が仕事をしている」を意味しない(新が Ready になるまで旧い版が退避名 <名>#retired-<世代> で
@@ -586,6 +654,9 @@
   {"spec" (service-spec job)
    "status" (| {"worker" (if a a.worker None) "placement" (if a a.generation None)
                 "ready" (get (service-readiness state job.spec.name now timing) "state")
+                ;; 版を問わず process が答えているか(#3490 の戻りの合図 — service-serving。ready と同じく、変わった時に出来事と
+                ;; resourceVersion を進める)。ready の意味(Rollout・版の判定・入れ替えの合図)は変えない。
+                "serving" (run (service-serving state job.spec.name now timing))
                 ;; 版の判定の状態(2026-09-29 — ready と同じく、変わった時に出来事と resourceVersion を進める)。理由と動いている
                 ;; 版の列は変わりやすい観測なので入れない(observed-of が組む)。
                 "version" {"state" (. (version-state state job.spec.name now timing) state value)}}
@@ -815,7 +886,8 @@
    (時刻だけで変わる観測は snapshot に入れない・生死は note-liveness が silent に写して材料にする)。材料:
    - Service: 宣言・置き先・並べた置き先・入れ替えの見張り・準備の報告(観測の表 readiness)・受け付けない行・途絶しても動かし続けてよい
      印の約束(名ごと)/ 置き先か並べた置き先の
-     worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 置き先の無い Service は全 worker の生存と
+     worker、または報告に名が載る worker の報告と生存(service-rows・running-process)/ 報告に名が載る退いた世代の報告(job-carriers)/
+     置き先の無い Service は全 worker の生存と
      能力(unplaced-kind)/ drain の集合と起動の時刻(全 Service — まれ)。
    - Worker: 記録・沈黙の集合の出入り・drain / 温める表の行の出入りと書き換え(全 worker — 当たる行は能力で決まる・まれ)/
      世代をまたぐ受け渡し(退いた世代の組と、組の在る worker の報告 — AL-D2f)。
@@ -850,10 +922,20 @@
                                         n #(row.name row.retired-from)
                                         :if n
                                         n))
+        ;; 世代をまたぐ受け渡しの退いた世代の報告(job-carriers — status.serving と job の Service の振り先の母集団に入る): 報告が変わった
+        ;; 世代の行の名。
+        retired-reported (frozenset (gfor state #(before after)
+                                          k (moved-names before.observations.retired-statuses after.observations.retired-statuses)
+                                          :setv report (.row state.observations.retired-statuses k)
+                                          :if (is-not report None)
+                                          row report.jobs
+                                          n #(row.name row.retired-from)
+                                          :if n
+                                          n))
         unplaced (if workers-moved
                      (frozenset (gfor name all-services :if (or (is (.row before.placements name) None) (is (.row after.placements name) None)) name))
                      (frozenset))
-        services (if global-moved all-services (| names-moved carried reported elder-reported unplaced))
+        services (if global-moved all-services (| names-moved carried reported elder-reported retired-reported unplaced))
         silent-moved (^ (frozenset before.silent) (frozenset after.silent))
         ;; 世代をまたぐ受け渡し(AL-D2f — worker-row の handover): 退いた世代の組か、今の世代の報告が変わった worker。
         handover-moved (| (frozenset (gfor r (^ (set before.superseded-runs) (set after.superseded-runs)) r.worker))

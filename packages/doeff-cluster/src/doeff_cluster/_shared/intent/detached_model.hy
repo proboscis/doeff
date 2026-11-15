@@ -168,7 +168,9 @@
 
 (defclass [(dataclass :frozen True)] AwaitServiceReady [EffectBase]
   "名を挙げた Service が Ready になるまで待つ(#3470 — 依る service の短い停止を落ちずに越える呼び手が、戻りを出来事として知るため。
-   使い手 = 依る service の変化を待つ合図の源・その service への追記の書き手)。coordinator の Service の status.ready を読み、Ready でなければ
+   使い手 = 依る service の変化を待つ合図の源・その service への追記の書き手)。coordinator の Service の status.serving(版を問わず process が
+   今答えているか — 宣言の新しい版が組めない間も、旧い版の process が答えていれば戻る。欄の無い旧い coordinator は status.ready が Ready
+   か)を読み、答えていなければ
    coordinator の版(GET /watch)が変わるまで待って読み直す — 時間で起きて確かめない。上限は持たない(待つ側が上限つきで待つ)。
    coordinator に届かない間も待ち続ける(間を置いて問い直すのは答え手の中だけ)。答え = ServiceReady。"
   (#^ str name)
@@ -364,9 +366,11 @@
 
 (defwire ServiceStatusWire
   "coordinator の GET /resources/Service/<名> の返事の status の欄のうち、AwaitServiceReady が読む所: ready = Ready | NotReady | Unknown
-   (coordinator の resource_policy.service-readiness の語)。"
+   (coordinator の resource_policy.service-readiness の語 — 宣言の版の process が Ready か)・serving = 版を問わず process が今答えているか
+   (resource_policy.service-serving — #3490 の戻りの合図。欄を出さない旧い coordinator は None)。"
   {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
-  (#^ str ready))
+  (#^ str ready)
+  (setv #^ (| bool None) serving None))
 
 
 (defwire ServiceViewWire

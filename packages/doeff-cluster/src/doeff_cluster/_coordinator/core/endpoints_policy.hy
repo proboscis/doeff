@@ -19,8 +19,7 @@
 ;;;
 ;;;   RESYNC-MS          同じ宣言の slice を書き直す間(手で変えた・消した slice を戻す)
 ;;;   RETRY-MS           書けなかった slice を書き直すまでの間(API server に届かない間、歩ごとに書きに行かない)
-;;;   generation-reports lease の内の worker の世代の報告の列(今の世代と退いた世代)
-;;;   serving-addresses  job 1 つの振り先の Pod の IP の組
+;;;   serving-addresses  job 1 つの振り先の Pod の IP の組(resource_policy.job-carriers・ready-carriers — Service の status.serving と同じ答え)
 ;;;   settled-from       coordinator の起動の後、job の振り先を書いてよい最初の刻
 ;;;   wanted-slices      見張っている job の Service の全部の、今の振り先の slice の宣言
 ;;;   due-slices         wanted のうち、今書く物
@@ -36,9 +35,8 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import doeff_hy._table [TableWrite])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
-(import doeff_cluster._shared.intent.job_model [JobPhase])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState JobEndpointSlice JobServicesSeen SliceWritten SliceRefused])
-(import doeff_cluster._coordinator.core.resource_policy [active-senders active-ready-senders])
+(import doeff_cluster._coordinator.core.resource_policy [generation-reports job-carriers ready-carriers])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._shared.core.due_policy [earliest-due])
 
@@ -53,38 +51,17 @@
   (+ namespace "/" service))
 
 
-(defk generation-reports [state now timing]
-  {:pre [(: state ClusterState) (: now int) (: timing ClusterTiming)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
-  "振り先の候補の worker の世代の報告 #(worker の名 報告) の列を集めるため: 今の世代(statuses)と退いた世代(retired-statuses — 鍵
-   <名>/<世代>)のうち、最後の報告が lease の窓の内の物(黙った世代は Pod ごと消えたと読む — cluster_policy.sweep-stopped-generations と
-   同じ窓)。"
-  (+ (tuple (gfor #(name report) (.items state.observations.statuses) :if (<= now (+ report.at timing.lease-ms)) #(name report)))
-     (tuple (gfor #(key report) (.items state.observations.retired-statuses) :if (<= now (+ report.at timing.lease-ms))
-                  #((get (.split key "/" 1) 0) report)))))
-
-
 (defk serving-addresses [state job now timing]
   {:pre [(: state ClusterState) (: job str) (: now int) (: timing ClusterTiming)] :post [(: % (get tuple #(str ...)))]
    :tags {:context "coordinator" :role "judgment"}}
-  "job の Service の振り先の Pod の IP の組(重ねない・順)を決めるため(頭の註): 候補 = lease の内の世代の報告のうち、job の process(名が
-   job か、入れ替えで job から退いた process)を running と報告し、その process から window の内に role active の準備の報告(ready の
-   真偽を問わない)を受けている世代の Pod の IP。候補のうち ready の報告を送った process の在る Pod が在ればそれだけ、無ければ候補の全部。
-   readiness を宣言しない job は running の process の在る世代。Pod の IP を名乗らない世代(Pod の外・旧い worker)は数えない。"
-  (<- active (| frozenset None) (active-senders state job now))
-  (<- ready (| frozenset None) (active-ready-senders state job now))
-  (<- reports tuple (generation-reports state now timing))
-  ;; 候補の世代ごとの #(Pod の IP job の process の送り手の組)— 送り手は running の job の process のうち active の報告を送った物。
-  (val candidates (tuple (gfor #(worker report) reports
-                               :if report.pod-ip
-                               :setv senders (tuple (gfor row report.jobs
-                                                          :if (and (= (or row.retired-from row.name) job) (= row.phase JobPhase.RUNNING.value)
-                                                                   row.instance (or (is active None) (in #(worker row.instance) active)))
-                                                          #(worker row.instance)))
-                               :if senders
-                               #(report.pod-ip senders))))
+  "job の Service の振り先の Pod の IP の組(重ねない・順)を決めるため(頭の註): 候補 = job の process を今動かしている世代
+   (resource_policy.job-carriers)のうち Pod の IP を名乗る世代(Pod の外・旧い worker は数えない)。候補のうち ready の報告を送った
+   process の在る世代(resource_policy.ready-carriers — Service の status.serving と同じ答え)が在ればその Pod だけ、無ければ候補の全部。"
+  (<- carriers tuple (job-carriers state job now timing))
+  (val candidates (tuple (gfor carrier carriers :if carrier.report.pod-ip carrier)))
   ;; ready の報告を送った process の在る候補(入れ替えの間、まだ同期していない新しい process へ振らない)。無ければ候補の全部。
-  (val readied (tuple (gfor #(ip senders) candidates :if (or (is ready None) (any (gfor s senders (in s ready)))) ip)))
-  (tuple (sorted (set (or readied (gfor #(ip _) candidates ip))))))
+  (<- readied tuple (ready-carriers state job candidates now))
+  (tuple (sorted (set (gfor carrier (or readied candidates) carrier.report.pod-ip)))))
 
 
 (defk settled-from [state job]

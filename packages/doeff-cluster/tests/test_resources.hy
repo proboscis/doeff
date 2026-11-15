@@ -684,7 +684,8 @@
   (<- refused (report metered (! (ready-report spec "1-a" :ready False)) 4000))
   (assert (= (! (ready-of refused 4000)) "NotReady"))
   (assert (> (! (rv refused "Service" "w")) (! (rv s "Service" "w"))))
-  (assert (= (. (get refused.audit -1) changes) {"status.ready" ["Ready" "NotReady"]}) (get refused.audit -1))
+  ;; 答えている process が無くなったので、版を問わない status.serving(#3490)も同じ拍で偽になる。
+  (assert (= (. (get refused.audit -1) changes) {"status.ready" ["Ready" "NotReady"] "status.serving" [True False]}) (get refused.audit -1))
   (<- stored dict (durable-delta metered refused))
   (assert (in "counter" stored) stored)
   (assert (all (gfor key stored (or (= key "counter") (.startswith key "meta/") (.startswith key "audit/")))) stored))
