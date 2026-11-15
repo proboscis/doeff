@@ -63,7 +63,7 @@
 (import doeff_cluster._worker.core.env_upkeep [LayerSample layer-sample-of-text])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH SHARED-VENV-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 (import inspect)
 (import doeff_cluster._foundation.pycache_scope :as pycache-scope)
 ;; venv へ写す置き場の口の source(worker 自身の file — import の時に 1 度だけ読む code の値。準備の file の効果の外: 模擬の世界の file にも
@@ -638,6 +638,10 @@
   {:pre [(: source str) (: dest str) (: source-root str) (: dest-root str)] :post [(: % (| VenvCopied VenvRefused))]}
   "CopyVenv の答え: 写し元の venv を歩いて dest へ写す(venv-entries)。写し元を歩けない・写しの途中で失敗した時は写しかけの dest を消して
    VenvRefused を返す(準備は uv sync で venv を作る道へ戻る)。"
+  ;; 共有の venv を使う薄い venv は写さない(共有の venv の錠の外で写すと、掃除が共有の venv を消す時に新しい root の使いを知らない)。
+  (<- thin (| PathStat FileFailed) (StatPath (posixpath.join source "bin") :follow-symlinks False))
+  (when (and (isinstance thin PathStat) (= thin.kind PathKind.SYMLINK))
+    (return (VenvRefused :reason (.format "写し元 {} は共有の venv を使う薄い venv" source))))
   (<- (RemoveTree dest))     ; 前の途中で止まった準備の残り(無い dir の断りは捨てる)
   (<- listed (| tuple FileFailed) (WalkTree source))
   (<- made (| None FileFailed) (MakeDirectory dest))
@@ -649,6 +653,268 @@
   (when (isinstance answer VenvRefused)
     (<- (RemoveTree dest)))
   answer)
+
+
+;; --- 共有の venv(依存のキーごとに 1 つ — root の venv は、それを使う薄い venv)-----------------------------------------------
+;; 置き場は分け合う dir の venvs/<名>(名 = env_prepare の shared-venv-name)。共有の venv を置く・使う・消すのは、その名の錠
+;; (locks/venv-<名>)の中だけ: 準備は錠の中で共有の venv を置き、薄い venv を root に置いてから放す。掃除(env_store の unused-venvs)は
+;; 錠を待たずに取れた時だけ、錠の中で root の薄い venv の使いを読み直し、使う root が無ければ消す。
+(val SHARED-VENVS "venvs")
+(val SHARED-VENV-LOCK-PREFIX "venv-")
+;; 共有の venv の直下の印(JSON {"root" 共有にした root "venv" その root の venv の path})— 在れば置き終えた共有の venv。最後に書いてから
+;; 置き場の名へ rename する。
+(val SHARED-VENV-INFO ".doeff-shared-venv.json")
+;; 共有の venv が持つ root の型の dir(共有にした root の path を持つ .pth と editable の印を、venv からの相対 path のまま移した物 —
+;; 薄い venv は中身の root の path を自分の root へ書き換えて置く)。
+(val SHARED-VENV-ROOT-FILES ".doeff-root-files")
+;; 共有の venv の bin の script の頭(uv が書く venv の python の絶対 path の代わり): script の在る dir の python で起こす。bin は薄い venv
+;; から symlink で引くので、$0 は薄い venv の bin の下の path — 薄い venv の python で起き、sys.prefix が薄い venv になる(realpath で
+;; 辿ると共有の venv の python になるので辿らない)。後の 2 行は Python には文字列の式として読まれる(uv の relocatable と同じ形)。
+(val SHARED-SCRIPT-HEAD (.encode "#!/bin/sh\n'''exec' \"$(dirname -- \"$0\")/python\" \"$0\" \"$@\"\n' '''\n" "utf-8"))
+
+
+(defk shared-venv-path [shared-dir name]
+  {:pre [(: shared-dir str) (: name str)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "依存のキーの名 name の共有の venv の path を、準備と掃除が同じ綴りで決めるため。"
+  (posixpath.join shared-dir SHARED-VENVS name))
+
+
+(defk shared-venv-lock [shared-dir name]
+  {:pre [(: shared-dir str) (: name str)] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
+  "共有の venv name の錠の file の path を、準備と掃除が同じ綴りで決めるため。"
+  (posixpath.join shared-dir "locks" (+ SHARED-VENV-LOCK-PREFIX name)))
+
+
+(defk shared-script [content venv]
+  {:pre [(: content bytes) (: venv str)] :post [(: % (| bytes None))] :tags {:context "worker" :role "protocol"}}
+  "venv の bin の script の中身 content の頭が venv の python を絶対 path で起こす形(uv の `#!<venv>/bin/…` か、長い path の
+   `#!/bin/sh` と `'''exec' '<venv>/bin/…'` の 3 行)なら、頭を SHARED-SCRIPT-HEAD に替えた中身を返すため。ほかの file は None。"
+  (val bin (.encode (+ venv "/bin/") "utf-8"))
+  (val lines (.split content b"\n" 3))
+  (cond
+    (.startswith content (+ b"#!" bin))
+    (+ SHARED-SCRIPT-HEAD (get (.partition content b"\n") 2))
+    (and (>= (len lines) 4) (= (get lines 0) b"#!/bin/sh") (.startswith (get lines 1) b"'''exec'") (in bin (get lines 1))
+         (= (get lines 2) b"' '''"))
+    (+ SHARED-SCRIPT-HEAD (get lines 3))
+    True None))
+
+
+(defk root-specific [name content root]
+  {:pre [(: name str) (: content bytes) (: root str)] :post [(: % bool)] :tags {:context "worker" :role "protocol"}}
+  "venv の中の相対 path name の file(中身 content)が、root ごとに違う file か(共有の venv から root の型へ抜く物か)を決めるため:
+   root の path を持つ site-packages の .pth と editable の印(__editable__*)。direct_url.json は入れた元を書く記録なので共有の venv に残す。"
+  (val base (posixpath.basename name))
+  (and (not (.startswith name "bin/")) (or (.endswith base ".pth") (.startswith base "__editable__"))
+       (in (.encode (+ root "/") "utf-8") content)))
+
+
+(defk shared-entry [entry venv place final root]
+  {:pre [(: entry DirEntry) (: venv str) (: place str) (: final str) (: root str)] :post [(: % (| str FileFailed))]}
+  "共有の置き場へ移した venv(place — 元は venv)の歩きの答えの 1 つを共有の形にし、何をしたか(script・root-file・symlink・keep)を返す
+   ため: bin の script は頭を替え(書き換えは置き換えで — 写した venv の hardlink の先の file を書き換えない)、root の path を持つ .pth と
+   editable の印は root の型の dir へ移し、venv の中を絶対 path で指す symlink は共有の venv の最終の path(final)の中を指し直す。"
+  (val at (posixpath.join place entry.name))
+  (match entry.kind
+    PathKind.FILE
+    (do (<- rewrites bool (venv-rewrites entry.name))
+        (<- content (| bytes FileFailed None) (if rewrites (ReadBytes at) (Pure None)))
+        (cond
+          (isinstance content FileFailed) content
+          (is content None) "keep"
+          True
+          (do (<- script (| bytes None) (if (.startswith entry.name "bin/") (shared-script content venv) (Pure None)))
+              (<- moved bool (root-specific entry.name content root))
+              (cond
+                (is-not script None)
+                (do (<- written (| None FileFailed) (WriteBytes at script :mode VENV-SCRIPT-MODE :replace True))
+                    (if (is written None) "script" written))
+                moved
+                (do (val to (posixpath.join place SHARED-VENV-ROOT-FILES entry.name))
+                    (<- (MakeDirectory (posixpath.dirname to)))
+                    (<- renamed (| None FileFailed) (RenamePath at to))
+                    (if (is renamed None) "root-file" renamed))
+                True "keep"))))
+    PathKind.SYMLINK
+    ;; 移した後の名で辿る — venv の中を相対 path で指す物(lib64 → lib)は移した先の中を指し、絶対 path で指す物は移す前の venv の
+    ;; path(もう無い)を指す。
+    (do (<- after (| PathStat FileFailed) (StatPath at))
+        (val real (if (isinstance after PathStat) after.real-path ""))
+        (if (or (= real venv) (.startswith real (+ venv "/")))
+            (do (<- (RemoveTree at))
+                (<- made (| None FileFailed) (MakeSymlink at (! (moved-path real #(#(venv final))))))
+                (if (is made None) "symlink" made))
+            "keep"))
+    _ "keep"))
+
+
+(defk shared-entries [venv place final root entries]
+  {:pre [(: venv str) (: place str) (: final str) (: root str) (: entries tuple)] :post [(: % (| int FileFailed))]}
+  "共有の置き場へ移した venv の歩きの答え entries を path の順に共有の形にし(shared-entry)、root の型へ抜いた file の数を返すため。
+   最初の失敗で止める。"
+  (var moved 0)
+  (for [entry (sorted entries :key (fn [e] e.name))]
+    (<- done (| str FileFailed) (shared-entry entry venv place final root))
+    (match done
+      (FileFailed) (return done)
+      "root-file" (:= moved (+ moved 1))
+      _ None))
+  moved)
+
+
+(defk thin-top-entry [entry shared venv moves]
+  {:pre [(: entry DirEntry) (: shared str) (: venv str) (: moves tuple)] :post [(: % (| None FileFailed))]}
+  "共有の venv の直下の 1 つ(lib と . で始まる物の外)を薄い venv に引くため: pyvenv.cfg は中身の path を書き換えて置き、symlink は
+   共有の venv の中を指す物(lib64 → lib など)を薄い venv の中を指す symlink に、ほかの物(bin・include など)は共有の venv の物への
+   symlink にする。"
+  (val from (posixpath.join shared entry.name))
+  (val to (posixpath.join venv entry.name))
+  (cond
+    (= entry.name "pyvenv.cfg")
+    (do (<- body (| bytes FileFailed) (ReadBytes from))
+        (if (isinstance body FileFailed)
+            body
+            (do (<- moved bytes (moved-bytes body moves))
+                (<- written (| None FileFailed) (WriteBytes to moved))
+                written)))
+    (= entry.kind PathKind.SYMLINK)
+    (do (<- seen (| PathStat FileFailed) (StatPath from))
+        (val real (if (isinstance seen PathStat) seen.real-path from))
+        (<- target str (if (or (= real shared) (.startswith real (+ shared "/"))) (moved-path real #(#(shared venv))) (Pure from)))
+        (<- made (| None FileFailed) (MakeSymlink to target))
+        made)
+    True
+    (do (<- linked (| None FileFailed) (MakeSymlink to from))
+        linked)))
+
+
+(defk thin-root-file [templates name venv moves]
+  {:pre [(: templates str) (: name str) (: venv str) (: moves tuple)] :post [(: % (| None FileFailed))]}
+  "共有の venv の root の型の file 1 つ(templates からの相対 path name)を、中身の共有にした root と venv の path をこの root と venv の
+   path に書き換えて薄い venv の同じ相対 path に置くため。"
+  (<- body (| bytes FileFailed) (ReadBytes (posixpath.join templates name)))
+  (if (isinstance body FileFailed)
+      body
+      (do (val to (posixpath.join venv name))
+          (<- (MakeDirectory (posixpath.dirname to)))
+          (<- moved bytes (moved-bytes body moves))
+          (<- written (| None FileFailed) (WriteBytes to moved))
+          written)))
+
+
+(defk thin-venv [shared venv root]
+  {:pre [(: shared str) (: venv str) (: root str)] :post [(: % (| int FileFailed))]}
+  "共有の venv shared を使う薄い venv を venv に置き、置いた物の数を返すため(共有の venv の file に hardlink を張らない): pyvenv.cfg・
+   共有の venv の直下の物(bin・include など)への symlink(thin-top-entry)・site-packages の dir と共有の site-packages を足す .pth
+   (SHARED-VENV-PTH)・root の型の file(thin-root-file)。置きかけで失敗したら置きかけを消して FileFailed を返す。"
+  (<- info-text (| str FileFailed) (ReadText (posixpath.join shared SHARED-VENV-INFO)))
+  (when (isinstance info-text FileFailed)
+    (return info-text))
+  (val info (json.loads info-text))
+  (val moves #(#((get info "venv") venv) #((get info "root") root)))
+  (<- site (| str None) (site-packages shared))
+  (when (is site None)
+    (return (FileFailed :path shared :detail "共有の venv に site-packages が無い")))
+  (val site-rel (posixpath.relpath site shared))
+  (val templates (posixpath.join shared SHARED-VENV-ROOT-FILES))
+  (<- (RemoveTree venv))     ; 前の途中で止まった準備の残り(無い dir の断りは捨てる)
+  (var count 0)
+  (var failed None)
+  (<- made (| None FileFailed) (MakeDirectory (posixpath.join venv site-rel)))
+  (<- listed (| tuple FileFailed) (ListDirectory shared))
+  (<- kind PathKind (kind-at templates))
+  (<- walked (| tuple FileFailed) (if (= kind PathKind.DIRECTORY) (WalkTree templates) (Pure #())))
+  (for [early #(made listed walked)]
+    (when (and (is failed None) (isinstance early FileFailed)) (:= failed early)))
+  (when (is failed None)
+    (for [entry (sorted listed :key (fn [e] e.name))]
+      ;; lib は薄い venv の site-packages の dir に替わる。. で始まる物(uv の venv の錠 .lock・共有の印と root の型)と
+      ;; CACHEDIR.TAG は薄い venv へ引かない(uv が venv ごとに持つ錠を root の間で分け合わない)。
+      (when (and (is failed None) (!= entry.name "lib") (!= entry.name "CACHEDIR.TAG") (not (.startswith entry.name ".")))
+        (<- placed (| None FileFailed) (thin-top-entry entry shared venv moves))
+        (if (isinstance placed FileFailed) (:= failed placed) (:= count (+ count 1))))))
+  (when (is failed None)
+    (<- added (| None FileFailed) (WriteText (posixpath.join venv site-rel SHARED-VENV-PTH)
+                                             (.format "import site; site.addsitedir({!r})\n" site)))
+    (if (isinstance added FileFailed) (:= failed added) (:= count (+ count 1))))
+  (when (is failed None)
+    (for [entry (sorted walked :key (fn [e] e.name))]
+      (when (and (is failed None) (= entry.kind PathKind.FILE))
+        (<- written (| None FileFailed) (thin-root-file templates entry.name venv moves))
+        (if (isinstance written FileFailed) (:= failed written) (:= count (+ count 1))))))
+  (when (is-not failed None)
+    (<- (RemoveTree venv))
+    (return failed))
+  count)
+
+
+(defk used-shared-venv [shared-dir name venv root]
+  {:pre [(: shared-dir str) (: name str) (: venv str) (: root str)] :post [(: % (| VenvShared VenvRefused None))]}
+  "UseSharedVenv の答え: 共有の venv name の錠の中で、置き終えた共有の venv(SHARED-VENV-INFO の在る)が在れば薄い venv を置く(thin-venv)。"
+  (val shared (! (shared-venv-path shared-dir name)))
+  (val lock (! (shared-venv-lock shared-dir name)))
+  (<- (MakeDirectory (posixpath.dirname lock)))
+  (<- got (| LockHeld FileFailed) (AcquireLock lock))
+  (<- held LockHeld (settled got "共有の venv の錠を取れない"))
+  (try
+    (<- info PathKind (kind-at (posixpath.join shared SHARED-VENV-INFO)))
+    (when (!= info PathKind.FILE)
+      (return None))
+    (<- placed (| int FileFailed) (thin-venv shared venv root))
+    (return (match placed
+              (FileFailed :path path :detail detail) (VenvRefused :reason (.format "薄い venv を置けない: {}: {}" path detail))
+              _ (VenvShared :shared shared :written placed :published False)))
+    (finally (<- (ReleaseLock held)))))
+
+
+(defk shared-of-venv [shared-dir name venv root]
+  {:pre [(: shared-dir str) (: name str) (: venv str) (: root str)] :post [(: % (| VenvShared VenvRefused EnvFailure))]}
+  "ShareVenv の答え: 共有の venv name の錠の中で、共有の venv がまだ無ければ root の venv を作りかけの名(.<名>.making)へ移して共有の形に
+   し(shared-entries)、印を書いてから共有の venv の名へ rename する。在れば root の venv を消す。どちらも最後に薄い venv を置く。移す前の
+   失敗は VenvRefused(root の venv は前のまま)・移した後の失敗は作りかけを消して一時の EnvFailure。"
+  (val shared (! (shared-venv-path shared-dir name)))
+  (val making (posixpath.join shared-dir SHARED-VENVS (.format ".{}.making" name)))
+  (val lock (! (shared-venv-lock shared-dir name)))
+  (<- (MakeDirectory (posixpath.dirname lock)))
+  (<- got (| LockHeld FileFailed) (AcquireLock lock))
+  (<- held LockHeld (settled got "共有の venv の錠を取れない"))
+  (try
+    (<- bin (| PathStat FileFailed) (StatPath (posixpath.join venv "bin") :follow-symlinks False))
+    (when (or (isinstance bin FileFailed) (!= bin.kind PathKind.DIRECTORY))
+      (return (VenvRefused :reason (.format "venv {} に bin の dir が無い(薄い venv か作りかけ)" venv))))
+    (<- info PathKind (kind-at (posixpath.join shared SHARED-VENV-INFO)))
+    (var published False)
+    (if (= info PathKind.FILE)
+        (do (<- (RemoveTree venv)))
+        (do (<- listed (| tuple FileFailed) (WalkTree venv))
+            (when (isinstance listed FileFailed)
+              (return (VenvRefused :reason (.format "venv を歩けない: {}: {}" listed.path listed.detail))))
+            (<- (RemoveTree making))     ; 前の途中で止まった共有の残り(無い dir の断りは捨てる)
+            (<- (RemoveTree shared))     ; 印の無い共有の venv(書きかけ — 錠の中なので使う root は無い)
+            (<- (MakeDirectory (posixpath.dirname making)))
+            (<- renamed (| None FileFailed) (RenamePath venv making))
+            (when (isinstance renamed FileFailed)
+              (return (VenvRefused :reason (.format "venv を共有の置き場へ移せない: {}: {}" renamed.path renamed.detail))))
+            (<- shaped (| int FileFailed) (shared-entries venv making shared root listed))
+            (<- marked (| None FileFailed)
+                (if (isinstance shaped FileFailed)
+                    (Pure shaped)
+                    (WriteText (posixpath.join making SHARED-VENV-INFO)
+                               (json.dumps {"root" root "venv" venv} :ensure-ascii False))))
+            (<- placed (| None FileFailed) (if (isinstance marked FileFailed) (Pure marked) (RenamePath making shared)))
+            (when (isinstance placed FileFailed)
+              (<- (RemoveTree making))
+              (return (EnvFailure :kind EnvFailureKind.SYNC-FAILED :retryable True
+                                  :detail (.format "venv を共有の venv {} にできない(root の venv は無い): {}: {}"
+                                                   shared placed.path placed.detail))))
+            (:= published True)))
+    (<- count (| int FileFailed) (thin-venv shared venv root))
+    (return (match count
+              (FileFailed :path path :detail detail)
+              (EnvFailure :kind EnvFailureKind.SYNC-FAILED :retryable True
+                          :detail (.format "共有の venv {} を使う薄い venv を置けない: {}: {}" shared path detail))
+              _ (VenvShared :shared shared :written count :published published)))
+    (finally (<- (ReleaseLock held)))))
 
 
 (defk written-bytes [paths]
@@ -873,6 +1139,21 @@
               (<- site-kind PathKind (kind-at site))
               (when (= site-kind PathKind.DIRECTORY) (:= found site))))
           found)))
+
+
+(defk venv-sites [venv]
+  {:pre [(: venv str)] :post [(: % tuple)]}
+  "venv の import の先の site-packages の dir の列を返すため: venv の site-packages と、venv が共有の venv を使う薄い venv(bin が共有の
+   venv の bin への symlink)なら共有の venv の site-packages(その順・無い物は入れない)。"
+  (<- own (| str None) (site-packages venv))
+  (<- bin (| PathStat FileFailed) (StatPath (posixpath.join venv "bin") :follow-symlinks False))
+  (var shared None)
+  (when (and (isinstance bin PathStat) (= bin.kind PathKind.SYMLINK))
+    (<- seen (| PathStat FileFailed) (StatPath (posixpath.join venv "bin")))
+    (when (isinstance seen PathStat)
+      (<- found (| str None) (site-packages (posixpath.dirname seen.real-path)))
+      (:= shared found)))
+  (tuple (gfor s #(own shared) :if (is-not s None) s)))
 
 
 (defk editable-dirs [site root]
@@ -1119,6 +1400,14 @@
     (<- copied (| VenvCopied VenvRefused) (copied-venv source dest source-root dest-root))
     (resume copied))
 
+  (UseSharedVenv [name venv root]
+    (<- used (| VenvShared VenvRefused None) (used-shared-venv shared-dir name venv root))
+    (resume used))
+
+  (ShareVenv [name venv root]
+    (<- shared (| VenvShared VenvRefused EnvFailure) (shared-of-venv shared-dir name venv root))
+    (resume shared))
+
   (FileSha256 [path]
     (<- digest (| str None) (file-sha256 path))
     (resume digest))
@@ -1185,13 +1474,16 @@
             (resume found))))
 
   (ReadHyVersion [venv]
-    (<- site (| str None) (site-packages venv))
-    (if (is site None)
-        (resume None)
-        (do (<- listed (| tuple FileFailed) (ListDirectory site))
-            (<- entries tuple (settled listed "site-packages を読めない"))
-            (<- version (| str None) (hy-dist-version entries))
-            (resume version))))
+    ;; 薄い venv の Hy は共有の venv の site-packages に在る(venv-sites)。
+    (<- sites tuple (venv-sites venv))
+    (var version None)
+    (for [site sites]
+      (when (is version None)
+        (<- listed (| tuple FileFailed) (ListDirectory site))
+        (<- entries tuple (settled listed "site-packages を読めない"))
+        (<- found (| str None) (hy-dist-version entries))
+        (:= version found)))
+    (resume version))
 
   (CompileTrees [project-dir venv trees entries jobs pycache inherit-pycache]
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、

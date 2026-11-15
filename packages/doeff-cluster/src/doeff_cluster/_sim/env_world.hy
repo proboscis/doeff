@@ -743,7 +743,8 @@
   (val verb (if (> (len args) 1) (get args 1) ""))
   (<- answer ProcessOutcome
       (match verb
-        "sync" (uv-sync world args (env-value request "UV_PROJECT_ENVIRONMENT"))
+        "sync" (do (<- environment (| str None) (env-value request "UV_PROJECT_ENVIRONMENT"))
+                   (uv-sync world args environment))
         "build" (uv-build world request)
         "pip" (uv-pip args)
         "run" :if (in "-c" args) (uv-probe world args)

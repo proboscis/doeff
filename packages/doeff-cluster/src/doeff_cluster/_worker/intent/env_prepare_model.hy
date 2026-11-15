@@ -15,6 +15,9 @@
 ;; venv の package も隣の __pycache__ から読む)。
 (val PYCACHE-SCOPE-MODULE "_doeff_pycache_scope")
 (val PYCACHE-SCOPE-PTH "00_doeff_pycache_scope.pth")
+;; root の薄い venv(共有の venv を使う root の venv)の site-packages に置き、共有の venv の site-packages を sys.path へ足す .pth の名
+;; (site.addsitedir で足す — 共有の site-packages の .pth も読まれる)。名の順で置き場の口の .pth の次・ほかの .pth より先。
+(val SHARED-VENV-PTH "01_doeff_shared_venv.pth")
 
 
 ;; --- 要求と答え ---------------------------------------------------------------------------
@@ -85,8 +88,18 @@
 
 
 (defrecord VenvRefused
-  "venv を写せなかった訳(写しかけの venv は消してある — 準備は uv sync で venv を作る道へ戻る)。"
+  "venv を写せなかった訳(写しかけの venv は消してある — 準備は uv sync で venv を作る道へ戻る)。ShareVenv の答えでは、root の venv を
+   共有にできなかった訳(root の venv は触る前のまま — 準備はその venv を root だけの venv として使う)。"
   (#^ str reason))
+
+
+(defrecord VenvShared
+  "root の venv を、依存のキーごとに 1 つの共有の venv を使う薄い venv にした結果。shared = 共有の venv の path・written = 薄い venv に
+   置いた物の数(pyvenv.cfg・bin などの symlink・共有の site-packages を足す .pth・root の path を持つ .pth と editable の印 — 共有の
+   venv の file には hardlink を張らない)・published = この準備が root の venv を共有の venv にしたか(False = 在った共有の venv を使った)。"
+  (#^ str shared)
+  (#^ int written)
+  (#^ bool published))
 
 
 (defrecord TreePlaced
@@ -245,9 +258,11 @@
   (setv #^ (| str None) entry-place None)
   ;; root の .pyc の置き場(bytecode の処理ステージが焼きに使い、準備の確かめの子と完成マーカーへ渡す — None = 焼く木が無かった)。
   (setv #^ (| str None) pycache-prefix None)
-  ;; venv を写した元の root(同じ依存のキーの完成済みの root — None = 写していない。写した準備は native・依存・wheel の処理ステージを
-  ;; 走らせない)。
-  (setv #^ (| str None) venv-from None))
+  ;; venv を写した元(同じ依存のキーの完成済みの root か共有の venv — None = 写していない。写した準備は native・依存・wheel の処理
+  ;; ステージを走らせない)。
+  (setv #^ (| str None) venv-from None)
+  ;; root の venv が使う共有の venv(None = まだ root だけの venv — share の処理ステージが共有にする)。
+  (setv #^ (| str None) venv-shared None))
 
 
 ;; --- effect ------------------------------------------------------------------------------
@@ -317,6 +332,26 @@
   (#^ str dest)
   (#^ str source-root)
   (#^ str dest-root))
+
+
+(defclass [(dataclass :frozen True)] UseSharedVenv [EffectBase]
+  "依存のキーの名 name の共有の venv が在れば、root の venv(venv — root-venv)をそれを使う薄い venv として置く(共有の venv の file に
+   hardlink を張らない — 薄い venv は pyvenv.cfg・共有の bin への symlink・共有の site-packages を足す .pth と、共有の venv が root の
+   型として持つ root の path を持つ .pth・editable の印を root の path に書き換えた物だけ)。答え = VenvShared か None(その名の共有の
+   venv が無い — 準備は venv を作る道へ進む)か VenvRefused(薄い venv を置けない — 置きかけは消してある)。"
+  (#^ str name)
+  (#^ str venv)
+  (#^ str root))
+
+
+(defclass [(dataclass :frozen True)] ShareVenv [EffectBase]
+  "root だけの venv(venv — uv sync か写しで作った)を依存のキーの名 name の共有の venv にし、venv をそれを使う薄い venv に置き換える
+   (共有の venv がまだ無ければ venv を共有の置き場へ移し、bin の script の頭を薄い venv の python で起きる形に直し、root の path を
+   持つ .pth・editable の印を root の型として抜く — 在れば venv を消して在る物を使う)。答え = VenvShared か VenvRefused(venv は触る
+   前のまま — root だけの venv として使う)か EnvFailure(venv を移した後に失敗し、root の venv が無い — 一時の失敗)。"
+  (#^ str name)
+  (#^ str venv)
+  (#^ str root))
 
 
 (defclass [(dataclass :frozen True)] EnsureNativeWheel [EffectBase]

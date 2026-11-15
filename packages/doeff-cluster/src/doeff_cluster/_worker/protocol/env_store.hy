@@ -65,7 +65,8 @@
                                              overdue-failure root-project declared-project oom-kills-of memory-killed-failure])
 (import doeff_cluster._worker.core.worker_due [due-after])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
-(import doeff_cluster._worker.protocol.env_translation [digest16 listed-url])
+(import doeff_cluster._worker.protocol.env_translation [digest16 listed-url shared-venv-lock SHARED-VENVS])
+(import doeff_cluster._shared.core.runtime_env [root-venv])
 
 
 (val ENV-TOOL "doeff_cluster._worker.entry.env_tool")   ; 準備の process の入口(worker 自身の環境の module — root の路は worker に足さない)
@@ -81,6 +82,10 @@
 (val MIRROR-SWEPT-LOG "worker: 使われない mirror を消した")
 ;; 鍵の表を読めず、mirror の名を決められないので mirror を消さなかった行の名(path = 鍵の表の file)。
 (val MIRRORS-UNKEYED-LOG "worker: 鍵の表を読めない — mirror を消さない")
+;; 使う root が無くなった共有の venv(か途中で止まった準備の作りかけ)を消した行の名(欄: venv = venvs/ の下の dir の名)。
+(val VENV-SWEPT-LOG "worker: 使われない共有の venv を消した")
+;; 共有の venv の作りかけの名の末尾(.<名>.making — env_translation の shared-of-venv)。
+(val MAKING-SUFFIX ".making")
 ;; 消すと選んだ root を退ける脇の名の印(.<名>.swept.<時刻> — . で始まる名は完成品としても掃除の候補としても読まれない。worker が
 ;; 消しの途中で止まって残った脇の dir は、次の掃除の残りの片づけが消す)。
 (val SWEPT-MARK ".swept.")
@@ -702,7 +707,63 @@
     (<- (RemoveTree target)))
   ;; root の宣言が指さず 7 日使われない repo の bare mirror(mirror ごとに url の錠の中で消す — unused-mirrors)。
   (<- mirrors tuple (unused-mirrors settings pins now-ms))
-  (+ doomed mirrors))
+  ;; 使う root が無くなった共有の venv(共有の venv ごとに、その錠の中で root の使いを読み直して消す — unused-venvs)。root を
+  ;; 消した後に読むので、この掃除で消した root の共有の venv も消える。
+  (<- venvs tuple (unused-venvs settings))
+  (+ doomed mirrors venvs))
+
+
+(defk venv-users [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % frozenset)]}
+  "置き場の root(. で始まらない dir — 準備中の root も)の venv が使う共有の venv の実の path の集合を返すため(薄い venv の bin は共有の
+   venv の bin への symlink — env_translation の thin-venv)。"
+  (<- names tuple (root-dirs settings))
+  (<- roots str (roots-dir settings))
+  (var used (frozenset))
+  (for [name names]
+    (<- venv str (root-venv (+ roots "/" name)))
+    (val bin (+ venv "/bin"))
+    (<- link (| PathStat FileFailed) (StatPath bin :follow-symlinks False))
+    (when (and (isinstance link PathStat) (= link.kind PathKind.SYMLINK))
+      (<- seen (| PathStat FileFailed) (StatPath bin))
+      (when (isinstance seen PathStat)
+        (:= used (| used (frozenset #((posixpath.dirname seen.real-path))))))))
+  used)
+
+
+(defk unused-venvs [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
+  "共有の venv の置き場の持ち主として、使う root が無くなった共有の venv と、途中で止まった準備が残した作りかけ(.<名>.making)を消し、
+   消した path の列を返すため。どちらも共有の venv の錠(env_translation の shared-venv-lock — 準備が共有の venv を置き・薄い venv を root に
+   置く間に持つ)を待たずに取れた時だけ、錠の中で root の使い(venv-users)を読み直して消す — 錠を取られている物(準備の最中)は次の
+   掃除へ回す。錠を取れた時の作りかけは、置いていた準備がもう居ない残り。"
+  (val shared (or settings.shared settings.state))
+  (val place (posixpath.join shared SHARED-VENVS))
+  (<- listed (ListDirectory place))
+  (when (isinstance listed FileFailed)
+    (return #()))
+  (var removed #())
+  (for [entry listed]
+    (when (= entry.kind PathKind.DIRECTORY)
+      (val making (and (.startswith entry.name ".") (.endswith entry.name MAKING-SUFFIX)))
+      (val name (if making (cut entry.name 1 (- (len MAKING-SUFFIX))) entry.name))
+      (val path (posixpath.join place entry.name))
+      (when (or making (not (.startswith entry.name ".")))
+        (<- got (| LockHeld LockBusy FileFailed) (TryLock (! (shared-venv-lock shared name))))
+        (when (isinstance got LockHeld)
+          (try
+            (<- seen (| PathStat FileFailed) (StatPath path))
+            (var used (frozenset))
+            (when (not making)
+              (<- found frozenset (venv-users settings))
+              (:= used found))
+            (when (and (isinstance seen PathStat) (not-in seen.real-path used))
+              (<- gone (| None FileFailed) (RemoveTree path))
+              (when (is gone None)
+                (<- (slog VENV-SWEPT-LOG :level "info" :venv entry.name))
+                (:= removed (+ removed #(path)))))
+            (finally (<- (ReleaseLock got))))))))
+  removed)
 
 
 (defk mirrors-dir [settings]
