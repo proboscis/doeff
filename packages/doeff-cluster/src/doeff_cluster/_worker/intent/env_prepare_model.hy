@@ -15,8 +15,10 @@
 ;; venv の package も隣の __pycache__ から読む)。
 (val PYCACHE-SCOPE-MODULE "_doeff_pycache_scope")
 (val PYCACHE-SCOPE-PTH "00_doeff_pycache_scope.pth")
-;; その .pth の中身(起動の時に口を import して install を呼ぶ 1 行)。
-(val PYCACHE-SCOPE-LINE (.format "import {0}; {0}.install()\n" PYCACHE-SCOPE-MODULE))
+;; その .pth の中身(起動の時に口を import して install を呼ぶ 1 行)。import の前に継いだ置き場を外す — 口の module とそれが import する
+;; 標準 library の .pyc を、継いだ別の root の置き場(PYTHONPYCACHEPREFIX・-X pycache_prefix)へ書かない(置き場は install が venv の
+;; file から置き直す)。
+(val PYCACHE-SCOPE-LINE (.format "import sys; sys.pycache_prefix = None; import {0}; {0}.install()\n" PYCACHE-SCOPE-MODULE))
 ;; root の薄い venv(共有の venv を使う root の venv)の site-packages に置き、共有の venv の site-packages を sys.path へ足す .pth の名
 ;; (site.addsitedir で足す — 共有の site-packages の .pth も読まれる)。名の順で置き場の口の .pth の次・ほかの .pth より先。
 (val SHARED-VENV-PTH "01_doeff_shared_venv.pth")
