@@ -20,6 +20,9 @@
 ;;; offloaded-subprocess-handler is the form without a meter (it does not count, only logs - so users without a meter responder do not fail with "no responder").
 ;;; If the child already finished before the cancellation, nothing is sent and nothing is counted. For a child whose SIGKILL the OS refused (EPERM - e.g. a machine where AppArmor denies
 ;;; signals inside a container), it does not wait for the end, does not count it as stopped, and names it in one warning line (the child keeps running). The wait of subprocess-handler (not run on a thread) is not left by cancellation (it waits for the child to finish).
+;;; After SIGKILL (on a timeout of RunProcess, and when stopping for cancellation), the end of the child is awaited only for stop-grace seconds (reaped-within): a child that SIGKILL does not end
+;;; (uninterruptible sleep - D state - on a mount that does not answer; the 20-second git rev-parse that answered after 29 minutes, card ki-0596f60ccd12) is handed to a daemon thread that reaps it
+;;; whenever it ends, named in one warning line, and the answer (the timeout answer, KILLED) is given without waiting for it.
 ;;; StartProcess, PollProcess, StopProcess, SignalProcess (#2461) and WriteProcessInput (#3672) keep the started children in one per-process table,
 ;;; STARTED-CHILDREN. Starting, polling, sending a signal and writing a short line to the held stdin do not wait, so both responders answer on the spot. Stopping waits only during the grace period, so in offloaded-subprocess-handler
 ;;; it runs on a thread.
@@ -284,13 +287,29 @@
   (not left))
 
 
+(defk reaped-within [child grace]
+  {:pre [(: child subprocess.Popen) (: grace float)] :post [(: % bool)] :tags {:context "process" :role "foundation"}}
+  "To reap a child that was sent SIGKILL, waiting at most grace seconds (header note). Answer = whether it was reaped. A child that has not ended by then (SIGKILL does not end a process
+      in uninterruptible sleep until its I/O returns) is handed to a daemon thread that waits for its end and reaps it (so it does not stay a zombie), and is named in one warning line -
+      the caller answers without it."
+  (try
+    (do (.wait child :timeout grace) True)
+    (except [subprocess.TimeoutExpired]
+      (.warning (logging.getLogger __name__)
+                "a child process did not end within %s seconds after SIGKILL; reaping it on a background thread: argv head %r, pid %d"
+                grace (get child.args 0) child.pid)
+      (.start (threading.Thread :target child.wait :name (.format "reap-{}" child.pid) :daemon True))
+      False)))
+
+
 (defk stop-for-cancel [child process-group stop-grace]
   {:pre [(: child subprocess.Popen) (: process-group bool) (: stop-grace float)] :post [(: % CancelStop)]
    :tags {:context "process" :role "foundation"}}
   "To stop a child whose request was cancelled (header note): for process-group, send SIGTERM to the group, otherwise to the child; if it (and, for a group,
       its grandchildren) is gone within stop-grace seconds, TERMINATED; if it remains, send SIGKILL and reap it: KILLED. For a child that had already finished before stopping (and, for a group, nothing remains), send nothing:
       NOT-RUNNING. SIGTERM and SIGKILL to the child alone go through the Popen entry (never sent to the pid of a reaped child). If the OS refuses to send SIGKILL
-      (EPERM), REFUSED without waiting for the end - the child keeps running (a refused SIGTERM proceeds to SIGKILL after the grace period)."
+      (EPERM), REFUSED without waiting for the end - the child keeps running (a refused SIGTERM proceeds to SIGKILL after the grace period). After SIGKILL the end is awaited
+      for stop-grace seconds more (reaped-within - a child that does not end by then is reaped on another thread, and the answer is still KILLED)."
   (val deadline (+ (time.monotonic) stop-grace))
   (val leader-done (is-not (.poll child) None))
   (if process-group
@@ -307,7 +326,7 @@
                     (<- killed GroupSignal (signal-group child.pid signal.SIGKILL))
                     (if (= killed GroupSignal.REFUSED)
                         CancelStop.REFUSED
-                        (do (.wait child) CancelStop.KILLED)))))))
+                        (do (<- (reaped-within child stop-grace)) CancelStop.KILLED)))))))
       (if leader-done
           CancelStop.NOT-RUNNING
           (do
@@ -318,7 +337,7 @@
                 (<- killed GroupSignal (send-child-signal child signal.SIGKILL))
                 (if (= killed GroupSignal.REFUSED)
                     CancelStop.REFUSED
-                    (do (.wait child) CancelStop.KILLED))))))))
+                    (do (<- (reaped-within child stop-grace)) CancelStop.KILLED))))))))
 
 
 (defk reported-stop [child how metric meter]
@@ -420,7 +439,8 @@
   {:pre [(: child subprocess.Popen) (: pipes ChildPipes) (: process-group bool) (: stop-grace float)] :post [(: % None)]
    :tags {:context "process" :role "foundation"}}
   "To stop a child that timed out: for process-group, SIGTERM to the group -> grace -> SIGKILL (grandchildren stop too), otherwise kill only the child
-      (same as subprocess.run). After stopping, wait only during the grace period for the output EOF and the child's end."
+      (same as subprocess.run). After stopping, wait only during the grace period for the output EOF and the child's end (a child that SIGKILL does not end within the grace is
+      reaped on another thread - reaped-within)."
   (if process-group
       (do
         (<- (signal-group child.pid signal.SIGTERM))
@@ -431,11 +451,11 @@
           (.wait child :timeout stop-grace)
           (except [subprocess.TimeoutExpired]
             (<- (signal-group child.pid signal.SIGKILL))
-            (.wait child))))
+            (<- (reaped-within child stop-grace)))))
       (do
         (.kill child)
         (.drained pipes (+ (time.monotonic) stop-grace))
-        (.wait child)))
+        (<- (reaped-within child stop-grace))))
   None)
 
 
@@ -497,39 +517,40 @@
   outcome)
 
 
-(defk run-communicated [argv stdin timeout cwd child-env watch]
+(defk run-communicated [argv stdin timeout cwd child-env stop-grace watch]
   {:pre [(: argv tuple) (: stdin (| str None)) (: timeout (| int float None)) (: cwd (| str None)) (: child-env (| dict None))
-         (: watch ChildWatch)]
+         (: stop-grace float) (: watch ChildWatch)]
    :post [(: % ProcessOutcome)] :tags {:context "process" :role "foundation"}}
   "To run the child once with the same wait as subprocess.run (Popen communicate - on timeout kill only the child and reap it, making a timeout answer holding the output so far)
       (a call that uses neither process-group nor stream-output - header note). The reason for opening Popen without calling subprocess.run is to keep the started
-      child in the watch until its end is seen, so the request's cancellation handler can stop the running child."
+      child in the watch until its end is seen, so the request's cancellation handler can stop the running child. Unlike subprocess.run (and the end of a Popen with block), the
+      reaping after kill waits only stop-grace seconds (reaped-within - a child that SIGKILL does not end is reaped on another thread, and the timeout answer is given)."
   (var outcome None)
   (try
-    (with [child (subprocess.Popen (list argv)
-                                   :stdin (if (is stdin None) None subprocess.PIPE)
-                                   :stdout subprocess.PIPE
-                                   :stderr subprocess.PIPE
-                                   :text True
-                                   :encoding "utf-8"
-                                   :errors "surrogateescape"
-                                   :cwd cwd
-                                   :env child-env)]
-      (try
-        (<- (watched-child watch child False))
-        ;; Same as subprocess.run: on timeout, kill the child, reap it and re-raise; on other failures also kill the child and re-raise (reaping happens at the end of the with).
-        (val texts (try
-                     (.communicate child stdin :timeout timeout)
-                     (except [subprocess.TimeoutExpired]
-                       (.kill child)
-                       (.wait child)
-                       (raise))
-                     (except [BaseException]
-                       (.kill child)
-                       (raise))))
-        (:= outcome (ProcessOutcome :exit-code (.poll child) :stdout (or (get texts 0) "") :stderr (or (get texts 1) "")))
-        (finally
-          (.release watch))))
+    (val child (subprocess.Popen (list argv)
+                                 :stdin (if (is stdin None) None subprocess.PIPE)
+                                 :stdout subprocess.PIPE
+                                 :stderr subprocess.PIPE
+                                 :text True
+                                 :encoding "utf-8"
+                                 :errors "surrogateescape"
+                                 :cwd cwd
+                                 :env child-env))
+    (try
+      (<- (watched-child watch child False))
+      ;; As subprocess.run: on timeout or any other failure, kill the child, reap it and re-raise - the reaping waits only stop-grace seconds.
+      (val texts (try
+                   (.communicate child stdin :timeout timeout)
+                   (except [BaseException]
+                     (.kill child)
+                     (<- (reaped-within child stop-grace))
+                     (raise))))
+      (:= outcome (ProcessOutcome :exit-code (.poll child) :stdout (or (get texts 0) "") :stderr (or (get texts 1) "")))
+      (finally
+        (.release watch)
+        ;; What the end of a Popen with block does, without its unbounded wait (the child was reaped above, or handed to the reaping thread).
+        (for [stream #(child.stdout child.stderr child.stdin) :if (is-not stream None)]
+          (with [(contextlib.suppress OSError)] (.close stream)))))
     (except [error subprocess.TimeoutExpired]
       (<- partial-out str (decoded error.stdout))
       (<- partial-err str (decoded error.stderr))
@@ -558,7 +579,7 @@
       (do (<- watched ProcessOutcome (run-watched argv stdin timeout cwd child-env output-path process-group (float stop-grace) stream-output
                                                   watching))
           (:= outcome watched))
-      (do (<- communicated ProcessOutcome (run-communicated argv stdin timeout cwd child-env watching))
+      (do (<- communicated ProcessOutcome (run-communicated argv stdin timeout cwd child-env (float stop-grace) watching))
           (:= outcome communicated)))
   (when (not stream-output)
     (<- (append-output output-path outcome.stdout outcome.stderr)))

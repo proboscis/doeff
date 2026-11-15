@@ -24,7 +24,9 @@
 ;;;                    SIGKILL (grandchildren the child started are stopped too). Even after finishing in time, SIGTERM is sent to children left in the group (grandchildren that went to the background).
 ;;;                    Default False = the previous behavior (on timeout only the child is stopped)
 ;;;     stop-grace     grace seconds from SIGTERM to SIGKILL when stopping a child (default 10.0): on a process-group timeout, and in offloaded-subprocess-handler
-;;;                    when a waiting task is cancelled (regardless of process-group -- sent to the group if it is one, otherwise to the child; #2847)
+;;;                    when a waiting task is cancelled (regardless of process-group -- sent to the group if it is one, otherwise to the child; #2847).
+;;;                    It also bounds the wait for the child's end after SIGKILL (on every timeout and cancellation): a child that SIGKILL does not end by then (D state on a mount
+;;;                    that does not answer) is reaped on another thread and the answer is given without it, so a timeout answers within timeout plus a few stop-graces
 ;;;     stream-output  True = run while writing the child's output to output-path in arrival order (the output of a child stopped on timeout also stays in the file -- the red evidence
 ;;;                    the runner's log points to). Default False = append stdout then stderr after the child ends (the previous behavior). Not read when output-path is None
 ;;;   Every way of waiting is the same as subprocess communicate = the child's exit plus EOF of the output (if a background grandchild holds the output, wait until the deadline).
