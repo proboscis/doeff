@@ -41,6 +41,12 @@
 ;;;               焼かずに残す(reused — 同じ commit の木を hardlink で写した root)。
 ;;;   4 検めと印   木ごとに用意した後を走査し直し、用意するべき source ごとに .pyc が在ること(焼けなかった file は理由つきで印に載せる)を
 ;;;               検めてから、木の根に完成の印(MARKER)を置く。検めが通らない木には印を置かない。
+;;;   置き場     --pycache-prefix = root の .pyc の置き場(ADR-DOE-BUILD-002 R3d)。在れば .pyc は木の中でなく PYTHONPYCACHEPREFIX と同じ並べ方で
+;;;               置き場へ置き(焼きの道具の pyc-path)、閉包の表と完成の印も木の根でなく記録の dir(bake_plan の records-dir — 置き場の下に
+;;;               木の dir を写した dir)へ置き、検めの .pyc は記録の dir を走査して数える(ScanPycs)— 木には何も書かない。木は子の import の
+;;;               路と同じ綴り(--tree の綴りを正規化した絶対 path — symlink を辿らない)で扱う(置き場の path は source の path の字面で決まる)。
+;;;               --inherit-pycache-prefix = 写し元の木の root の置き場(その dir が無ければ、置き場を使う前の形の root として写し元の木の中の
+;;;               __pycache__ と記録を読む)。
 ;;;
 ;;; 報告(stderr の slog の行): 木ごとに `tree=<--tree の綴り> stored=N rebuilt=N reused=N failed=N fetched=N problem=<文|->`、最後に全体の
 ;;; `stored=N rebuilt=N reused=N failed=N compile_s=… closure_s=… scan_s=… fetched=N`(用意する計画の file のうち stored = 保存先の code から
@@ -77,7 +83,9 @@
 (import hy)
 (import importlib.machinery)
 (import importlib.util)
+(import json)
 (import os)
+
 (import posixpath)
 (import sys)
 (import dataclasses [dataclass])  ; dataclass は効果の型が使う
@@ -91,7 +99,7 @@
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
 (import doeff_core_effects [InterpreterFacts ProcessOutcome ReadInterpreter RunProcess])
-(import doeff_cluster._worker.core.code_plan [compile-plan marker-content tree-problem])
+(import doeff_cluster._worker.core.code_plan [MARKER compile-plan marker-content tree-problem])
 (import doeff_cluster._worker.intent.code_model [ScanTree WriteMarker Note])
 (import doeff_cluster._worker.protocol.tree_files [tree-files])
 
@@ -216,9 +224,22 @@
 
 
 (defclass [(dataclass :frozen True)] WriteClosureTable [EffectBase]
-  "木の閉包の表の file を書く(一時の file に書いてから置き換える)。答え = 書けなかった理由か None。"
+  "木の閉包の表の file を書く(一時の file に書いてから置き換える・無い dir は作る)。答え = 書けなかった理由か None。"
   (#^ str path)
   (#^ str text))
+
+
+(defclass [(dataclass :frozen True)] WriteReadyMark [EffectBase]
+  "置き場を使う回の木の完成の印の file を記録の dir に書く(一時の file に書いてから置き換える・無い dir は作る — 置き場を使わない回は
+   root の側の WriteMarker が木の根へ書く)。答え = 書けなかった理由か None。"
+  (#^ str path)
+  (#^ str text))
+
+
+(defclass [(dataclass :frozen True)] ScanPycs [EffectBase]
+  "置き場を使う回の木 1 つの .pyc を、記録の dir(bake_plan の records-dir)の下を歩いて並べる。答え = 記録の dir からの相対 path の列
+   (無い dir は空 — どれを .pyc と数えるかは bake_plan の placed-pycs)。"
+  (#^ str path))
 
 
 (defclass [(dataclass :frozen True)] MarkProgress [EffectBase]
@@ -228,16 +249,32 @@
 
 ;; --- Program -----------------------------------------------------------------------------
 
-(defk bake-trees [shaped [inherits #()]]
-  {:pre [(: shaped tuple) (: inherits tuple)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+(defk bake-trees [shaped [inherits #()] * [literal False]]
+  {:pre [(: shaped tuple) (: inherits tuple) (: literal bool)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
   "揃えた木の組(TreeArgs の列)を焼く木(BakeTree の列)にするため: 木の path を symlink を辿った絶対 path にする(読めなければ OSError)。
-   inherits = 木の順の写し元の木(plan.tree-inherits の答え — 空 = どの木にも無い)。"
+   inherits = 木の順の写し元の木(plan.tree-inherits の答え — 空 = どの木にも無い)。literal = 置き場を使う回(頭の註の「置き場」)— 木の
+   path は綴りを正規化した絶対 path のまま(symlink を辿らない — 子の import の路と同じ字面)。"
   (var trees #())
   (for [#(i given) (enumerate shaped)]
     (<- seen PathStat (file-done (StatPath given.named)))
-    (:= trees (+ trees #((plan.BakeTree :named given.named :path seen.real-path :roots given.roots
-                                        :inherit (if inherits (get inherits i) None))))))
+    (val path (if literal (posixpath.normpath (posixpath.abspath given.named)) seen.real-path))
+    (val inherit (if inherits (get inherits i) None))
+    (:= trees (+ trees #((plan.BakeTree :named given.named :path path :roots given.roots
+                                        :inherit (if (and literal (is-not inherit None)) (posixpath.normpath inherit) inherit))))))
   trees)
+
+
+(defk scan-tree [tree prefix]
+  {:pre [(: tree plan.BakeTree) (: prefix (| str None))] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "木 1 つを走査の答え #(source の列 .pyc の列) にするため: source は木を走査し、.pyc は置き場を使う回なら記録の dir を歩いた物
+   (木の走査と同じ綴り — plan.placed-pycs)、使わない回は木の中の __pycache__ の物(ScanTree の答えのまま)。"
+  (<- scanned tuple (ScanTree tree.path))
+  (if (is prefix None)
+      scanned
+      (do (<- records str (plan.records-dir prefix tree.path))
+          (<- rels tuple (ScanPycs records))
+          (<- pycs list (plan.placed-pycs rels sys.implementation.cache-tag))
+          #((get scanned 0) pycs))))
 
 
 (defk imports-entry-path [code-store rel text hy-version]
@@ -275,16 +312,17 @@
           problem)))
 
 
-(defk inherited-tables [trees hy-version]
-  {:pre [(: trees tuple) (: hy-version str)] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
+(defk inherited-tables [trees hy-version [inherit-prefix None]]
+  {:pre [(: trees tuple) (: hy-version str) (: inherit-prefix (| str None))] :post [(: % (| tuple None))] :tags {:context "worker" :role "main"}}
   "木ごとの写し元の閉包の表(相対 path → ClosureRow の dict)を読むため(ADR-DOE-BUILD-002 R3c)。全部の木に写し元の木と読める表が在る
    時だけ木の順の表の列、1 つでも欠ければ None(どの木も引き継がない — 欠けた木の消えた module が分からず、焼きの道具へ渡す changed を
-   求められない)。"
+   求められない)。表は写し元の木の記録の dir(inherit-prefix = 写し元の root の置き場 — None は写し元の木の根)に在る。"
   (var tables #())
   (for [tree trees]
     (var table None)
     (when (is-not tree.inherit None)
-      (<- text (| str None) (ReadClosureTable (posixpath.join tree.inherit plan.CLOSURE-TABLE)))
+      (<- records str (plan.records-dir inherit-prefix tree.inherit))
+      (<- text (| str None) (ReadClosureTable (posixpath.join records plan.CLOSURE-TABLE)))
       (when (is-not text None)
         (<- read (| dict None) (plan.closure-table-of text hy-version))
         (:= table read)))
@@ -321,8 +359,9 @@
   answers)
 
 
-(defk closure-of-trees [trees sources entries code-store hy-version]
-  {:pre [(: trees tuple) (: sources tuple) (: entries tuple) (: code-store (| str None)) (: hy-version str)] :post [(: % plan.ClosureWalk)]
+(defk closure-of-trees [trees sources entries code-store hy-version [inherit-prefix None]]
+  {:pre [(: trees tuple) (: sources tuple) (: entries tuple) (: code-store (| str None)) (: hy-version str) (: inherit-prefix (| str None))]
+   :post [(: % plan.ClosureWalk)]
    :tags {:context "worker" :role "main"}}
   "木ごとの焼く範囲(trees と同じ順の、相対 path の frozenset か None = 根の下を全部)を求めるため。entries が在れば、entries から import を
    静的に辿った、木をまたぐ閉包(source は module ごとに 1 度だけ読む — 読めない source は何も import しない物として扱う)。
@@ -332,7 +371,7 @@
   (if (not entries)
       (plan.ClosureWalk :scopes (tuple (gfor _ trees None)) :rows (tuple (gfor _ trees #())) :changed None)
       (do (<- index (plan.module-index trees sources))
-          (<- tables (| tuple None) (inherited-tables trees hy-version))
+          (<- tables (| tuple None) (inherited-tables trees hy-version inherit-prefix))
           (var seen (frozenset))
           (var frontier (frozenset entries))
           (var modules 0)
@@ -396,20 +435,23 @@
                             :changed changed))))
 
 
-(defk prepare-trees [trees revision jobs entries code-store hy-version]
-  {:pre [(: trees tuple) (: revision str) (: jobs int) (: entries tuple) (: code-store (| str None)) (: hy-version str)] :post [(: % tuple)]
+(defk prepare-trees [trees revision jobs entries code-store hy-version * [prefix None] [inherit-prefix None]]
+  {:pre [(: trees tuple) (: revision str) (: jobs int) (: entries tuple) (: code-store (| str None)) (: hy-version str)
+         (: prefix (| str None)) (: inherit-prefix (| str None))]
+   :post [(: % tuple)]
    :tags {:context "worker" :role "main"}}
   "全部の木を 1 回で準備し、木ごとの結果(TreeOutcome の列・trees の順)を返す(頭の註の手順 1〜4)。検めが通った木には完成の印を置き、
    通らない木は印を置かずに理由を結果に載せる。経過の秒は全体の報告の行にだけ載せる。code-store = 保存先の dir(None = 使わない)・
-   hy-version = この root の Hy の版(import の名の entry の鍵)。"
+   hy-version = この root の Hy の版(import の名の entry の鍵)。prefix = root の .pyc の置き場・inherit-prefix = 写し元の木の root の
+   置き場(頭の註の「置き場」— None = 木の中)。"
   (<- started float (GetMonotonic))
   (var scans #())
   (for [tree trees]
-    (<- scanned tuple (ScanTree tree.path))
+    (<- scanned tuple (scan-tree tree prefix))
     (:= scans (+ scans #(scanned))))
   (<- scanned-at float (GetMonotonic))
   (<- (MarkProgress))
-  (<- walk plan.ClosureWalk (closure-of-trees trees (tuple (gfor s scans (tuple (get s 0)))) entries code-store hy-version))
+  (<- walk plan.ClosureWalk (closure-of-trees trees (tuple (gfor s scans (tuple (get s 0)))) entries code-store hy-version inherit-prefix))
   (val scopes walk.scopes)
   ;; 写し元の .pyc の引き継ぎ(R3c)は、閉包の歩みが写し元から変わった module を求められた時だけ焼きの道具へ渡す。
   (val inherits (if (is walk.changed None) #() (tuple (gfor t trees #(t.path t.inherit)))))
@@ -439,19 +481,25 @@
   (var outcomes #())
   (for [#(tree scope tree-plan rows) (zip trees scopes plans walk.rows)]
     (<- failed list (plan.tree-failures failures tree.path))
-    (<- after tuple (ScanTree tree.path))
+    (<- after tuple (scan-tree tree prefix))
     (<- after-sources list (plan.scoped-sources (get after 0) scope))
     (val after-pycs (frozenset (get after 1)))
     (<- problem (| str None) (tree-problem after-sources after-pycs (frozenset (gfor f failed (get f 0))) tree.roots))
     (if (is problem None)
         (do (<- marker dict (marker-content revision True after-sources after-pycs failed tree.roots))
             ;; 閉包の表は完成の印の前に置く(次の準備の写し元になるのは完成した root の木だけ — R3c)。
+            (<- records str (plan.records-dir prefix tree.path))
             (when entries
               (<- text str (plan.closure-table-text rows hy-version))
-              (<- unwritten (| str None) (WriteClosureTable (posixpath.join tree.path plan.CLOSURE-TABLE) text))
+              (<- unwritten (| str None) (WriteClosureTable (posixpath.join records plan.CLOSURE-TABLE) text))
               (when (is-not unwritten None)
                 (<- (Note (.format "閉包の表を書けない(次の準備は全部を読む): {}: {}" tree.named unwritten)))))
-            (<- (WriteMarker tree.path marker)))
+            (if (is prefix None)
+                (<- (WriteMarker tree.path marker))
+                (do (<- refused (| str None) (WriteReadyMark (posixpath.join records MARKER)
+                                                             (json.dumps marker :ensure-ascii False :indent 1)))
+                    (when (is-not refused None)
+                      (raise (OSError (.format "木の完成の印を書けない: {}: {}" tree.named refused)))))))
         (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem))))
     (<- stored int (plan.tree-count answer.stored tree.path))
     (<- fetched int (plan.tree-count answer.fetched tree.path))
@@ -475,16 +523,17 @@
 ;; ADR-DOE-BUILD-002 R7)。用意する物を標準入力で渡し、
 ;; 結果の行を標準出力から読む。
 
-(defhandler pool-tool-baker [progress]
+(defhandler pool-tool-baker [progress [pycache None] [inherit-pycache None]]
   ;; 焼きの効果を、焼きの道具の子 process(この process と同じ interpreter)に訳す(main が被せる・子 process の効果は外側の
   ;; subprocess-handler が答える)。道具が 0 でない終わりで止まれば、焼きの失敗でなく道具の失敗として落ちる。
   ;; 引数に残す理由: 印の file の path は起動ごとの値(--progress・None = 印の無い起動)。焼きの道具は 1 つ用意するたびに印を進める —
-  ;; 焼きの前後だけの印では、進んでいる焼き直しの全体が停滞の閾を越えて止められる。
+  ;; 焼きの前後だけの印では、進んでいる焼き直しの全体が停滞の閾を越えて止められる。.pyc の置き場(--pycache-prefix・
+  ;; --inherit-pycache-prefix — None = 木の中)も起動ごとの値。
   (BakeSources [items jobs paths code-store inherits changed]
     ;; interpreter は venv の prefix から求める(hy の起動は sys.executable を hy の入口に差し替えるので、sys.executable では起こせない)。
     (<- facts InterpreterFacts (ReadInterpreter))
     (<- argv tuple (plan.bake-argv (posixpath.join facts.prefix "bin" "python") POOL-TOOL jobs paths CODE-STORE code-store progress
-                                   inherits))
+                                   inherits :pycache pycache :inherit-pycache inherit-pycache))
     (<- text str (plan.bake-input items changed))
     (<- outcome ProcessOutcome (RunProcess :argv argv :stdin text))
     (when (!= outcome.exit-code 0)
@@ -550,6 +599,13 @@
       False)))
 
 
+(deff placed-files [path]  ; cannot be a defk: 記録の dir の歩み(VM の外 — 答え手が呼ぶ)
+  {:pre [(: path str)] :post [(: % tuple)]}
+  "記録の dir の下の file の相対 path(posix・名の順)を歩いて並べるため(無い dir は空)。"
+  (tuple (sorted (gfor #(here _ names) (os.walk path) name names
+                       (posixpath.relpath (posixpath.join here name) path)))))
+
+
 (deff read-table [path]  ; cannot be a defk: 閉包の表の読み(VM の外 — 答え手が呼ぶ)
   {:pre [(: path str)] :post [(: % (| str None))]}
   "閉包の表の file を読むため(無い・読めない file は None — その木は写し元の表を持たない物として扱う)。"
@@ -559,11 +615,13 @@
       None)))
 
 
-(deff write-table [path text]  ; cannot be a defk: 閉包の表の書き(VM の外 — 答え手が呼ぶ)
+(deff write-table [path text]  ; cannot be a defk: 閉包の表と記録の dir の完成の印の書き(VM の外 — 答え手が呼ぶ)
   {:pre [(: path str) (: text str)] :post [(: % (| str None))]}
-  "閉包の表の file を、一時の file に書いてから置き換えるため(書きかけを読ませない)。答え = 書けなかった理由か None。"
+  "焼きの記録の file を、一時の file に書いてから置き換えるため(書きかけを読ませない・無い dir は作る — 記録の dir は置き場の下で、
+   .pyc の無い木では無い)。答え = 書けなかった理由か None。"
   (setv temporary (.format "{}.{}.tmp" path (os.getpid)))
   (try
+    (os.makedirs (posixpath.dirname path) :exist-ok True)
     (.write-text (Path temporary) text :encoding "utf-8")
     (os.replace temporary path)
     None
@@ -587,7 +645,11 @@
   (ReadClosureTable [path]
     (resume (read-table path)))
   (WriteClosureTable [path text]
-    (resume (write-table path text))))
+    (resume (write-table path text)))
+  (WriteReadyMark [path text]
+    (resume (write-table path text)))
+  (ScanPycs [path]
+    (resume (placed-files path))))
 
 
 (defhandler progress-marks [path]
@@ -615,6 +677,10 @@
   (.add-argument parser "--tree" :action "append" :required True :help "焼く木(幾つでも — 木ごとの引数はこの順に並べる)")
   (.add-argument parser "--roots" :action "append" :help "木の中の import の根(`,` で並べる・前が先 — 木ごとに 1 つ)")
   (.add-argument parser "--progress" :default "" :help "進みの印の file(閉包の一回りと焼きの前後に時刻を進める・空 = 印を触らない)")
+  (.add-argument parser "--pycache-prefix" :default ""
+                 :help "root の .pyc の置き場(在れば .pyc と焼きの記録を木の外のここへ置く・空 = 木の中 — 頭の註の「置き場」)")
+  (.add-argument parser "--inherit-pycache-prefix" :default ""
+                 :help "写し元の木の root の .pyc の置き場(その dir が無ければ写し元の木の中を読む — 頭の註の「置き場」)")
   (.add-argument parser "--inherit" :action "append"
                  :help "写し元の木(依存のキーの同じ完成済みの root の、この木の写し元の木・空 = 無い — 木ごとに 1 つ・ADR-DOE-BUILD-002 R3c)")
   (setv args (.parse-args parser))
@@ -630,7 +696,9 @@
   ;; 焼く木の module 名がそこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))
   (setv (cut sys.path) (lfor p sys.path :if (not (and p (= (.resolve (Path p)) here))) p))
-  (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped inherits))))
+  (setv prefix (or args.pycache-prefix None)
+        inherit-prefix (if (and args.inherit-pycache-prefix (os.path.isdir args.inherit-pycache-prefix)) args.inherit-pycache-prefix None))
+  (setv trees (run (with-handlers [os-file-handler] (bake-trees shaped inherits :literal (is-not prefix None)))))
   (setv entries (tuple (gfor e (.split args.entries ",") :if e e)))
   ;; 焼きの並列数: CPU から決めた数(か --jobs)を上限に、この process の居る cgroup の memory の空きで絞る(焼く子が層の上限で殺され、
   ;; pool が壊れて準備が落ちた — 2026-11-02 の node-d・頭の註の手順 3)。絞らなかった回も並列数を 1 行で名乗る(plan.jobs-line — 実行環境の
@@ -644,9 +712,12 @@
   ;; 保存先の dir は環境変数で決まる(code_store の store-dir — import の読みの口と同じ 1 つの解き方)。import の名の entry の鍵は、この root の
   ;; venv の Hy の版で読みが変わりうるので Hy の版を入れる。
   (setv code-store (store.store-dir))
-  (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files (pool-tool-baker (or args.progress None))
+  (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files
+                                      (pool-tool-baker (or args.progress None) prefix inherit-prefix)
                                       store-entries closure-reads (progress-marks (or args.progress None))]
-                                     (prepare-trees trees args.revision jobs entries code-store hy.__version__))))
+                                     (prepare-trees trees args.revision jobs entries code-store hy.__version__
+                                                    :prefix prefix :inherit-prefix inherit-prefix))))
+
   (setv failed (tuple (gfor t outcomes :if (is-not t.problem None) t)))
   (for [t failed]
     (print (.format "準備に失敗: {}: {}" t.named t.problem) :file sys.stderr :flush True))

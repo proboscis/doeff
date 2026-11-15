@@ -46,7 +46,7 @@
 (import doeff_core_effects [EnvEntry EnvMode StartProcess PollProcess StopProcess ProcessNotStarted ProcessRunning ProcessExited AwaitProcessExit RunProcess ProcessOutcome])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._shared.core.native_wheel [wheels-root])
-(import doeff_cluster._shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster._shared.intent.env_marker_model [ENV-MARKER ROOT-PYCACHE])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure RuntimeEnv RuntimeEnvInvalid])
 (import doeff_cluster._shared.core.runtime_env_rules [runtime-env-of-json dependency-key])
 (import doeff_cluster._worker.intent.worker_model [CodeState CodeView EnvDisk PrepareEnv SweepEnvs EnvReport WakeSet WorkerWakes])
@@ -55,7 +55,7 @@
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster._worker.core.launch [entry-place-of-marker])
+(import doeff_cluster._worker.core.launch [entry-place-of-marker pycache-prefix-of-marker])
 (import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MIRROR-UNUSED-SECONDS unused-mirror-names MemoryUse LayerMemoryUse MemoryUnread WarmRoom
@@ -219,6 +219,30 @@
   (<- text (ReadText (+ root "/" ENV-MARKER)))
   (<- place (| str None) (entry-place-of-marker (if (isinstance text str) text None)))
   place)
+
+
+(defk root-pycache-prefix [root]
+  {:pre [(: root str)] :post [(: % (| str None))]}
+  "root の venv で起こす子へ PYTHONPYCACHEPREFIX で渡す root の .pyc の置き場を、root の完成の印から読むため(起こす宿・入口の確かめ・
+   待ちの子の宿が読む。印の中身の読みは launch の pycache-prefix-of-marker — 欄の無い印の root は None = 渡さない)。"
+  (<- text (ReadText (+ root "/" ENV-MARKER)))
+  (<- prefix (| str None) (pycache-prefix-of-marker (if (isinstance text str) text None)))
+  prefix)
+
+
+(defk pycache-targets [aside]
+  {:pre [(: aside tuple)] :post [(: % tuple)]}
+  "脇へ退けた root の .pyc の置き場が RAM の dir の下の dir への symlink なら、その先の dir を消す物として並べるため(root の dir を
+   消しても symlink の先は残る — env_translation の pycache-place)。置き場が root の中の dir・無い root は何も足さない。"
+  (var found #())
+  (for [root aside]
+    (val place (+ root "/" ROOT-PYCACHE))
+    (<- link (| PathStat FileFailed) (StatPath place :follow-symlinks False))
+    (when (and (isinstance link PathStat) (= link.kind PathKind.SYMLINK))
+      (<- seen (| PathStat FileFailed) (StatPath place))
+      (when (and (isinstance seen PathStat) (= seen.kind PathKind.DIRECTORY))
+        (:= found (+ found #(seen.real-path))))))
+  found)
 
 
 (defk read-answer [path]
@@ -661,7 +685,10 @@
   ;; 終わった世代(状態の dir が無い)の固定の file(AL-D2g)。
   (<- pins tuple (pin-records settings))
   (val ended (tuple (gfor r pins :if (not r.alive) r.path)))
-  (val doomed (+ aside stale unused ended))
+  ;; RAM の dir に置いた root の .pyc の置き場(symlink の先)は、root の dir と一緒に消す。
+  (<- placed tuple (pycache-targets aside))
+  (val doomed (+ placed aside stale unused ended))
+
   (for [target doomed]
     (<- (RemoveTree target)))
   ;; root の宣言が指さず 7 日使われない repo の bare mirror(mirror ごとに url の錠の中で消す — unused-mirrors)。

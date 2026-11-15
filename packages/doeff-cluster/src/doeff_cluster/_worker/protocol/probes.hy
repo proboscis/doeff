@@ -33,7 +33,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveProbes])
 (import doeff_cluster._worker.core.worker_rules [probe-refusal])
 (import doeff_cluster._worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-entry-place shim-argv])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_cluster._worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
                                                probe-settle probe-command probe-step ProbeSettle ProbeStep])
@@ -88,15 +88,20 @@
   ;; 検める名は子と同じ置き場の名(child-entry-place — 実行環境の束は root の完成の印の置き場・木の束は worker 自身の置き場)。
   (var allowed #())
   (var root-place None)
+  (var pycache None)
   (when runtime-env
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read)
     (<- found (| str None) (root-entry-place code-path))
-    (:= root-place found))
+    (:= root-place found)
+    ;; 検めの子も root の .pyc の置き場を子と同じく受ける(root の完成の印の pycachePrefix — 無ければ渡さない)。
+    (<- placed (| str None) (root-pycache-prefix code-path))
+    (:= pycache placed))
   (<- place (| str None) (child-entry-place runtime-env root-place))
   (val targets (tuple (dict.fromkeys (gfor spec specs target (probe-targets spec place) target))))
   (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :layout settings.layout
-                                    :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir))
+                                    :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir
+                                    :pycache-prefix pycache))
   (val runs-dir (+ settings.probe-dir "/runs"))
   (<- (file-done (MakeDirectory runs-dir)))
   (val out (.format "{}/{}.out" runs-dir n))
@@ -104,7 +109,9 @@
   (<- started-ms int (now-epoch-ms))
   ;; 検めの出力はそのまま(stdout の行を finish-probe が読んで判じる — 刻を付けるのは job の log だけ・#3714)。検めは退きの知らせを
   ;; 受けない(#3672)。
-  (<- shim (get tuple #(str ...)) (shim-argv settings.python settings.shim.shim-grace-ms :stamp-lines False :notice-env None))
+  (<- shim (get tuple #(str ...)) (shim-argv settings.python settings.shim.shim-grace-ms :stamp-lines False :notice-env None
+                                             :own-bytecode (is-not pycache None)))
+
   (<- answer (StartProcess :argv (+ shim plan.argv)
                            :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path out :stderr-path err
                            :process-group True :hold-stdin True :reap-group True))

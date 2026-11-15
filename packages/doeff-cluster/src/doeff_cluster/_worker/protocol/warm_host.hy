@@ -26,9 +26,10 @@
 (import doeff_core_effects [AwaitProcessExit])
 (import doeff_cluster._worker.protocol.observations [ObserveWarmChildren])
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_core_effects [EnvEntry])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
 (import doeff_cluster._worker.core.job_cgroup [placed-argv])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix])
 
 
 (defrecord WarmSettings
@@ -100,9 +101,16 @@
   (<- (file-done (MakeDirectory place.dir :mode 0o700)))
   (<- (file-done (MakeDirectory place.socket-dir :mode 0o700)))
   (<- (file-done (MakeDirectory settings.log-dir)))
-  (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
+  (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(待ちの子は root の版の doeff で起きる)。
   (<- entry-place (| str None) (root-entry-place launch.root))
+  ;; root の .pyc の置き場(root の完成の印の pycachePrefix)を job の子と同じく渡す — 待ちの子から分けた task は待ちの子の置き場を継ぐ。
+  (<- pycache (| str None) (root-pycache-prefix launch.root))
+  (val allowed (if (is pycache None)
+                   read
+                   (+ (tuple (gfor e read :if (!= e.name "PYTHONPYCACHEPREFIX") e))
+                      #((EnvEntry :name "PYTHONPYCACHEPREFIX" :value pycache)))))
+
   (<- plain tuple (warm-child-argv settings.uv launch place entry-place))
   ;; service だけが分かれる root の待ちの子は service の兄弟の cgroup へ移ってから起こす(WarmSettings の service-procs の註 — 外の
   ;; job-cgroup-placer は包んだ argv を包み直さない)。

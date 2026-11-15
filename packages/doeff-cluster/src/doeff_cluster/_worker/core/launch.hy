@@ -30,6 +30,26 @@
     True LEGACY-ENTRY-PLACE))
 
 
+(defk pycache-prefix-of-marker [text]
+  {:pre [(: text (| str None))] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "root の完成の印の中身 text(None = 印が無い・読めない)から、root の .pyc の置き場(準備が欄 pycachePrefix へ書いた — env_marker_model の
+   ROOT-PYCACHE)を読むため。欄の無い印・null の印・読めない印は None(子へ PYTHONPYCACHEPREFIX を渡さない — 木の中の __pycache__ を
+   使う前の形の root)。"
+  (val marker (if (is text None) None (try (json.loads text) (except [ValueError] None))))
+  (if (and (isinstance marker dict) (isinstance (.get marker "pycachePrefix") str) (get marker "pycachePrefix"))
+      (get marker "pycachePrefix")
+      None))
+
+
+(defk pycache-environ [env pycache-prefix]
+  {:pre [(: env (get dict #(str str))) (: pycache-prefix (| str None))] :post [(: % (get dict #(str str)))]
+   :tags {:context "worker" :role "judgment"}}
+  "root の venv で起こす子(job・入口の検め・待ちの子)の環境に、root の .pyc の置き場を PYTHONPYCACHEPREFIX で足すため(None = 置き場を
+   使わない root — 足さない。root の venv の .pth の口 _foundation/pycache_scope が、標準 library と venv の package には隣の
+   __pycache__ を使わせる)。宣言の env-vars の同じ名より後に重ねる(root の .pyc の在り処は root の事実)。"
+  (if (is pycache-prefix None) env (| env {"PYTHONPYCACHEPREFIX" pycache-prefix})))
+
+
 ;; worker 自身の doeff の、子の入口(job_entry・shim)の在る置き場(job_model の CHILD-ENTRY-PLACES の先頭 — この版の doeff の置き場)。
 ;; worker の python・hy(worker の venv)で起きる process は、この置き場の名で解ける。
 (val WORKER-ENTRY-PLACE (get CHILD-ENTRY-PLACES 0))
@@ -171,8 +191,9 @@
       None))
 
 
-(defk shim-argv [python grace-ms * stamp-lines notice-env [orphan-seconds None]]
-  {:pre [(: python str) (: grace-ms int) (: stamp-lines bool) (: notice-env (| str None)) (: orphan-seconds (| float None))]
+(defk shim-argv [python grace-ms * stamp-lines notice-env [orphan-seconds None] [own-bytecode False]]
+  {:pre [(: python str) (: grace-ms int) (: stamp-lines bool) (: notice-env (| str None)) (: orphan-seconds (| float None))
+         (: own-bytecode bool)]
    :post [(: % (get tuple #(str ...)))]
    :tags {:context "worker" :role "judgment"}}
   "job の子と入口の検めを shim の下で起こす命令の頭を 1 つの形にするため(猶予は shim が秒の小数で読む — 値は worker の方針から
@@ -180,8 +201,12 @@
    log は人が刻で読むので True・入口の検めは worker が stdout の行を読んで判じるので False)。notice-env = 退きの知らせの pipe の読み口の
    fd の番号を job へ渡す環境変数の名(#3672 — 宿の契約 HOST-CONTRACT の notice-env・呼び手が名を渡す。shim は worker が標準入力へ
    書いた行をその pipe へ中継する)— 入口の検めは知らせを受けないので None。orphan-seconds = worker の消失の後に job が自分で終わるのを
-   待つ秒(orphan-seconds-of — None = 消失ですぐ止める)。"
-  (+ #(python "-B" "-m" (+ WORKER-ENTRY-PLACE ".shim") (str (/ grace-ms 1000)))
+   待つ秒(orphan-seconds-of — None = 消失ですぐ止める)。own-bytecode = 子の環境が root の .pyc の置き場(PYTHONPYCACHEPREFIX)を持つ時 —
+   shim(worker の python)は `-X pycache_prefix=` で環境の置き場を読まず、worker の venv の隣の __pycache__ を読む(置き場には worker の
+   module の .pyc が無く、起動のたびに compile し直す)。-X は子へ継がれないので、子は環境の置き場を使う。"
+  (+ #(python "-B")
+     (if own-bytecode #("-X" "pycache_prefix=") #())
+     #("-m" (+ WORKER-ENTRY-PLACE ".shim") (str (/ grace-ms 1000)))
      (if stamp-lines #("--stamp-lines") #())
      (if (is notice-env None) #() #("--notice-env" notice-env))
      (if (is orphan-seconds None) #() #("--orphan-seconds" (str orphan-seconds)))
@@ -211,10 +236,10 @@
 
 
 (defk job-launch [spec code-path instance attempt * entry python hy-command extra-env layout allowed-env worker-pid program-path program-env work-dir
-                  shim-grace-ms notice-env]
+                  shim-grace-ms notice-env [pycache-prefix None]]
   {:pre [(: spec JobSpec) (: code-path str) (: instance str) (: attempt int) (: entry str) (: python str) (: hy-command str)
          (: extra-env dict) (: layout CodeLayout) (: allowed-env dict) (: worker-pid int) (: program-path (| str None)) (: program-env str) (: work-dir str)
-         (: shim-grace-ms int) (: notice-env str)]
+         (: shim-grace-ms int) (: notice-env str) (: pycache-prefix (| str None))]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "job の子 process の起こし方を、渡された値だけから決めるため(ProcessHost と、後の言い換えの handler が同じ形で起こす)。
    子の文脈の環境変数は sim の宿(local.run-context-of)と同じ関数 process-context-environ で作る(実行環境の job だけが DOEFF_RUNTIME_ENV・
@@ -227,7 +252,8 @@
    shim-grace-ms = shim の猶予(worker の方針から shim_timing.shim-spans が導いた値 — 呼び手が渡す)。notice-env = 退きの知らせの pipe の
    fd の番号を子へ渡す環境変数の名(宿の契約 HOST-CONTRACT の notice-env — 呼び手が名を渡す・shim の旗 --notice-env・#3672)。
    entry = `-m` へ渡す子の入口の名(spec.entry-at を child-entry-place の置き場で — 実行環境の job は root の完成の印の置き場・
-   木の job は WORKER-ENTRY-PLACE。呼び手が選ぶ)。"
+   木の job は WORKER-ENTRY-PLACE。呼び手が選ぶ)。pycache-prefix = root の .pyc の置き場(実行環境の job だけ — 呼び手が root の完成の印から
+   読む env_store の root-pycache-prefix・None = 置き場を使わない root)— 在れば入口の環境に PYTHONPYCACHEPREFIX で足す(pycache-environ)。"
   (<- context dict (process-context-environ spec instance attempt))
   (val worker-env (| context {"DOEFF_WORKER_PID" (str worker-pid)}
                      (if program-path {program-env program-path} {})))
@@ -237,13 +263,17 @@
   ;; job は退きの知らせの pipe を受ける(shim が worker の標準入力の行を中継する — #3672)。
   ;; 退きの寿命を宣言した handoff の service は、worker の消失を退きとして寿命の上限まで回す(orphan-seconds-of)。
   (<- orphan (| float None) (orphan-seconds-of spec))
-  (<- shim (get tuple #(str ...)) (shim-argv python shim-grace-ms :stamp-lines True :notice-env notice-env :orphan-seconds orphan))
+  (val placed (and spec.runtime-env (is-not pycache-prefix None)))
+  (<- shim (get tuple #(str ...)) (shim-argv python shim-grace-ms :stamp-lines True :notice-env notice-env :orphan-seconds orphan
+                                             :own-bytecode (bool placed)))
   (if spec.runtime-env
       (do (val declared (json.loads spec.runtime-env))
           (<- child-env dict (child-environment allowed-env extra-env (| (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) environ)
                                                 worker-env))
           (<- project-dir str (env-project-dir code-path declared))
-          (<- entry-env dict (uv-run-environ project-dir child-env))
+          (<- venv-env dict (uv-run-environ project-dir child-env))
+          (<- entry-env dict (pycache-environ venv-env pycache-prefix))
+
           (<- root-hy str (project-hy project-dir))
           (val entry-entries (tuple (gfor k (sorted entry-env) (EnvEntry :name k :value (get entry-env k)))))
           (JobLaunch :argv (+ shim #(root-hy "-m" entry) spec.args program-args)
