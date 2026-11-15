@@ -39,6 +39,11 @@
 ;;;     関数の照らしを含む)は要求と同じ scheduler の thread を占めず、手入れが出す effect だけを task の handler が答える。前は要求と同じ
 ;;;     thread の task で、送りの関数が送り先から読み戻した 19 万行を 1 行ずつ照らす計算に、起き直しのたびに 4 分ずつ 2 回 thread を
 ;;;     占め、2 本の口の要求が全部その後ろで待った(2026-10-27 01:26〜01:44・02:08〜02:16 JST)
+;;;   - 接続の許可と scheduler の混みの計器: GET /metrics は serving.permit-database の接続の許可の負荷(doeff の ReadSqlPermitLoad — 許可の数・
+;;;     今の待ちと貸し・待った秒と貸した秒の累計)を PERMIT-*-METRIC の系列に足す(描きの時だけ — 計算の pool の負荷と同じ形)。要求の task が文を
+;;;     流す前に許可を待つ秒(handler の区間の内訳)と、許可がどれだけ塞がっているかを読む。serving.lag-probe-seconds が在れば、用意の後に
+;;;     :daemon True の task が拍ごとに Delay し、起きるのが遅れた秒(起きた刻 − 眠った刻 − 拍)を SCHEDULER-LAG-METRIC に積む — 要求と同じ
+;;;     scheduler の thread が他の task で塞がっている間だけ遅れる(要求の queue の区間と同じ物差しで、要求の無い時も読める)
 ;;;   - 計器(#2709): 要求の task は答えを送った直後に、要求の種(wire の request-kind)と実際に送った答えの status の counter
 ;;;     records_requests_<種>_<status> を doeff の計器の effect CountMetric で 1 つ数える(本文の断りの 400・落ちた時の 500・送りが落ちて
 ;;;     送り直した 500 も同じ 1 か所 — 答えを受け取った呼び手が次に読む /metrics には、その答えがもう入っている)。答え手は serving.meter(None = doeff の
@@ -94,6 +99,7 @@
 (import doeff_core_effects [await-handler state])
 (import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_core_effects [ComputeLoad ReadComputeLoad])
+(import doeff_core_effects [ReadSqlPermitLoad SqlPermitLoad])
 (import doeff_core_effects [run-apart])
 (import doeff_core_effects [Cancel CompletePromise CreatePromise Gather TaskPriority Promise Race Spawn Task TaskCancelledError Wait scheduled shielded])
 (import doeff_core_effects [StopRequested])
@@ -139,6 +145,22 @@
 (val COMPUTE-WORKERS-METRIC "records_compute_workers")
 (val COMPUTE-WAIT-METRIC "records_compute_wait")
 (val COMPUTE-RUN-METRIC "records_compute_run")
+(val PERMITS-METRIC "records_pg_permits")
+(val PERMIT-WAITING-METRIC "records_pg_permit_waiting")
+(val PERMIT-HELD-METRIC "records_pg_permit_held")
+(val PERMIT-WAIT-METRIC "records_pg_permit_wait")
+(val PERMIT-HOLD-METRIC "records_pg_permit_hold")
+(val SCHEDULER-LAG-METRIC "records_scheduler_lag")
+(val PERMIT-METRIC-HELPS
+  (FrozenMap {PERMITS-METRIC "PostgreSQL の接続の許可の数(組み立てが開いた接続の数 — 利用率の割る数)"
+              PERMIT-WAITING-METRIC "PostgreSQL の接続の許可を待っている文と transaction の数(読んだ時の今の値)"
+              PERMIT-HELD-METRIC "PostgreSQL の接続の許可を貸している数(読んだ時の今の値)"
+              PERMIT-WAIT-METRIC (+ "許可を得た文と transaction が、許可を頼んでから得るまで待った秒(合計と回数 — 起動からの累計。2 回読んだ差の"
+                                    "合計 ÷ 回数 = 待ちの平均・合計 ÷ 読みの間の秒 = 待っている数の時間の平均)")
+              PERMIT-HOLD-METRIC (+ "返した許可を貸していた秒(合計と回数 — 起動からの累計。2 回読んだ差の合計 ÷ 読みの間の秒 ÷ "
+                                    "records_pg_permits = 接続の利用率)")
+              SCHEDULER-LAG-METRIC (+ "scheduler の thread の混みの探り: 拍ごとの Delay から起きるのが遅れた秒(合計と回数 — 起動からの累計。"
+                                      "2 回読んだ差の合計 ÷ 回数 = 遅れの平均)")}))
 (val COMPUTE-METRIC-HELPS
   (FrozenMap {COMPUTE-QUEUED-METRIC "束の読みの読み解きと綴りの計算のうち、計算の pool の thread を待って列に並んでいる数(読んだ時の今の値)"
               COMPUTE-RUNNING-METRIC "計算の pool の thread で回っている束の読みの読み解きと綴りの計算の数(読んだ時の今の値)"
@@ -150,7 +172,7 @@
 ;; GET /metrics の # HELP の説明(要求の数の系列 + 区間の秒の系列 — #3688 + 計算の pool の負荷の系列)。表ごとの一覧の読みの系列の説明は
 ;; 宣言の表から足す(metrics-answer)。
 (val METRIC-HELPS (FrozenMap (+ (tuple (.items ANSWER-METRIC-HELPS)) (tuple (.items STAGE-METRIC-HELPS))
-                                (tuple (.items COMPUTE-METRIC-HELPS)))))
+                                (tuple (.items COMPUTE-METRIC-HELPS)) (tuple (.items PERMIT-METRIC-HELPS)))))
 
 (val MODULE-TAGS {:context "records" :role "entry"})
 
@@ -215,7 +237,9 @@
    meter = 計器の handler(doeff の CountMetric と ReadMeter に答える・None = memory-meter-handler — 検が壊した計器を差す口・#2709)・
    served = 走っている木と世代(GET /served が答える・None = 知らない — 答えの commits と instance は null・#2742)・
    callers = 一覧の読みと要求の数を呼び手ごとに数える宣言の呼び手の名(X-Records-Caller の名乗りをこの名に限って数える — 空 = 名乗りは全部 undeclared)・
-   compute-workers = 組み立てが開いた計算の pool の thread の数(GET /metrics の records_compute_workers — 利用率の割る数・None = 名乗らない)。"
+   compute-workers = 組み立てが開いた計算の pool の thread の数(GET /metrics の records_compute_workers — 利用率の割る数・None = 名乗らない)・
+   permit-database = GET /metrics が接続の許可の負荷(ReadSqlPermitLoad)を読む SQL の database の名(None = 読まない — 許可を持たない置き場)・
+   lag-probe-seconds = scheduler の混みの探りの拍の秒(None = 立てない — 頭の註の接続の許可と scheduler の混みの計器)。"
   (#^ HttpAddress address)
   (#^ RecordsSchema schema)
   (#^ (| (get Program #(object object)) (get EffectBase object)) prepare)
@@ -229,7 +253,9 @@
   (setv #^ (| (get Callable #(... object)) None) meter None)
   (setv #^ (| ServedBuild None) served None)
   (setv #^ (get tuple #(str ...)) callers #())
-  (setv #^ (| int None) compute-workers None))
+  (setv #^ (| int None) compute-workers None)
+  (setv #^ (| str None) permit-database None)
+  (setv #^ (| float None) lag-probe-seconds None))
 
 
 (defrecord TextAnswer
@@ -584,15 +610,33 @@
                                                                                            :count (- load.started load.running))})))
 
 
-(defk metrics-answer [schema workers]
-  {:pre [(: schema RecordsSchema) (: workers (| int None))] :post [(: % TextAnswer)] :tags {:context "records" :role "entry"}}
+(defk with-permit-load [snapshot load]
+  {:pre [(: snapshot MeterSnapshot) (: load SqlPermitLoad)] :post [(: % MeterSnapshot)] :tags {:context "records" :role "entry"}}
+  "計器の断面に接続の許可の負荷の系列(PERMIT-*-METRIC — 頭の註)を足すため(GET /metrics の描きの時だけ — 計器へは積まない。許可の数・
+   待ちと貸しは今の値・待った秒と貸した秒は起動からの累計)。"
+  (MeterSnapshot :counters snapshot.counters
+                 :gauges (.updated snapshot.gauges {PERMITS-METRIC (float load.permits)
+                                                    PERMIT-WAITING-METRIC (float load.waiting)
+                                                    PERMIT-HELD-METRIC (float load.held)})
+                 :durations (.updated snapshot.durations {PERMIT-WAIT-METRIC (SecondsTotal :total load.waited-seconds :count load.acquired)
+                                                          PERMIT-HOLD-METRIC (SecondsTotal :total load.held-seconds :count load.released)})))
+
+
+(defk metrics-answer [schema workers [permit-database None]]
+  {:pre [(: schema RecordsSchema) (: workers (| int None)) (: permit-database (| str None))] :post [(: % TextAnswer)]
+   :tags {:context "records" :role "entry"}}
   "GET /metrics に答えるため: 計器の断面(ReadMeter)に計算の pool の負荷(ReadComputeLoad と pool の thread の数 workers — with-compute-load)を
    足し、Prometheus の text に描く(身元を問わない — 数だけで、行の中身を載せない)。説明は固定の系列と、宣言の表 schema の一覧の読みの
    系列と、宣言の表と列の書きの錠の系列の分(request_timing の lock-metric-helps)と、大きい欄を宣言した表の移しの系列の分
    (maintenance の bulk-metric-helps)。"
   (<- meter MeterSnapshot (ReadMeter))
   (<- load ComputeLoad (ReadComputeLoad))
-  (<- snapshot MeterSnapshot (with-compute-load meter load workers))
+  (<- computed MeterSnapshot (with-compute-load meter load workers))
+  (var snapshot computed)
+  (when (is-not permit-database None)
+    (<- permits SqlPermitLoad (ReadSqlPermitLoad permit-database))
+    (<- permitted MeterSnapshot (with-permit-load computed permits))
+    (:= snapshot permitted))
   (<- list-rows-helps (get FrozenMap str) (list-rows-metric-helps (tuple schema.tables)))
   (<- lock-helps (get FrozenMap str) (lock-metric-helps (tuple schema.tables) (tuple schema.streams)))
   (<- bulk-helps (get FrozenMap str) (bulk-metric-helps (tuple (gfor #(name decl) (.items schema.tables) :if decl.bulk name))))
@@ -658,7 +702,7 @@
    (served-answer — 身元も表の用意も問わない)。記録の操作の要求は、名乗りに照らした呼び手 × 操作の数を 1 つ数える(頭の註の呼び手ごとの
    要求の数)。"
   (when (and (= request.method "GET") (= request.path PATH-METRICS))
-    (return (! (metrics-answer serving.schema serving.compute-workers))))
+    (return (! (metrics-answer serving.schema serving.compute-workers serving.permit-database))))
   (when (and (= request.method "GET") (= request.path PATH-SERVED))
     (return (! (served-answer serving))))
   (<- prepared (| Callable None) (PreparedHandlers))
@@ -847,6 +891,26 @@
   (StorePrepared :seconds seconds))
 
 
+(defk lag-probed [seconds]
+  {:pre [(: seconds float) (> seconds 0.0)] :post [(: % float) (>= % 0.0)] :tags {:context "records" :role "entry"}}
+  "scheduler の混みの探りの拍 1 つ: seconds 眠り、起きるのが遅れた秒(起きた刻 − 眠った刻 − seconds・負は 0)を SCHEDULER-LAG-METRIC に積んで
+   答えるため(頭の註の接続の許可と scheduler の混みの計器)。"
+  (<- slept float (GetMonotonic))
+  (<- (Delay seconds))
+  (<- woke float (GetMonotonic))
+  (val lag (max 0.0 (- woke slept seconds)))
+  (<- (ObserveSecondsBatch :observations #((SecondsObservation :name SCHEDULER-LAG-METRIC :seconds lag))))
+  lag)
+
+
+(defk lag-probe [seconds]
+  {:pre [(: seconds float) (> seconds 0.0)] :post [(: % None)] :tags {:context "records" :role "entry"}}
+  "scheduler の混みの探り: 取り消されるまで lag-probed の拍を刻むため(serving-body が :daemon True の task で立て、終わりに取り消す)。"
+  (while True
+    (<- (lag-probed seconds)))
+  None)
+
+
 (defk maintain [handler-for plan]
   {:pre [(: handler-for Callable) (: plan MaintenancePlan)] :post [(: % None)] :tags {:context "records" :role "entry"}}
   "手入れの係: 止めるまで maintenance-loop を手入れの係の書き手の handler の下で回すため(置き場に届かない回は Unreachable の値で次の回へ)。"
@@ -905,6 +969,10 @@
   (match first
     (StorePrepared)
       (do (var maintaining None)
+          (var probing None)
+          (when (is-not serving.lag-probe-seconds None)
+            (<- probe Task (Spawn (lag-probe serving.lag-probe-seconds) :daemon True))
+            (:= probing probe))
           (when (is-not serving.maintenance None)
             (<- handler-for Callable (PreparedHandlers))
             ;; 手入れの係は別の thread の VM で回す(run-apart — 頭の註の手入れ・ADR-DOE-RECORDS-002 R7): 送りの関数の計算が長くても、
@@ -918,6 +986,11 @@
             (<- (Cancel maintaining))
             (try
               (<- (Wait maintaining))
+              (except [TaskCancelledError] None)))
+          (when (is-not probing None)
+            (<- (Cancel probing))
+            (try
+              (<- (Wait probing))
               (except [TaskCancelledError] None))))
     (ServingEnded) (do (<- (Cancel preparing))
                        ;; 取り消した用意の終わりを待つ(走りかけの仕事を置き去りにして root が返らない — #501)。

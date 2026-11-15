@@ -62,6 +62,12 @@
 ;;;   SqlHangNotice    Hangs a bell (an external promise) on the notification channel for the names to wait for (topics - None = all signals) - PostgreSQL's LISTEN.
 ;;;                    Answer = bell | SqlUnreachable. SqlDropNotice = removes a bell that did not ring. Only the 2 PostgreSQL responders answer all three
 ;;;
+;;;   ReadSqlPermitLoad
+;;;                    Reads the connection-permit load of database (SqlPermitLoad): permits = size, waiting = tasks waiting for a permit now, held = permits lent now, and the cumulative
+;;;                    count and seconds of permits acquired (waited from asking to acquiring) and released (held from acquiring to releasing). To show, as numbers on the user's
+;;;                    instruments (e.g. GET /metrics), whether statements queue behind the permits (difference of two reads of waited-seconds / seconds between = average number of
+;;;                    waiters, of held-seconds / seconds between / permits = utilization). Only pooled-postgres-sql-handler answers (other responders have no scheduler permits).
+;;;
 ;;; Vocabulary for the I/O-free store (not in real backends): SetSqlOutage = make that database unreachable / restore it (only sqlite-sql-handler answers - the hook by which a simulation scenario
 ;;; triggers the unreachable branch).
 (require doeff-hy.macros [defk deff defeffect <- val var])
@@ -266,6 +272,28 @@
   "The hook of the I/O-free store (only sqlite-sql-handler answers): while down = True, every effect to the database is answered with SqlUnreachable."
   {:fields [(: database str) (: down bool)]
    :answer None
+   :tags {:context "sql" :role "foundation"}})
+
+
+(defrecord SqlPermitLoad
+  "Answer of ReadSqlPermitLoad -- a cross-section of one database's connection permits: permits = number of permits, waiting = tasks waiting for a permit now, held = permits lent
+   now, acquired = cumulative permits acquired, waited-seconds = cumulative seconds the acquired ones waited from asking to acquiring, released = cumulative permits returned,
+   held-seconds = cumulative seconds the returned ones were held (all cumulative values are since the process started)."
+  {:check [(>= permits 0) (>= waiting 0) (>= held 0) (>= acquired 0) (>= waited-seconds 0.0) (>= released 0) (>= held-seconds 0.0)]
+   :tags {:context "sql" :role "type"}}
+  (#^ int permits)
+  (#^ int waiting)
+  (#^ int held)
+  (#^ int acquired)
+  (#^ float waited-seconds)
+  (#^ int released)
+  (#^ float held-seconds))
+
+
+(defeffect ReadSqlPermitLoad
+  "Reads the connection-permit load of database (header comment -- only pooled-postgres-sql-handler answers). Answer = SqlPermitLoad."
+  {:fields [(: database str)]
+   :answer SqlPermitLoad
    :tags {:context "sql" :role "foundation"}})
 
 

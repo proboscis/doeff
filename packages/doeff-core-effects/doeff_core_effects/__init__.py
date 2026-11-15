@@ -445,7 +445,9 @@ if TYPE_CHECKING:
     )
     from doeff_core_effects._seeded_random import seeded_bytes as seeded_bytes
     from doeff_core_effects._seeded_random import seeded_random_handler as seeded_random_handler
+    from doeff_core_effects._sql_effects import ReadSqlPermitLoad as ReadSqlPermitLoad
     from doeff_core_effects._sql_effects import SetSqlOutage as SetSqlOutage
+    from doeff_core_effects._sql_effects import SqlPermitLoad as SqlPermitLoad
     from doeff_core_effects._sql_effects import SqlBatch as SqlBatch
     from doeff_core_effects._sql_effects import SqlColumn as SqlColumn
     from doeff_core_effects._sql_effects import SqlColumnType as SqlColumnType
@@ -878,7 +880,9 @@ _LAZY_EXPORTS = {
     "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
     "HostNotAllowed": "doeff_core_effects._http_host_gate",
     "http_host_gate": "doeff_core_effects._http_host_gate",
+    "ReadSqlPermitLoad": "doeff_core_effects._sql_effects",
     "SetSqlOutage": "doeff_core_effects._sql_effects",
+    "SqlPermitLoad": "doeff_core_effects._sql_effects",
     "SqlBatch": "doeff_core_effects._sql_effects",
     "SqlColumn": "doeff_core_effects._sql_effects",
     "SqlColumnType": "doeff_core_effects._sql_effects",

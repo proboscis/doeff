@@ -18,14 +18,15 @@
         doeff_core_effects._meter_effects [EMPTY-METER counted])
 (import doeff_core_effects [memory-meter-handler])
 (import doeff_core_effects [ComputeLoad ReadComputeLoad])
-(import doeff_time [SimClock sim-time-handler])
+(import doeff_core_effects [ReadSqlPermitLoad SqlPermitLoad Spawn Wait scheduled])
+(import doeff_time [Delay SpendCpu SimClock sim-time-handler])
 (import doeff_records [SetStoreOutage])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records._wire [STATUS-OF-ERROR])
 (import doeff_records._effects [LIST-LIMIT-MAX])
 (import doeff_records [records-server-config]
-        doeff_records._http_server [start-records-server metrics-answer])
+        doeff_records._http_server [start-records-server metrics-answer lag-probed])
 (import tests.interpreters [sim-request-handlers])
 
 ;; 届かない時間枠に送る書きの数(筋書き meter-scenario の q1〜q3)と、届かない状態の理由。
@@ -328,3 +329,66 @@
               "records_compute_wait_seconds_count 7" "records_compute_workers 4.0" "records_compute_run_seconds_sum 4.25"
               "records_compute_run_seconds_count 5"]]
     (assert (in line (.splitlines answer.body)) #(line answer.body))))
+
+
+(defhandler clogged-permits
+  ;; 接続の許可が塞がった断面(許可 9・待ち 4・貸し 9・得た 120 回で待ちの累計 30.5 秒・返した 111 回で貸しの累計 42.25 秒)を答える
+  ;; ReadSqlPermitLoad の答え手の代役 — 塞がった許可の数が /metrics の系列にそのまま出ることを確かめるため。
+  {:tags {:context "records" :role "foundation"}}
+  (ReadSqlPermitLoad [database]
+    (resume (SqlPermitLoad :permits 9 :waiting 4 :held 9 :acquired 120 :waited-seconds 30.5 :released 111 :held-seconds 42.25))))
+
+
+(deftest test-metrics-name-clogged-connection-permits
+  ;; 接続の許可を読む database を名乗る組み立てでは、許可の数・待ち・貸しの今の値と、待った秒と貸した秒の合計と回数が GET /metrics の
+  ;; 本文に出る(拍ごとの差で待ちの平均・待っている数の時間の平均・接続の利用率を読む)。
+  (<- answer (with_handlers [(state) (memory-meter-handler (MeterSettings)) clogged-pool clogged-permits]
+               (metrics-answer LAW-SCHEMA 4 "records")))
+  (for [line ["records_pg_permits 9.0" "records_pg_permit_waiting 4.0" "records_pg_permit_held 9.0"
+              "records_pg_permit_wait_seconds_sum 30.5" "records_pg_permit_wait_seconds_count 120"
+              "records_pg_permit_hold_seconds_sum 42.25" "records_pg_permit_hold_seconds_count 111"]]
+    (assert (in line (.splitlines answer.body)) #(line answer.body)))
+  (assert (in "# HELP records_pg_permit_wait_seconds " answer.body) answer.body))
+
+
+(deftest test-metrics-without-a-permit-database-do-not-ask-for-permits
+  ;; 反例: 接続の許可を持たない置き場(memory — permit-database = None)の組み立ては ReadSqlPermitLoad を撃たない(答え手が無くても
+  ;; GET /metrics が答え、許可の系列を描かない)。
+  (<- answer (with_handlers [(state) (memory-meter-handler (MeterSettings)) clogged-pool] (metrics-answer LAW-SCHEMA 4)))
+  (assert (= answer.status 200) answer)
+  (assert (not-in "records_pg_permit" answer.body) answer.body))
+
+
+(defk busy-after [start seconds]
+  {:pre [(: start float) (: seconds float)] :post [(: % None)] :tags {:context "records" :role "program"}}
+  "start 秒眠った後に scheduler の thread を seconds 秒塞ぐ(SpendCpu — 譲らずに時計を進める)task の本体。"
+  (<- (Delay start))
+  (<- (SpendCpu seconds))
+  None)
+
+
+(defk probed-beside [busy]
+  {:pre [(: busy (| float None))] :post [(: % tuple)] :tags {:context "records" :role "program"}}
+  "scheduler の混みの探りの拍 1 つ(1 秒)を、busy 秒 thread を塞ぐ task(0.5 秒目から — None = 立てない)の横で刻み、#(遅れ 計器の断面) を返す。"
+  (var blocker None)
+  (when (is-not busy None)
+    (<- spawned (Spawn (busy-after 0.5 busy)))
+    (:= blocker spawned))
+  (<- lag float (lag-probed 1.0))
+  (when (is-not blocker None)
+    (<- (Wait blocker)))
+  (<- meter MeterSnapshot (ReadMeter))
+  #(lag meter))
+
+
+(deftest test-the-lag-probe-reads-a-blocked-scheduler-thread
+  ;; 探りが 1 秒眠る間に、別の task が 0.5 秒目から 2 秒 thread を塞ぐと、探りは 2.5 秒目に起きる — 遅れ 1.5 秒を records_scheduler_lag に積む。
+  ;; 反例: 塞ぐ task が無ければ遅れは 0(拍どおりに起きる)。
+  (val blocked (run (scheduled (with_handlers [(state) (sim-time-handler :clock (SimClock)) (memory-meter-handler (MeterSettings))]
+                                  (probed-beside 2.0)))))
+  (assert (= (get blocked 0) 1.5) blocked)
+  (val lag (get (. (get blocked 1) durations) "records_scheduler_lag"))
+  (assert (= #(lag.total lag.count) #(1.5 1)) lag)
+  (val punctual (run (scheduled (with_handlers [(state) (sim-time-handler :clock (SimClock)) (memory-meter-handler (MeterSettings))]
+                                   (probed-beside None)))))
+  (assert (= (get punctual 0) 0.0) punctual))

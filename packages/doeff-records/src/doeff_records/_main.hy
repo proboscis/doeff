@@ -117,6 +117,8 @@
 (val WRITER-HANDLERS-KEPT 256)
 ;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
 (val STOP-POLL-SECONDS 0.5)
+;; scheduler の混みの探りの拍の秒(_http_server.hy の頭の註 — 1 秒に 1 回計器へ積む)。
+(val LAG-PROBE-SECONDS 1.0)
 (val DRAIN-SECONDS 0.0)
 
 
@@ -333,7 +335,7 @@
 
 ;; PostgreSQL の置き場の選び(表の用意 pg-handlers-of・/readyz の問い store-reachable・詰まりの読み store-pressure-pg)— 単独の本番と、
 ;; PostgreSQL の土台の口を差す呼び手が records-serving に渡す(答える SQL の答え手は土台の口 records-connected が置く)。
-(val PG-STORE (StoreChoice :prepare-of pg-handlers-of :readiness store-reachable :pressure store-pressure-pg))
+(val PG-STORE (StoreChoice :prepare-of pg-handlers-of :readiness store-reachable :pressure store-pressure-pg :permit-database DATABASE))
 
 
 (defk records-serving [schema settings choice]
@@ -348,7 +350,12 @@
                   :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
                   :pressure choice.pressure :callers settings.callers
                   ;; 土台の口 records-connected が開く計算の pool の thread の数(GET /metrics の利用率の割る数)。
-                  :compute-workers COMPUTE-WORKERS))
+                  :compute-workers COMPUTE-WORKERS
+                  ;; 接続の許可の負荷を読む database と scheduler の混みの探り(_http_server.hy の頭の註)。探りは本物の時計の下でだけ立てる —
+                  ;; 接続の許可を持つ置き場(PostgreSQL)は本番の土台の下で走り、memory の置き場は仮想の時計の模擬と検の殻でも走る(daemon の拍が
+                  ;; 仮想の時計を進め続けないように)。
+                  :permit-database choice.permit-database
+                  :lag-probe-seconds (if (is choice.permit-database None) None LAG-PROBE-SECONDS)))
 
 
 (defk records-process [foundation serving]
