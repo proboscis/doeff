@@ -55,7 +55,7 @@
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster._worker.core.launch [entry-place-of-marker])
+(import doeff_cluster._worker.core.launch [entry-place-of-marker venv-of-marker])
 (import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MIRROR-UNUSED-SECONDS unused-mirror-names MemoryUse LayerMemoryUse MemoryUnread WarmRoom
@@ -219,6 +219,15 @@
   (<- text (ReadText (+ root "/" ENV-MARKER)))
   (<- place (| str None) (entry-place-of-marker (if (isinstance text str) text None)))
   place)
+
+
+(defk root-venv-path [root]
+  {:pre [(: root str)] :post [(: % str)]}
+  "root へ送る子・待ちの子・入口の検めが引く root の venv の path を選ぶため、root の完成の印から読む(起こす宿・入口の確かめ・待ちの子の
+   宿が読む。印の中身の読みは launch の venv-of-marker — 欄の無い前の形の root は project の木の中の venv)。"
+  (<- text (ReadText (+ root "/" ENV-MARKER)))
+  (<- venv str (venv-of-marker root (if (isinstance text str) text None)))
+  venv)
 
 
 (defk read-answer [path]

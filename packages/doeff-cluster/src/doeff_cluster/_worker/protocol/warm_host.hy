@@ -16,7 +16,7 @@
 (import doeff_core_effects [slog])
 (import doeff_core_effects [FileFailed MakeDirectory RemoveTree ReadText]
         doeff_core_effects._file_effects [file-done])
-(import doeff_core_effects [EnvMode ReadEnvironment StartProcess PollProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
+(import doeff_core_effects [EnvEntry EnvMode ReadEnvironment StartProcess PollProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild])
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch StartWarmChild StopWarmChild
                                                   ForgetWarmChild StopProgress StopStage WakeSet WorkerWakes])
@@ -28,7 +28,7 @@
 (import doeff_cluster._worker.core.launch [CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
 (import doeff_cluster._worker.core.job_cgroup [placed-argv])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
 
 
 (defrecord WarmSettings
@@ -103,6 +103,10 @@
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(待ちの子は root の版の doeff で起きる)。
   (<- entry-place (| str None) (root-entry-place launch.root))
+  ;; uv run --project の venv も root の完成の印から読み、UV_PROJECT_ENVIRONMENT で uv へ渡す(venv は project の木の外 — 前の形の
+  ;; root は木の中の venv)。渡さないと uv は <project>/.venv を引く。
+  (<- venv str (root-venv-path launch.root))
+  (val env (+ allowed #((EnvEntry :name "UV_PROJECT_ENVIRONMENT" :value venv))))
   (<- plain tuple (warm-child-argv settings.uv launch place entry-place))
   ;; service だけが分かれる root の待ちの子は service の兄弟の cgroup へ移ってから起こす(WarmSettings の service-procs の註 — 外の
   ;; job-cgroup-placer は包んだ argv を包み直さない)。
@@ -113,7 +117,7 @@
   (<- log str (warm-log-path settings key))
   (<- now int (now-epoch-ms))
   (<- answer (| ProcessStarted ProcessNotStarted)
-      (StartProcess :argv argv :cwd launch.root :env allowed :env-mode EnvMode.REPLACE :stdout-path log :stderr-path log
+      (StartProcess :argv argv :cwd launch.root :env env :env-mode EnvMode.REPLACE :stdout-path log :stderr-path log
                     :process-group WARM-CHILD-FLAGS.process-group :hold-stdin WARM-CHILD-FLAGS.hold-stdin
                     :reap-group WARM-CHILD-FLAGS.reap-group))
   (match answer

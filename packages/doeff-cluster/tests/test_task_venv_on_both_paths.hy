@@ -9,7 +9,7 @@
 ;;
 ;; 1 つの宣言(実行環境の task — root の project は symlink でこの checkout を指す・入口 = tests/fixtures/warm_job の inspect)から、本物の
 ;; process で 2 つの道を起こし、入口の見え方を突き合わせる:
-;;   冷えた道     … job-launch の答えの argv(shim の下の <root の project>/.venv/bin/hy -m 入口)を答えの env(許可表で絞り root の venv の
+;;   冷えた道     … job-launch の答えの argv(shim の下の <root>/.venv/bin/hy -m 入口)を答えの env(許可表で絞り root の venv の
 ;;                  2 つを足した物・REPLACE)で起こす。
 ;;   分かれる道   … 宿 warm_host が、本番の判断 warm-launch の起こし方(uv の --project)で本物の uv run の下に起こした待ちの子へ、宿
 ;;                  process_host と同じ欄(entry-args・cwd・entry-env)で頼む。
@@ -23,8 +23,10 @@
 ;;   - 分かれた子が見る環境は entry-env と全く同じ — 分かれた子 A は頼みの env に足さず引かない(盲検 B — 待ちの子の環境から名を継ぐ実装を断る)。
 ;; worker の PATH の頭には本番と同じく worker の venv(boot の venv)が在る形にする: この checkout の venv の package を読む別の venv を
 ;; 検の置き場に作り、宿と判断が読む worker の環境の PATH の頭にその bin を置く(待ちの子が root の venv の外で起きれば interpreter の venv が
-;; 食い違う)。root の project は symlink でこの checkout を指す(venv の名は --project の綴りのまま — 本物の uv が同じ venv で待ちの子を起こす事を実 path で比べる)。
+;; 食い違う)。root の project は symlink でこの checkout を指し、root の venv(<root>/.venv — project の木の外)は symlink でこの checkout の
+;; venv を指す(venv の名は root の venv の綴りのまま — 宿が UV_PROJECT_ENVIRONMENT で渡した venv で本物の uv が待ちの子を起こす事を実 path で比べる)。
 ;; 冷えた道の hy -m が入口を読めるよう、作業 dir(cwd)と待ちの子の起動の cwd は package の dir にする(本番の入口は root の venv から読む)。
+;; 待ちの子の宿は起動の root(= package の dir)の完成の印から venv を読むので、その印の読みだけを検の印(欄 venv = root の venv)で答える。
 (require doeff-hy.macros [deftest defk deff defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
@@ -61,8 +63,10 @@
 (import doeff_cluster [shim-spans]
         doeff_cluster._worker.core.shim_timing [ShimSpans])
 (import tests.env_fixtures [LOCK env-of])
+(import doeff_cluster._shared.intent.env_marker_model [ENV-MARKER])
+(import doeff_cluster._shared.intent.job_model [CHILD-ENTRY-PLACES])
 
-;; repo の根(root の project の symlink の指す先 — venv は <根>/.venv)と、この package の dir(冷えた道の cwd・待ちの子の起動の cwd —
+;; repo の根(root の project と root の venv の symlink の指す先 — venv は <根>/.venv)と、この package の dir(冷えた道の cwd・待ちの子の起動の cwd —
 ;; tests.fixtures を読める所)。
 (val REPO (get (. (.resolve (Path __file__)) parents) 3))
 (val PACKAGE (get (. (.resolve (Path __file__)) parents) 1))
@@ -98,7 +102,7 @@
    worker-path-led-by が boot の venv にする)。"
   (<- allowed tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   (<- shim ShimSpans (shim-spans (WorkerPolicy)))
-  (<- plan JobLaunch (job-launch spec root "1-venv" 1 :entry spec.entry :python sys.executable :hy-command "hy" :extra-env {}
+  (<- plan JobLaunch (job-launch spec root "1-venv" 1 :entry spec.entry :venv (+ root "/.venv") :python sys.executable :hy-command "hy" :extra-env {}
                                  :layout (CodeLayout) :allowed-env (dfor e allowed e.name e.value) :worker-pid (os.getpid) :program-path None
                                  :program-env HOST-CONTRACT.program-env :work-dir (str PACKAGE) :shim-grace-ms shim.shim-grace-ms
                                  :notice-env HOST-CONTRACT.notice-env))
@@ -193,7 +197,7 @@
   (<- old dict (forked-seen plan old-env warm-at.socket out (+ place "/old")))
   (<- (StopWarmChild key StopStage.TERM "検の終わり"))
   (<- (ForgetWarmChild key))  ; socket の dir は place の外(短い根の下 — warm_rules の warm-socket-of)なので宿の掃除で消す
-  #(cold warm old (+ place "/boot/bin") (+ root "/app/.venv") (dfor e plan.entry-env e.name e.value)))
+  #(cold warm old (+ place "/boot/bin") (+ root "/.venv") (dfor e plan.entry-env e.name e.value)))
 
 
 (defhandler worker-path-led-by [#^ str boot-bin]
@@ -203,6 +207,14 @@
   (ReadEnvironment [names prefixes]
     (<- read tuple (ReadEnvironment names :prefixes prefixes))
     (resume (tuple (gfor e read (if (= e.name "PATH") (EnvEntry :name "PATH" :value (+ boot-bin ":" e.value)) e))))))
+
+
+(defhandler root-marker-given [#^ str root]
+  ;; 引数に残す理由: root の置き場は検ごとの一時の dir。
+  ;; 検の差し込み: 待ちの子の宿は起動の root(検では package の dir — 頭註)の完成の印から子の入口の置き場と venv を読む。package の dir に
+  ;; 印は無いので、その印の読みだけを、入口の置き場 = この版の置き場・venv = root の venv(絶対 path — venv-of-marker が root に繋ぐ)の印で答える。
+  (ReadText [path] :when (= path (+ (str PACKAGE) "/" ENV-MARKER))
+    (resume (json.dumps {"entryPlace" (get CHILD-ENTRY-PLACES 0) "venv" (+ root "/.venv")}))))
 
 
 (defhandler bytecode-kept-out
@@ -222,6 +234,7 @@
    上で回すため。待ちの子の置き場の根は warm-dir・log は place の下(socket は短い根の下 — warm_rules の warm-socket-of)。"
   (run (scheduled (with-handlers [(state) await-handler (async-time-handler) slog-handler os-file-handler subprocess-handler process-exit-handler
                                   os-warm-process-handler bytecode-kept-out (worker-path-led-by (+ place "/boot/bin"))
+                                  (root-marker-given (+ place "/root"))
                                   (warm-host (WarmSettings :warm-dir warm-dir :log-dir (+ place "/logs") :generation "0b6f5e2a9c1d" :uv "uv"))]
                     program))))
 
@@ -231,6 +244,7 @@
   (val warm-dir (+ place "/warm"))
   (os.makedirs (+ place "/root"))
   (os.symlink (str REPO) (+ place "/root/app"))  ; root の project(repo app の根)はこの checkout を symlink で指す(頭註)
+  (os.symlink (str (/ REPO ".venv")) (+ place "/root/.venv"))  ; root の venv(project の木の外)はこの checkout の venv を指す(頭註)
   (var seen #())
   (var real #())  ; 冷えた道と分かれる道の interpreter の venv と VIRTUAL_ENV の実 path(root の symlink を消す前に解く)
   (try
@@ -246,7 +260,7 @@
   (val entry (get seen 5))
   (val cold-env (get cold "env"))
   (val warm-env (get warm "env"))
-  ;; 冷えた道: job-launch が root の project の venv を PATH の頭と VIRTUAL_ENV に置く(uv-run-environ — uv run の足し方の写し)。
+  ;; 冷えた道: job-launch が root の venv(project の木の外)を PATH の頭と VIRTUAL_ENV に置く(uv-run-environ — uv run の足し方の写し)。
   (assert (= #((get (.split (get cold-env "PATH") ":") 0) (.get cold-env "VIRTUAL_ENV")) #((+ venv "/bin") venv)) cold-env)
   ;; 分かれる道: 入口が見る PATH(全部)と VIRTUAL_ENV が冷えた道と同じ。
   (assert (= #((get warm-env "PATH") (.get warm-env "VIRTUAL_ENV")) #((get cold-env "PATH") (get cold-env "VIRTUAL_ENV")))

@@ -33,7 +33,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveProbes])
 (import doeff_cluster._worker.core.worker_rules [probe-refusal])
 (import doeff_cluster._worker.core.launch [JobLaunch CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES child-entry-place shim-argv])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_cluster._worker.core.probe_rules [PROBE-SECONDS probe-targets probe-launches probe-reason probe-results
                                                probe-settle probe-command probe-step ProbeSettle ProbeStep])
@@ -88,14 +88,17 @@
   ;; 検める名は子と同じ置き場の名(child-entry-place — 実行環境の束は root の完成の印の置き場・木の束は worker 自身の置き場)。
   (var allowed #())
   (var root-place None)
+  (var venv None)
   (when runtime-env
     (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
     (:= allowed read)
     (<- found (| str None) (root-entry-place code-path))
-    (:= root-place found))
+    (:= root-place found)
+    (<- root-venv str (root-venv-path code-path))
+    (:= venv root-venv))
   (<- place (| str None) (child-entry-place runtime-env root-place))
   (val targets (tuple (dict.fromkeys (gfor spec specs target (probe-targets spec place) target))))
-  (<- plan JobLaunch (probe-command code-path runtime-env targets :hy-command settings.hy-command :layout settings.layout
+  (<- plan JobLaunch (probe-command code-path runtime-env targets :venv venv :hy-command settings.hy-command :layout settings.layout
                                     :allowed-env (dfor e allowed e.name e.value) :probe-dir settings.probe-dir))
   (val runs-dir (+ settings.probe-dir "/runs"))
   (<- (file-done (MakeDirectory runs-dir)))

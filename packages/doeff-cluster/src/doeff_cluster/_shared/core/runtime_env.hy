@@ -38,6 +38,7 @@
 ;;; 翻訳の handler は doeff_cluster._shared.protocol.checkout_reads。
 (require doeff-hy.macros [defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster" :role "program"})
+(import posixpath)
 (import doeff_cluster._shared.intent.runtime_env_model [RepoCheckout PythonProject EnvVar ToolRequirement RuntimeEnv RuntimeEnvInvalid InvalidKind
                                                        LocalPath RemoteRepo RepoLocation])
 (import doeff_cluster._shared.intent.checkout_model [LocalCheckout ProjectOfCheckout CheckoutState ReadCheckout CheckoutRoot SenderSourceRoot])
@@ -144,3 +145,23 @@
   (if (= env.project.path ".")
       (.format "{}/{}" root env.project.repo)
       (.format "{}/{}/{}" root env.project.repo env.project.path)))
+
+
+;; root の venv の置き場の root からの相対 path。venv は project の木の外(root の直下)に置く — repo の木を読み専用の mount で
+;; 置けるように、準備が木の中へ書く物を venv から外す(ADR-DOE-BUILD-002)。uv には UV_PROJECT_ENVIRONMENT でこの path を渡す。
+(val ROOT-VENV ".venv")
+
+
+(defk root-venv [root]
+  {:pre [(: root str)] :post [(: % str)]}
+  "root の venv の path(<root>/.venv — project の木の外)を、準備・子の起動・入口の検めが同じ綴りで決めるため。root は字面のまま
+   正規化する(symlink は解かない — uv が --project の path を字面で正規化するのと同じ)。"
+  (posixpath.join (posixpath.normpath root) ROOT-VENV))
+
+
+(defk tree-venv [env root]
+  {:pre [(: env RuntimeEnv) (: root str)] :post [(: % str)]}
+  "venv を root の直下へ移す前の root の venv の path(<project の dir>/.venv — project の木の中)。前の形の完成済みの root を、
+   次の掃除で消えるまで子の起動と venv の写し元に使うため。"
+  (<- pdir str (project-dir env root))
+  (posixpath.join (posixpath.normpath pdir) ROOT-VENV))

@@ -192,12 +192,14 @@
 
 
 (deftest test-module-from-the-roots-own-venv-is-outside
-  ;; 反例: root の中でも project の venv(第三者の package の置き場 — editable でない古い wheel)から来た module は数えない。
+  ;; 反例: root の中でも root の venv(第三者の package の置き場 — editable でない古い wheel)から来た module は数えない。venv は
+  ;; project の木の外の <root>/.venv だが、木の中に venv を持つ前の形の root(<root>/app/.venv)でも同じ答え。
   (<- scene Declared (declared-scene))
-  (val venv-file (+ scene.root "/app/.venv/lib/python3.14t/site-packages/doeff_cluster/__init__.py"))
-  (val got (! (mismatch-of (! (read-of scene :origins (! (origins-with scene "doeff_cluster" venv-file)))))))
-  (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT))
-  (assert (in venv-file got.detail)))
+  (for [venv-file [(+ scene.root "/.venv/lib/python3.14t/site-packages/doeff_cluster/__init__.py")
+                   (+ scene.root "/app/.venv/lib/python3.14t/site-packages/doeff_cluster/__init__.py")]]
+    (val got (! (mismatch-of (! (read-of scene :origins (! (origins-with scene "doeff_cluster" venv-file)))))))
+    (assert (= got.kind IdentityFailureKind.MODULE-OUTSIDE-ROOT) venv-file)
+    (assert (in venv-file got.detail))))
 
 
 (deftest test-module-in-root-but-outside-declared-repos

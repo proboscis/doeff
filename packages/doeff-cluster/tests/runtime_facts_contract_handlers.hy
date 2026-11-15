@@ -111,7 +111,7 @@
   (for [#(at text) #(#(root marker) #(stale-root stale-marker))]
     (.mkdir (/ at "app" PROBE) :parents True)
     (.write-text (/ at "app" PROBE "__init__.py") "")
-    (.mkdir (/ at "app" ".venv"))
+    (.mkdir (/ at ".venv"))
     (.write-text (/ at ENV-MARKER) text :encoding "utf-8"))
   (.mkdir (/ root "app" NAMESPACE))
   (.write-text (/ root "app" NAMESPACE "leaf.py") "")
@@ -150,10 +150,10 @@
   {:pre [(: world FactsWorld) (: scene Scene)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "場面の sys.prefix(本物が印を探し始める venv)。"
   (match scene
-    Scene.DECLARED (+ world.root "/app/.venv")
-    Scene.UNDECLARED (+ world.root "/app/.venv")
+    Scene.DECLARED (+ world.root "/.venv")
+    Scene.UNDECLARED (+ world.root "/.venv")
     Scene.UNMARKED world.plain-venv
-    Scene.STALE (+ world.stale-root "/app/.venv")))
+    Scene.STALE (+ world.stale-root "/.venv")))
 
 
 (defk place-scene [world scene]

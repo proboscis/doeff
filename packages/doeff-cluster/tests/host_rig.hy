@@ -21,6 +21,7 @@
         doeff_cluster._worker.intent.worker_model [Outcome])
 (import doeff_cluster [ObserveProcesses])
 (import doeff_cluster._worker.core.launch [JobLaunch job-launch spec-program-file CHILD-ENV-ALLOWED CHILD-ENV-PREFIXES])
+(import doeff_cluster._shared.core.runtime_env [root-venv])
 (import doeff_cluster [shim-spans]
         doeff_cluster._worker.core.shim_timing [ShimSpans])
 (import doeff_cluster [process-host]
@@ -52,7 +53,8 @@
    (EXTEND は今の process の環境を継いで重ねた物・REPLACE は許可表で絞った物)。"
   (val allowed (dfor #(k v) (.items os.environ)
                      :if (or (in k CHILD-ENV-ALLOWED) (any (gfor p CHILD-ENV-PREFIXES (.startswith k p)))) k v))
-  (<- plan JobLaunch (job-launch spec code-path instance attempt :entry spec.entry :python settings.python :hy-command settings.hy-command
+  (<- plan JobLaunch (job-launch spec code-path instance attempt :entry spec.entry
+                                 :venv (if spec.runtime-env (! (root-venv code-path)) None) :python settings.python :hy-command settings.hy-command
                                  :extra-env (dfor e settings.extra-env e.name e.value) :layout settings.layout :allowed-env allowed
                                  :worker-pid (os.getpid)
                                  :program-path (if spec.program (str (! (spec-program-file (Path settings.program-dir) spec))) None)

@@ -498,9 +498,10 @@
   None)
 
 
-(defk uv-sync [world args]
-  {:pre [(: world EnvWorld) (: args tuple)] :post [(: % ProcessOutcome)]}
+(defk uv-sync [world args environment]
+  {:pre [(: world EnvWorld) (: args tuple) (: environment (| str None))] :post [(: % ProcessOutcome)]}
   "uv sync(--frozen か --locked)に答える: 入れる組の package のうち cache に無い物を取りに行き(冷たい秒)、venv と editable の .pth を置く。
+   venv の置き場は本物の uv と同じく、環境変数 UV_PROJECT_ENVIRONMENT(environment)が在ればそこ・無ければ <project>/.venv。
    本物の uv と同じく、--locked は lock が pyproject と合うかを解き直すので、入れない組の行の git の取りに行く先にも届こうとする
    (届かなければ sync が終わる)。--frozen は入れる組の行の先にだけ届こうとする。"
   (<- pdir str (required-option-of args "--project"))
@@ -536,7 +537,7 @@
           (<- (Delay (if missing world.cold-seconds world.warm-seconds)))
           ;; 組みの山(#3748): sync の間に container の memory.peak が上がる(build-memory の在る台だけ)。
           (<- (raise-memory-peak world))
-          (val venv (posixpath.join pdir ".venv"))
+          (val venv (if environment environment (posixpath.join pdir ".venv")))
           (val site (posixpath.join venv "lib" (+ "python" python) "site-packages"))
           (<- (write-file (posixpath.join venv "pyvenv.cfg") (.format "python = {}\n" python)))
           (<- (write-file (posixpath.join venv "bin" "python") ""))
@@ -742,7 +743,7 @@
   (val verb (if (> (len args) 1) (get args 1) ""))
   (<- answer ProcessOutcome
       (match verb
-        "sync" (uv-sync world args)
+        "sync" (uv-sync world args (env-value request "UV_PROJECT_ENVIRONMENT"))
         "build" (uv-build world request)
         "pip" (uv-pip args)
         "run" :if (in "-c" args) (uv-probe world args)

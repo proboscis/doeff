@@ -135,7 +135,8 @@
   "    (when (and name (.isidentifier name))"
   "      (setv spec (try (importlib.util.find-spec name) (except [Exception] None)))"
   "      (setv places (cond (is spec None) [] spec.origin [spec.origin] spec.submodule-search-locations (list spec.submodule-search-locations) True []))"
-  ;; 根の中 = 根の dir の下で、根の下の venv(project の .venv — 第三者の package の置き場)の外。
+  ;; 根の中 = 根の dir の下で、根の下の venv(第三者の package の置き場)の外。venv は root の直下(根の外)に在るが、木の中に venv を
+  ;; 持つ前の形の root でも同じ答えにするため、根の下の .venv も外す。
   "      (when (not (any (gfor p places :setv rp (os.path.realpath p)"
   "                              (and (.startswith rp (+ real os.sep)) (not-in (+ os.sep \".venv\" os.sep) (cut rp (len real) None))))))"
   "        (.append misplaced name)))))"
@@ -175,6 +176,15 @@
   "uv の子の環境へ足す変数を作るため: 共有の cache は uv-cache の dir・Python と build の口の保存先は state dir の下に置く(呼び手の venv を外すのは env-drop UV-DROP)。
    変数の定義点は native_wheel.uv-environment の 1 つ — 起動の script が doeff-vm の wheel を組む時も同じ環境で組む。"
   (tuple (gfor v (uv-variables state-dir uv-cache) (EnvEntry :name v.name :value v.value))))
+
+
+(defk project-uv-environment [state-dir uv-cache venv]
+  {:pre [(: state-dir str) (: uv-cache str) (: venv str)] :post [(: % tuple)]}
+  "root の project に uv sync・uv run --project を走らせる時、uv が venv を project の木の中(<project>/.venv)でなく root の venv(venv —
+   木の外・runtime_env.root-venv)に置き・引くため: uv-environment に UV_PROJECT_ENVIRONMENT を足す(uv の子は呼び手の UV_* を
+   継がない — UV-DROP — ので、ここで足す)。"
+  (<- env tuple (uv-environment state-dir uv-cache))
+  (+ env #((EnvEntry :name "UV_PROJECT_ENVIRONMENT" :value venv))))
 
 
 (defk oom-kills-now []
@@ -498,15 +508,37 @@
   (or (.startswith name "bin/") (.endswith base ".pth") (in base VENV-REWRITTEN-NAMES) (.startswith base "__editable__")))
 
 
+(defk moved-path [path moves]
+  {:pre [(: path str) (: moves tuple)] :post [(: % str)]}
+  "写し元の venv の中の絶対 path を新しい root の path へ移すため: moves(#(写し元の dir 写し先の dir) の列 — 前ほど先に当てる)のうち、
+   path がその dir そのものか下に在る最初の組で頭を替える。どれにも当たらなければ path のまま(venv の外 — uv の Python など)。venv の
+   組を root の組より前に置くので、木の中の venv(前の形の root)を写す時も venv の path は木の外の venv へ移る。"
+  (next (gfor #(old new) moves
+              :if (or (= path old) (.startswith path (+ old "/")))
+              (+ new (cut path (len old) None)))
+        path))
+
+
+(defk moved-bytes [content moves]
+  {:pre [(: content bytes) (: moves tuple)] :post [(: % bytes)]}
+  "venv の file の中身に書かれた写し元の絶対 path(後ろに / の付く頭)を、moves の組で新しい root の path へ 1 回の走査で替えるため
+   (moved-path と同じ当て方 — 1 か所ごとに前の組を先に当てる。替えた後の中身をもう一度替えない)。"
+  (val table (dfor #(old new) moves (.encode (+ old "/") "utf-8") (.encode (+ new "/") "utf-8")))
+  (val pattern (re.compile (.join b"|" (gfor #(old _) moves (re.escape (.encode (+ old "/") "utf-8"))))))
+  (.sub pattern (fn [m] (get table (.group m 0))) content))
+
+
 (defk venv-entry [entry source dest source-root dest-root]
   {:pre [(: entry DirEntry) (: source str) (: dest str) (: source-root str) (: dest-root str)] :post [(: % (| str VenvRefused))]}
   "venv の歩きの答えの 1 つ(相対 path と種類)を dest へ写し、どう置いたか(dir・link・rewrite・symlink)を返すため: dir は作り、普通の
    file は hardlink で写す — 写し元の root の絶対 path を持つ file(venv-rewrites の候補のうち中身に path が在る物)だけ path を書き換えた
    中身を新しく置き(bin の下は実行できる mode)、symlink は辿った先の path を書き換えて置き直す(venv の中を指す lib64 などが写し元を
-   指したまま残らないため)。置けなければ VenvRefused。"
+   指したまま残らないため)。書き換えは写し元の venv の path → dest、写し元の root → 新しい root の順に当てる(moved-path・moved-bytes —
+   木の中に venv を持つ前の形の root から写しても、venv を指す path は木の外の dest を指す)。置けなければ VenvRefused。"
   (val from (posixpath.join source entry.name))
   (val to (posixpath.join dest entry.name))
   (val old (.encode (+ source-root "/") "utf-8"))
+  (val moves #(#(source dest) #(source-root dest-root)))
   (var how "dir")
   (var done None)
   (match entry.kind
@@ -518,9 +550,8 @@
         (match seen
           (FileFailed) (:= done seen)
           (PathStat :real-path real)
-          (do (val inside (.startswith real (+ source-root "/")))
-              (<- made (| None FileFailed)
-                  (MakeSymlink to (if inside (+ dest-root "/" (cut real (+ (len source-root) 1) None)) real)))
+          (do (<- target str (moved-path real moves))
+              (<- made (| None FileFailed) (MakeSymlink to target))
               (:= how "symlink")
               (:= done made))))
     PathKind.FILE
@@ -529,8 +560,9 @@
         (match content
           (FileFailed) (:= done content)
           (bytes) :if (in old content)
-          (do (<- written (| None FileFailed)
-                  (WriteBytes to (.replace content old (.encode (+ dest-root "/") "utf-8"))
+          (do (<- moved bytes (moved-bytes content moves))
+              (<- written (| None FileFailed)
+                  (WriteBytes to moved
                               :mode (if (.startswith entry.name "bin/") VENV-SCRIPT-MODE None)))
               (:= how "rewrite")
               (:= done written))
@@ -783,10 +815,10 @@
               (EnvFailure :kind EnvFailureKind.NATIVE-BUILD-FAILED :detail detail :retryable (< built.code 0))))))
 
 
-(defk site-packages [project-dir]
-  {:pre [(: project-dir str)] :post [(: % (| str None))]}
-  "project の venv の site-packages の dir(.venv/lib/python*/site-packages の名の順の先頭・無ければ None)。"
-  (val lib (posixpath.join project-dir ".venv" "lib"))
+(defk site-packages [venv]
+  {:pre [(: venv str)] :post [(: % (| str None))]}
+  "root の venv(venv の path)の site-packages の dir(<venv>/lib/python*/site-packages の名の順の先頭・無ければ None)。"
+  (val lib (posixpath.join venv "lib"))
   (<- kind PathKind (kind-at lib))
   (if (!= kind PathKind.DIRECTORY)
       None
@@ -859,10 +891,10 @@
     True (EnvFailure :kind EnvFailureKind.SYNC-FAILED :detail detail :retryable False)))
 
 
-(defk interpreter-of [project-dir]
-  {:pre [(: project-dir str)] :post [(: % str)]}
-  "root の venv の interpreter の実の path(symlink を辿った先)。"
-  (<- seen (| PathStat FileFailed) (StatPath (posixpath.join project-dir ".venv" "bin" "python")))
+(defk interpreter-of [venv]
+  {:pre [(: venv str)] :post [(: % str)]}
+  "root の venv(venv の path)の interpreter の実の path(symlink を辿った先)。"
+  (<- seen (| PathStat FileFailed) (StatPath (posixpath.join venv "bin" "python")))
   (<- stat PathStat (settled seen "venv の interpreter を読めない"))
   stat.real-path)
 
@@ -908,8 +940,8 @@
                                                           :failed (int (.group m 5)) :fetched (int (or (.group m 6) 0)))))))))
 
 
-(defk compile-answer [result trees project-dir]
-  {:pre [(: result CommandResult) (: trees tuple) (: project-dir str)] :post [(: % (| BytecodeReport EnvFailure))]}
+(defk compile-answer [result trees venv]
+  {:pre [(: result CommandResult) (: trees tuple) (: venv str)] :post [(: % (| BytecodeReport EnvFailure))]}
   "焼く道具の終わりと stderr を CompileTrees の答えにするため: 全体の報告の行を全部の欄まで読め、終わりが 0(全部の木の検めが通った)か
    1(検めの通らない木が在る)なら BytecodeReport(数と秒・木ごとの行の problem を TreeProblem に — 行の無い木も問題)。道具は終わったが
    全体の行を読めない時は、その事を名指した EnvFailure(数を黙って 0 にしない)。それ以外(起こせない・途中で落ちた・使い方の誤り)は
@@ -919,7 +951,7 @@
   (cond
     (and (in result.code #(0 1)) (is-not counts None))
       (do (val said (tuple (gfor m (.finditer TREE-PATTERN result.stderr) #((.group m 1) (.strip (.group m 7))))))
-          (<- interpreter str (interpreter-of project-dir))
+          (<- interpreter str (interpreter-of venv))
           (BytecodeReport :interpreter interpreter :counts counts
                           :problems (tuple (gfor t trees
                                                  :setv line (next (gfor s said :if (= (get s 0) t.tree) (get s 1)) None)
@@ -1050,8 +1082,8 @@
                 (wheel-of package source-dir out-dir shared-dir uv-cache uv)))
     (resume wheel))
 
-  (SyncProject [project-dir python groups no-install]
-    (<- env tuple (uv-environment shared-dir uv-cache))
+  (SyncProject [project-dir venv python groups no-install]
+    (<- env tuple (project-uv-environment shared-dir uv-cache venv))
     ;; lock はそのまま使う(--frozen)。lock の中身は宣言の lock-sha256 で縛ってあり、確かめは宣言の側に在る。--locked は lock が
     ;; pyproject と合うかを解き直すので、入れない組(dev など)の git の依存まで取りに行き、worker が読めない private の repo が
     ;; 在ると準備が全部止まる(#2730 — 2026-10-02 の本番)。
@@ -1067,9 +1099,9 @@
         (do (<- failure EnvFailure (sync-failure result))
             (resume failure))))
 
-  (InstallWheels [project-dir wheels]
+  (InstallWheels [project-dir venv wheels]
     (<- env tuple (uv-environment shared-dir uv-cache))
-    (<- result CommandResult (uv-command (+ #(uv "pip" "install" "--no-deps" "--python" (posixpath.join project-dir ".venv" "bin" "python"))
+    (<- result CommandResult (uv-command (+ #(uv "pip" "install" "--no-deps" "--python" (posixpath.join venv "bin" "python"))
                                             (tuple wheels))
                                          project-dir env))
     (if (= result.code 0)
@@ -1078,10 +1110,10 @@
             (resume (EnvFailure :kind EnvFailureKind.SYNC-FAILED :retryable False
                                 :detail (.format "native の wheel を入れられない: {}" detail))))))
 
-  (WriteImportRoots [project-dir roots]
-    (<- site (| str None) (site-packages project-dir))
+  (WriteImportRoots [venv roots]
+    (<- site (| str None) (site-packages venv))
     (when (is site None)
-      (raise (RuntimeError (.format "{} の venv に site-packages が無い" project-dir))))
+      (raise (RuntimeError (.format "venv {} に site-packages が無い" venv))))
     (<- written (| None FileFailed) (WriteText (posixpath.join site ROOTS-PTH) (+ (.join "\n" roots) "\n")))
     (<- (settled written "import の根の .pth を書けない"))
     (resume None))
@@ -1091,15 +1123,15 @@
     (<- (AppendText notes (.format "env: {}\n" text)))
     (resume None))
 
-  (ReadEditableRoots [project-dir root]
-    (<- site (| str None) (site-packages project-dir))
+  (ReadEditableRoots [venv root]
+    (<- site (| str None) (site-packages venv))
     (if (is site None)
         (resume #())
         (do (<- found tuple (editable-dirs site root))
             (resume found))))
 
-  (ReadHyVersion [project-dir]
-    (<- site (| str None) (site-packages project-dir))
+  (ReadHyVersion [venv]
+    (<- site (| str None) (site-packages venv))
     (if (is site None)
         (resume None)
         (do (<- listed (| tuple FileFailed) (ListDirectory site))
@@ -1107,18 +1139,18 @@
             (<- version (| str None) (hy-dist-version entries))
             (resume version))))
 
-  (CompileTrees [project-dir trees entries jobs]
+  (CompileTrees [project-dir venv trees entries jobs]
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
     ;; 無い物だけを焼く(#3858)。写し元の木(BytecodeTree の inherit — 依存のキーの同じ完成済みの root の木)が在れば、道具は変わらない
     ;; source の .pyc と閉包の表をそこから引き継ぐ(ADR-DOE-BUILD-002 R3c — 差の一覧は渡さず、道具が file の同じさで見分ける)。
-    (<- env tuple (uv-environment shared-dir uv-cache))
+    (<- env tuple (project-uv-environment shared-dir uv-cache venv))
     (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs progress))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
-    (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees project-dir))
+    (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees venv))
     (resume compiled))
 
-  (ProbeImports [project-dir roots]
-    (<- env tuple (uv-environment shared-dir uv-cache))
+  (ProbeImports [project-dir venv roots]
+    (<- env tuple (project-uv-environment shared-dir uv-cache venv))
     (<- name str (digest16 project-dir))
     (val empty (posixpath.join state-dir "probe" name))
     (<- (remove-if-present empty))
