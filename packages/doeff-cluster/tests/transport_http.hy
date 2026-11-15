@@ -18,6 +18,8 @@
 
 ;; 検の coordinator の宛先(MockTransport は宛先を見ない)と、口の送り方(本番の組み立てと同じ値)。
 (val COORDINATOR-URL "http://coordinator")
+;; lease の返しを頼んでから、拍の外の返しの task に譲って待つ模擬の秒(released-through)。
+(val RELEASE-SETTLE-SECONDS 1.0)
 (val TEST-ROUTE (RouteOptions :reply-seconds 15.0 :watch-seconds 10.0 :connect-seconds 2.0 :resend-deadline-seconds IDEMPOTENT-DEADLINE-SECONDS :resend-pause-seconds RESEND-PAUSE-SECONDS :connect-retries 4 :recheck-ms 60000 :actor "test-sender"))
 
 
@@ -59,13 +61,23 @@
 (defk released-through [transport job instance]
   {:pre [(: transport httpx.BaseTransport) (: job str) (: instance str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "終わった process の lease の返し(worker/protocol/lease_release の lease-release — #2427)を、transport の後ろの coordinator への検の
-   HTTP の答え手と模擬の時計の下で走らせるため(行き先の 1 行は捨てる)。"
+   HTTP の答え手と模擬の時計の下で走らせるため(行き先の 1 行は捨てる)。返しは拍の外の task が行うので、頼んだ後に模擬の時計で
+   RELEASE-SETTLE-SECONDS 待って task に譲る(MockTransport の答えは時計を進めない)。"
   (import doeff [with-handlers])
-  (import doeff_core_effects [slog-discard-handler])
+  (import doeff_core_effects [scheduled slog-discard-handler state])
   (import doeff_time [SimClock sim-time-handler])
-  (import doeff_cluster [ReleaseLeases])
   (import doeff_cluster [lease-release])
-  (<- (with-handlers [(transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))
-                      (lease-release (route-cell) TEST-ROUTE)]
-                     (ReleaseLeases job instance)))
+  (<- (scheduled (with-handlers [(state) (transport-http transport) slog-discard-handler (sim-time-handler :clock (SimClock))
+                                 (lease-release (route-cell) TEST-ROUTE)]
+                                (released-and-settled job instance))))
+  None)
+
+
+(defk released-and-settled [job instance]
+  {:pre [(: job str) (: instance str)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "lease の返しを頼み、拍の外の返しの task が終わるまで模擬の時計で待つため。"
+  (import doeff_time [Delay])
+  (import doeff_cluster [ReleaseLeases])
+  (<- (ReleaseLeases job instance))
+  (<- (Delay RELEASE-SETTLE-SECONDS))
   None)

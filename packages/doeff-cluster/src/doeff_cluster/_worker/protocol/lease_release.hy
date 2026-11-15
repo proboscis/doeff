@@ -5,16 +5,25 @@
 ;;; 振る舞いは前の release-leases と同じ: token の頭は子が名乗った担い手と同じ定義(lease_rules.lease-holder と holder-tokens-prefix —
 ;;; <job>/<世代の名>/)。外すのは coordinator(POST /leases/<名> の drop — 2026-09-25)。drop の口を持たない旧い coordinator(404)には、
 ;;; 盤の行の compare-and-set で外す(以前の形 — 競合は 3 回まで読み直す)。届かない・競合が続く時はあきらめる(期限で切れる)。
+;;;
+;;; 返しは拍の外の task が行い、答え手は待ちの列に積んですぐ答える。1 回の返しは盤の semaphore の行を全部読む(本番の盤で 3 万行・
+;;; 2.7 MB・1 回 0.4〜1.4 秒)ので、以前のように回収 1 件ごとに拍の中で返すと、版の替わる入れ替えで 10〜19 件の回収が 1 つの拍に並び、
+;;; 区間 ActionsToPublishStatus が 10〜36 秒になって、入れ替えの新の起こしと状態の報告を待たせた(2026-11-12 の実例)。task は同時に
+;;; 1 本で、走っている間に積まれた物は、同じ task が続けて 1 回の読みで返す(読みの数は回収の数でなく task の周の数)。
 (require doeff-hy.macros [defhandler defk <- val var])
 (val MODULE-TAGS {:context "worker" :role "protocol"})
 (import json)
 (import urllib.parse [quote :as url-quote])
 (import doeff_core_effects [slog])
 (import doeff_core_effects [HttpResponse])
+(import doeff_core_effects [Spawn])
 (import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX])
 (import doeff_cluster._shared.core.lease_rules [drop-holders lease-holder holder-tokens-prefix])
 (import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions RoutedReply routed-request])
 (import doeff_cluster._worker.intent.worker_model [ReleaseLeases])
+
+;; 返しの task の組 1 つが思わぬ例外で終わった時の行の名(名 + 欄 count = あきらめた process の数・detail = 例外)。
+(val RELEASE-FAILED-LOG "worker: lease の返しの task の失敗")
 
 
 (defk board-rows [route options prefix]
@@ -56,17 +65,19 @@
   current)
 
 
-(defk released-leases [route options job instance]
-  {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: job str) (: instance str)] :post [(: % CoordinatorRoute)]
+(defk released-leases [route options holders]
+  {:pre [(: route CoordinatorRoute) (: options RouteOptions) (: holders tuple)] :post [(: % CoordinatorRoute)]
    :tags {:context "worker" :role "protocol" :spells "json"}}
-  "終わった process(job の名 job・世代の名 instance)が持っていた lease を返すため(頭の註)。答え = 次の宛先の状態。"
-  (val prefix (holder-tokens-prefix (lease-holder job instance)))
+  "終わった process の組 holders(#(job の名 世代の名) の並び)が持っていた lease を、盤の semaphore の行の 1 回の読みで返すため(頭の註)。
+   答え = 次の宛先の状態。"
+  (val prefixes (tuple (gfor #(job instance) holders #(instance (holder-tokens-prefix (lease-holder job instance))))))
   (<- read tuple (board-rows route options SEMAPHORE-PREFIX))
   (var current (get read 1))
   (val rows (get read 0))
   (if (isinstance rows str)
-      (<- (slog (.format "worker: lease を返せなかった({}): {}" instance rows)))
-      (for [#(key row) (.items rows)]
+      (for [#(instance _) prefixes]
+        (<- (slog (.format "worker: lease を返せなかった({}): {}" instance rows))))
+      (for [#(key row) (.items rows) #(instance prefix) prefixes]
         (val dropped-holders (drop-holders row prefix))
         (when (is-not dropped-holders None)
           (val name (cut key (len SEMAPHORE-PREFIX) None))
@@ -86,9 +97,39 @@
   current)
 
 
+(defclass ReleaseQueue []
+  "lease の返しの答え手と拍の外の返しの task が分ける値: pending = まだ返していない #(job の名 世代の名) の並び(回収した順)・running = 返しの
+   task が走っている。scheduler の task は 1 つの thread で交互に走るので錠は要らない。"
+  (defn #^ None __init__ [self]
+    (setv self.pending #() self.running False)))
+
+
+(defk releasing [queue cell options]
+  {:pre [(: queue ReleaseQueue) (: cell RouteCell) (: options RouteOptions)] :post [(: % None)]
+   :tags {:context "worker" :role "protocol"}}
+  "拍の外の返しの task の本体: 待ちの列に在る物を全部取り、盤の 1 回の読みで返し、返している間に積まれた物が在れば続けて返すため(頭の註)。
+   列が空になった時に running を下ろす(列の読みと下ろしの間に効果を挟まないので、積んだ物を取りこぼさない)。思わぬ例外はその組を
+   あきらめて 1 行出し(lease は期限で切れる)、残りを続ける。"
+  (var batch queue.pending)
+  (while batch
+    (setv queue.pending #())
+    (try
+      (<- route CoordinatorRoute (released-leases cell.route options batch))
+      (setv cell.route route)
+      (except [error Exception]
+        (<- (slog RELEASE-FAILED-LOG :level "warning" :count (len batch) :detail (repr error)))))
+    (:= batch queue.pending))
+  (setv queue.running False)
+  None)
+
+
 (defhandler lease-release [#^ RouteCell cell #^ RouteOptions options]
   ;; 引数に残す理由: 宛先の状態(cell)は要求から要求へ持ち越す入れ物・送り方は worker の process の値(main が作る)。
+  ;; 待ちの列(頭の註)。返しの task が 1 本だけ cell を使う。
+  (session val queue (ReleaseQueue))
   (ReleaseLeases [job instance]
-    (<- route CoordinatorRoute (released-leases cell.route options job instance))
-    (setv cell.route route)
+    (setv queue.pending (+ queue.pending #(#(job instance))))
+    (when (not queue.running)
+      (setv queue.running True)
+      (<- (Spawn (releasing queue cell options) :daemon True)))
     (resume None)))
