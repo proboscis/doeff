@@ -82,7 +82,8 @@
 #        2 つの世代を並べる RollingUpdate と同じ形・AL-D2)。
 #     3. いちばん新しい世代が coordinator に名乗れて自分の ready の file を書いた後(受け渡しの待ち handover-pending が解けた後)に、前の
 #        世代の dir に印 draining を置いて(世代の見張りはこれを読んだ後 cgroup の層の上限を書かない — DOEFF_WORKER_RETIRED_FILE)、
-#        世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限 DRAIN_DEADLINE)、drained の後に SIGTERM を送る。前の世代は
+#        世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限は preStop の DRAIN_DEADLINE と分けた KEEPER_RETIRE_DEADLINE —
+#        keeper_retire の註)、drained の後に SIGTERM を送る。前の世代は
 #        自分の task と退いた handoff の process を終わりまで回してから退く(新しい世代は引き取らない)。新しい世代が名乗れない間(断られる・
 #        古い coordinator)は前の世代を drain しない — 前の世代が仕事を続ける。
 #     4. いちばん新しい世代が落ちたら、間を空けて(30 秒から倍にして 300 秒まで)同じ版で起こし直す。準備の失敗は 300 秒後に撃ち直す。
@@ -774,8 +775,14 @@ keeper_start() {
 }
 
 # 前の世代 $1(世代の dir)を drain してから止める(背景 — keeper の子から外す)。drain は世代の版の venv の drain_main で、世代つきで頼む
-# (旧い Pod の preStop と同じ — 上限 DRAIN_DEADLINE)。drained か上限の後に SIGTERM を送り、KEEPER_STOP_SECONDS 秒(既定 60)で終わら
-# なければ SIGKILL。
+# (旧い Pod の preStop と同じ頼み)。drained か上限 KEEPER_RETIRE_DEADLINE 秒(既定 86400)の後に SIGTERM を送り、KEEPER_STOP_SECONDS 秒
+# (既定 60)で終わらなければ SIGKILL。drain の間に前の世代が自分で終わったら、待ちを止める(止める相手が居ない)。
+# 上限は Pod の preStop の上限(DRAIN_DEADLINE)と分ける: preStop の上限は Pod の止めの猶予(terminationGracePeriodSeconds)に収める値で、
+# spot の機体のように 90 秒の Pod も在る。同じ container の中の世代の入れ替えは kubelet の猶予に縛られないので、前の世代が持つ仕事
+# (退いた handoff の process・切り離した task)を終わりまで回す。その長さは宣言(readiness の retiredSeconds・task の期限)が決め、
+# 前の世代の worker が守る(retiredSeconds を越えた退いた process は worker が止める)— KEEPER_RETIRE_DEADLINE は、宣言の上限が
+# 効かない世代の受け止めで、宣言の上限より長く取る。失敗ケース(11-15): preStop の上限 90 秒で drain を諦めて SIGTERM を送り、
+# 退いた handoff の process(retiredSeconds 25200)が回していた命令が、worker の版上げのたびに切れた。
 keeper_retire() {
   k_gen=$1
   k_pid=$(cat "$k_gen/pid")
@@ -786,7 +793,16 @@ keeper_retire() {
   keeper_log "前の世代 ${k_gen##*/}(doeff $(keeper_short "$k_commit")・pid $k_pid)を drain してから止める"
   ( (
     "$k_hy" -m doeff_cluster._worker.entry.drain_main drain --coordinator "$COORDINATOR_URL" --name "$WORKER_NAME" \
-      --deadline "${DRAIN_DEADLINE:-90}" --boot-file "$k_gen/boot" || true
+      --deadline "${KEEPER_RETIRE_DEADLINE:-86400}" --boot-file "$k_gen/boot" &
+    k_drain=$!
+    while keeper_alive "$k_drain" && keeper_alive "$k_pid"; do
+      sleep 1
+    done
+    if keeper_alive "$k_drain"; then
+      kill -TERM "$k_drain" 2>/dev/null || true
+      keeper_log "前の世代 ${k_gen##*/} が drain の間に自分で終わった — drain の待ちを止めた"
+    fi
+    wait "$k_drain" 2>/dev/null || true
     kill -TERM "$k_pid" 2>/dev/null || true
     k_waited=0
     while keeper_alive "$k_pid" && [ "$k_waited" -lt "${KEEPER_STOP_SECONDS:-60}" ]; do

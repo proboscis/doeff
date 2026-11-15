@@ -11,6 +11,7 @@
 (import doeff_core_effects [await-handler slog-handler state])
 (import doeff_core_effects [http-production-handler])
 (import doeff_core_effects [scheduled])
+(import doeff_core_effects [Spawn Task])
 (import doeff_time [Delay async-time-handler])
 (import doeff_hy._json_value [OpaqueJson])
 (import doeff_cluster [os-environ-reader])
@@ -18,6 +19,8 @@
 (import doeff_cluster [with-cluster-handlers])
 (import doeff_cluster [ReportReady])
 (import doeff_cluster [WriteShared])
+(import doeff_cluster [AwaitRetirement])
+(import doeff_cluster [Retired HandoffAbandoned])
 
 ;; 版の入れ替えの検(tests/test_worker_version_swap.hy)の盤の行の頭と、worker が子へ渡す版の環境変数の名
 ;; (検は WORKER_PASS_ENV にこの名を置く — 子は自分を走らせた worker の世代の版を読む)。
@@ -78,3 +81,45 @@
 (defsystem handoff-pings [#^ Callable foundation]
   "配備の cluster の handler の検の系: 準備を報告し続ける service 1 つ(入れ替えの形は handoff — 版を替えずに重ねて起こし直せる)"
   (ping (ping-job foundation) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"local"} :readiness {"windowSeconds" 5} :update "handoff" :environ {"STEP" "1"}))
+
+
+;; --- 版の入れ替えで、退く handoff の service の仕事が終わりまで回るかの検の系(tests/test_worker_version_swap_keeps_handoff_work.hy) ---
+
+(defk ready-beats-body []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "準備できたと 1 秒ごとに報告し続けるため(止められるまで — 仕事の間も Ready を名乗る)。"
+  (while True
+    (<- (ReportReady True "up" "active"))
+    (<- (Delay 1.0)))
+  None)
+
+
+(defk handoff-work-body [seconds]
+  {:pre [(: seconds float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "service: 準備の報告を並べ、走らせた worker の世代の版 <版> で盤の swap/hold/<版>/begun を書き、seconds 秒働いて swap/hold/<版>/done を
+   書き、退く知らせ(AwaitRetirement)を待って swap/hold/<版>/left を書いて自分で終わるため(退く知らせを仕事の途中で受けても、仕事は
+   終わりまで回す — 走っている命令を持つ受け口の代役)。"
+  (<- commit str (Ask COMMIT-ENV))
+  (<- _beats Task (Spawn (ready-beats-body)))
+  (val row (+ SWAP-PREFIX "hold/" commit "/"))
+  (<- (WriteShared (+ row "begun") (OpaqueJson.of {"commit" commit})))
+  (<- (Delay seconds))
+  (<- (WriteShared (+ row "done") (OpaqueJson.of {"commit" commit})))
+  (<- _told (| Retired HandoffAbandoned) (AwaitRetirement))
+  (<- (WriteShared (+ row "left") (OpaqueJson.of {"commit" commit})))
+  commit)
+
+
+(defk handoff-work-job [foundation seconds]
+  {:pre [(: foundation Callable) (: seconds float)] :post [(: % str)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "service の入口: handoff-work-body を土台で包む。"
+  (<- commit str (foundation (handoff-work-body seconds)))
+  commit)
+
+
+;; 仕事は 20 秒(検は preStop の drain の上限 DRAIN_DEADLINE を 2 秒にし、worker の止めの猶予より長い)。退いた process の寿命の上限
+;; retiredSeconds 600 は検の長さより長い(上限の止めは検の外)。
+(defsystem handoff-works [#^ Callable foundation]
+  "版の入れ替えの検の系: handoff で入れ替える、20 秒の仕事を持つ service 1 つ(退いた旧の寿命の上限 600 秒)"
+  (hold (handoff-work-job foundation 20.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"local"} :update "handoff"
+        :readiness {"windowSeconds" 5 "retiredSeconds" 600}))

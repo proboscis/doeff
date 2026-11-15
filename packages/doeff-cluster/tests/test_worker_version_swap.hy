@@ -87,12 +87,13 @@
   (Versions :old (get shas 0) :new (get shas 1)))
 
 
-(defk swap-machine-of [tmp-path repo versions scale]
-  {:pre [(: tmp-path Path) (: repo AppRepo) (: versions Versions) (: scale float)] :post [(: % LocalMachine)]
+(defk swap-machine-of [tmp-path repo versions scale [drain-deadline "60"]]
+  {:pre [(: tmp-path Path) (: repo AppRepo) (: versions Versions) (: scale float) (: drain-deadline str)] :post [(: % LocalMachine)]
    :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker 1 つの手元の 1 台を、配備の雛形と同じく版の file と起動の版で組むため(版の file は版 A を持つ)。worker は自分の版を子へ渡す
    (WORKER_PASS_ENV — 検の task が走らせた世代の版を読む)。scale = 機体の込み具合の倍率(起動の上限を伸ばす)。worker は静かな機体の
-   代役(QuietMachine)を測る — この検は置き方を試さないので、検を走らせる機体の CPU の PSI が止めの線を越えていても task は置かれる。"
+   代役(QuietMachine)を測る — この検は置き方を試さないので、検を走らせる機体の CPU の PSI が止めの線を越えていても task は置かれる。
+   drain-deadline = Pod の preStop の drain の上限(DRAIN_DEADLINE の秒)。"
   (<- port int (free-port))
   (val home (/ tmp-path "workers" WORKER))
   (val version-file (/ home "version"))
@@ -107,7 +108,7 @@
                               (EnvEntry :name "DOEFF_KEEPER_DIR" :value (str (/ home "keeper")))
                               (EnvEntry :name "KEEPER_TICK_SECONDS" :value "1")
                               (EnvEntry :name "POD_UID" :value "pod-swap")
-                              (EnvEntry :name "DRAIN_DEADLINE" :value "60")
+                              (EnvEntry :name "DRAIN_DEADLINE" :value drain-deadline)
                               (EnvEntry :name "WORKER_PASS_ENV" :value "WORKER_DOEFF_COMMIT"))))
 
 
