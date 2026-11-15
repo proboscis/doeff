@@ -8,6 +8,7 @@
 
 pub mod affected_tests;
 pub mod architecture;
+pub mod declaration_items;
 pub mod blob_chunks;
 pub mod blob_spell;
 pub mod bulk_read;
