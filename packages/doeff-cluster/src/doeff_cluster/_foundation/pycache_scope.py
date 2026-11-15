@@ -17,8 +17,10 @@ doeff に依らない(標準 library だけを import する — 起動の .pth 
 import importlib.util
 import os
 import sys
+from collections.abc import Callable
 
 import _frozen_importlib_external as external
+
 
 # 層 foundation の文脈と役の名乗り(DOEFF104)— 隣の otlp_post.py と同じ。
 MODULE_TAGS = {"context": "doeff-cluster", "role": "foundation"}
@@ -30,11 +32,11 @@ def kept_dirs() -> tuple[str, ...]:
     return tuple(sorted({os.path.join(os.path.abspath(p), "") for p in prefixes if p}))
 
 
-def scoped(prefixed, kept: tuple[str, ...]):
+def scoped(prefixed: Callable[..., str], kept: tuple[str, ...]) -> Callable[..., str]:
     """置き場の在る cache_from_source(prefixed)を、kept の下の source だけ隣の __pycache__ の path に戻す関数にするため(.pyc の名 —
     cache の印と最適化の段 — は prefixed の答えの名をそのまま使う)。"""
 
-    def cache_from_source(path, debug_override=None, *, optimization=None):
+    def cache_from_source(path: str | os.PathLike[str], debug_override: bool | None = None, *, optimization: object = None) -> str:
         cached = prefixed(path, debug_override, optimization=optimization)
         source = os.fspath(path)
         if not os.path.abspath(source).startswith(kept):

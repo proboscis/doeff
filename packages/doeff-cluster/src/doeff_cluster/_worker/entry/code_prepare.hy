@@ -43,7 +43,7 @@
 ;;;               検めてから、木の根に完成の印(MARKER)を置く。検めが通らない木には印を置かない。
 ;;;   置き場     --pycache-prefix = root の .pyc の置き場(ADR-DOE-BUILD-002 R3d)。在れば .pyc は木の中でなく PYTHONPYCACHEPREFIX と同じ並べ方で
 ;;;               置き場へ置き(焼きの道具の pyc-path)、閉包の表と完成の印も木の根でなく記録の dir(bake_plan の records-dir — 置き場の下に
-;;;               木の dir を写した dir)へ置き、検めの .pyc は記録の dir を走査して数える(ScanPycs)— 木には何も書かない。木は子の import の
+;;;               木の dir を写した dir)へ置き、検めの .pyc は記録の dir を歩いて数える(placed-files)— 木には何も書かない。木は子の import の
 ;;;               路と同じ綴り(--tree の綴りを正規化した絶対 path — symlink を辿らない)で扱う(置き場の path は source の path の字面で決まる)。
 ;;;               --inherit-pycache-prefix = 写し元の木の root の置き場(その dir が無ければ、置き場を使う前の形の root として写し元の木の中の
 ;;;               __pycache__ と記録を読む)。
@@ -94,7 +94,7 @@
 (import doeff [EffectBase run with-handlers])
 (import doeff_time [GetMonotonic sync-time-handler])
 (import doeff_core_effects [slog-handler])
-(import doeff_core_effects [FileFailed PathStat ReadText StatPath]
+(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText StatPath]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [os-file-handler])
 (import doeff_core_effects [subprocess-handler])
@@ -224,22 +224,17 @@
 
 
 (defclass [(dataclass :frozen True)] WriteClosureTable [EffectBase]
-  "木の閉包の表の file を書く(一時の file に書いてから置き換える・無い dir は作る)。答え = 書けなかった理由か None。"
+  "木の閉包の表の file を書く(一時の file に書いてから置き換える — 記録の dir は呼び手が先に作る)。答え = 書けなかった理由か None。"
   (#^ str path)
   (#^ str text))
 
 
 (defclass [(dataclass :frozen True)] WriteReadyMark [EffectBase]
-  "置き場を使う回の木の完成の印の file を記録の dir に書く(一時の file に書いてから置き換える・無い dir は作る — 置き場を使わない回は
+  "置き場を使う回の木の完成の印の file を記録の dir に書く(一時の file に書いてから置き換える・記録の dir は呼び手が先に作る — 置き場を使わない回は
    root の側の WriteMarker が木の根へ書く)。答え = 書けなかった理由か None。"
   (#^ str path)
   (#^ str text))
 
-
-(defclass [(dataclass :frozen True)] ScanPycs [EffectBase]
-  "置き場を使う回の木 1 つの .pyc を、記録の dir(bake_plan の records-dir)の下を歩いて並べる。答え = 記録の dir からの相対 path の列
-   (無い dir は空 — どれを .pyc と数えるかは bake_plan の placed-pycs)。"
-  (#^ str path))
 
 
 (defclass [(dataclass :frozen True)] MarkProgress [EffectBase]
@@ -264,6 +259,22 @@
   trees)
 
 
+(defk placed-files [root rel]
+  {:pre [(: root str) (: rel str)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
+  "記録の dir root の下(rel = root からの相対の dir・空 = root)の file の相対 path(posix)を、file の効果 ListDirectory で dir ごとに
+   歩いて並べるため(無い・読めない dir は空 — 記録の dir は .pyc の無い木では無い)。"
+  (<- listed (ListDirectory (if rel (posixpath.join root rel) root)))
+  (var found #())
+  (when (not (isinstance listed FileFailed))
+    (for [entry listed]
+      (val here (if rel (posixpath.join rel entry.name) entry.name))
+      (cond
+        (= entry.kind PathKind.DIRECTORY) (do (<- below tuple (placed-files root here))
+                                              (:= found (+ found below)))
+        (= entry.kind PathKind.FILE) (:= found (+ found #(here))))))
+  found)
+
+
 (defk scan-tree [tree prefix]
   {:pre [(: tree plan.BakeTree) (: prefix (| str None))] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
   "木 1 つを走査の答え #(source の列 .pyc の列) にするため: source は木を走査し、.pyc は置き場を使う回なら記録の dir を歩いた物
@@ -272,7 +283,7 @@
   (if (is prefix None)
       scanned
       (do (<- records str (plan.records-dir prefix tree.path))
-          (<- rels tuple (ScanPycs records))
+          (<- rels tuple (placed-files records ""))
           (<- pycs list (plan.placed-pycs rels sys.implementation.cache-tag))
           #((get scanned 0) pycs))))
 
@@ -489,6 +500,9 @@
         (do (<- marker dict (marker-content revision True after-sources after-pycs failed tree.roots))
             ;; 閉包の表は完成の印の前に置く(次の準備の写し元になるのは完成した root の木だけ — R3c)。
             (<- records str (plan.records-dir prefix tree.path))
+            ;; 置き場の記録の dir は .pyc の無い木では無い — 記録を書く前に作る。
+            (when (is-not prefix None)
+              (<- (file-done (MakeDirectory records))))
             (when entries
               (<- text str (plan.closure-table-text rows hy-version))
               (<- unwritten (| str None) (WriteClosureTable (posixpath.join records plan.CLOSURE-TABLE) text))
@@ -599,13 +613,6 @@
       False)))
 
 
-(deff placed-files [path]  ; cannot be a defk: 記録の dir の歩み(VM の外 — 答え手が呼ぶ)
-  {:pre [(: path str)] :post [(: % tuple)]}
-  "記録の dir の下の file の相対 path(posix・名の順)を歩いて並べるため(無い dir は空)。"
-  (tuple (sorted (gfor #(here _ names) (os.walk path) name names
-                       (posixpath.relpath (posixpath.join here name) path)))))
-
-
 (deff read-table [path]  ; cannot be a defk: 閉包の表の読み(VM の外 — 答え手が呼ぶ)
   {:pre [(: path str)] :post [(: % (| str None))]}
   "閉包の表の file を読むため(無い・読めない file は None — その木は写し元の表を持たない物として扱う)。"
@@ -617,11 +624,10 @@
 
 (deff write-table [path text]  ; cannot be a defk: 閉包の表と記録の dir の完成の印の書き(VM の外 — 答え手が呼ぶ)
   {:pre [(: path str) (: text str)] :post [(: % (| str None))]}
-  "焼きの記録の file を、一時の file に書いてから置き換えるため(書きかけを読ませない・無い dir は作る — 記録の dir は置き場の下で、
-   .pyc の無い木では無い)。答え = 書けなかった理由か None。"
+  "焼きの記録の file を、一時の file に書いてから置き換えるため(書きかけを読ませない — 無い dir は答え手が先に作る)。答え = 書けなかった
+   理由か None。"
   (setv temporary (.format "{}.{}.tmp" path (os.getpid)))
   (try
-    (os.makedirs (posixpath.dirname path) :exist-ok True)
     (.write-text (Path temporary) text :encoding "utf-8")
     (os.replace temporary path)
     None
@@ -647,9 +653,8 @@
   (WriteClosureTable [path text]
     (resume (write-table path text)))
   (WriteReadyMark [path text]
-    (resume (write-table path text)))
-  (ScanPycs [path]
-    (resume (placed-files path))))
+    (resume (write-table path text))))
+
 
 
 (defhandler progress-marks [path]
