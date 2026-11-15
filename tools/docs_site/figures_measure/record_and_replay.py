@@ -45,10 +45,10 @@ from doeff import Resume, handler, run
 class Heard:
     """What the listening handlers heard, in order."""
 
-    events: tuple[str, ...] = ()
+    mut_events: tuple[str, ...] = ()
 
     def add(self, event: str) -> None:
-        self.events = (*self.events, event)
+        self.mut_events = (*self.mut_events, event)
 
 
 def requests(where: str, heard: Heard):
@@ -91,7 +91,7 @@ if __name__ == "__main__":
     heard, tape = Heard(), {}
     program = requests("inside record", heard)(latest_releases(REPOS, "secret"))
     result = run(github(requests("outside record", heard)(recording(tape)(program))))
-    for event in heard.events:
+    for event in heard.mut_events:
         print(" ", event)
     print(f"  tape: {tape}")
     print(f"  result {result}, sent: {sent.total()}")
@@ -103,7 +103,7 @@ if __name__ == "__main__":
         " ",
         run(requests("outside replay", outer)(replaying(tape)(latest_releases(REPOS, "secret")))),
     )
-    print(f"  sent: {sent.total()}; a request outside replay: {bool(outer.events)}")
+    print(f"  sent: {sent.total()}; a request outside replay: {bool(outer.mut_events)}")
     print(" ", run(replaying(tape)(reported(latest_releases(["acme/docs"], "secret")))))
 
     with tempfile.TemporaryDirectory() as directory:
@@ -125,7 +125,7 @@ if __name__ == "__main__":
         )
         heard = Heard()
         print(" ", listened(reported(latest_releases(REPOS, "ci-dummy")), hashed, offline, heard))
-        print(f"  memo effects: {heard.events}")
+        print(f"  memo effects: {heard.mut_events}")
         keyed = Path(directory) / "keyed.json"
         recorded(latest_releases(REPOS, "secret"), keyed, github, method_and_url)
         print(f"  method_and_url keys: {list(json.loads(keyed.read_text()))}")
@@ -133,7 +133,7 @@ if __name__ == "__main__":
         print(
             " ", listened(latest_releases(REPOS, "ci-dummy"), keyed, offline, heard, method_and_url)
         )
-        print(f"  memo effects: {heard.events}")
+        print(f"  memo effects: {heard.mut_events}")
         print(
             f"  'secret' in the files: {'secret' in hashed.read_text()}, {'secret' in keyed.read_text()}"
         )
