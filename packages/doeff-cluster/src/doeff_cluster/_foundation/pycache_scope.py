@@ -74,11 +74,10 @@ def venv_prefix(site: str) -> str | None:
 def install() -> None:
     """この process の .pyc の置き場を、この module の在る venv の置き場にするため: sys.pycache_prefix を PREFIX_FILE の置き場で置き直し
     (継いだ環境変数と -X の値は使わない — 置き場の無い venv では None)、置き場が在れば cache_from_source(importlib の読みの口と
-    importlib.util の名の両方)を scoped で包む。包み済みの process では何もしない。"""
-    if getattr(external.cache_from_source, "doeff_pycache_scope", False):
-        return
+    importlib.util の名の両方)を scoped で包む。包み済みの process では包み直さず、置き場だけ置き直す(site は同じ .pth を 2 度読む事が
+    在り — Python 3.14 の venv で見た — 2 度目の .pth の行が外した置き場を戻す)。"""
     sys.pycache_prefix = venv_prefix(os.path.dirname(os.path.abspath(__file__)))
-    if not sys.pycache_prefix:
+    if not sys.pycache_prefix or getattr(external.cache_from_source, "doeff_pycache_scope", False):
         return
     wrapped = scoped(external.cache_from_source, kept_dirs())
     wrapped.doeff_pycache_scope = True

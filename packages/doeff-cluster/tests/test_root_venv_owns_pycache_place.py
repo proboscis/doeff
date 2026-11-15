@@ -86,6 +86,12 @@ def _tree_pycache(tree: Path) -> list[str]:
     return sorted(str(p.relative_to(tree)) for p in tree.rglob("*") if p.name == "__pycache__" or p.suffix == ".pyc")
 
 
+def _foreign(other: Path) -> list[str]:
+    """継いだ別の root の置き場に書かれた .pyc のうち、interpreter の起動の段(site の前 — venv の .pth より先)に読む encodings の外の物。
+    encodings は site の前に import されるので venv の口では外せない(PYTHONPYCACHEPREFIX を継いだ時だけ — worker は子へ渡さない)。"""
+    return sorted(str(p) for p in other.rglob("*.pyc") if "encodings" not in p.parts) if other.exists() else []
+
+
 def _placed(place: Path, tree: Path) -> list[str]:
     """置き場の下の、木の pkg の .pyc の名(PYTHONPYCACHEPREFIX と同じ並べ方 — 木の dir の絶対 path を置き場の下に写した dir)。"""
     mirrored = place / str(tree / "pkg").lstrip("/")
@@ -107,7 +113,7 @@ def test_a_root_venv_python_writes_the_tree_pyc_only_into_its_place(
 ) -> None:
     """受入: 置き場を使う root の venv の python を、job の形・見張りの -I・環境を組み直した形(PATH だけ)・別の root の置き場を継いだ形で
     起こし、孫も -I で起こす。木の下に __pycache__ が 1 つも無く、木の module の .pyc は自分の root の置き場に在り、継いだ別の root の
-    置き場には何も書かない。"""
+    置き場には書かない(interpreter が site の前に読む encodings の外 — _foreign)。"""
     root = _root(tmp_path / "root", placed=True)
     other = tmp_path / "other-root" / ".doeff-pycache"
     if "__clean__" in environ:
@@ -117,16 +123,16 @@ def test_a_root_venv_python_writes_the_tree_pyc_only_into_its_place(
     _run([str(root.python), *flags, "-c", _IMPORT, str(root.tree), "grandchild"], env)
     assert _tree_pycache(root.tree) == [], way
     assert _placed(root.place, root.tree) == ["__init__", "first", "second"], way
-    assert not other.exists(), way
+    assert _foreign(other) == [], way
 
 
 def test_b_a_root_without_a_place_does_not_write_into_the_inherited_place(tmp_path: Path) -> None:
     """置き場の file が空の root(焼く木の無かった root)の venv の python は、job の環境から継いだ別の root の PYTHONPYCACHEPREFIX の
-    置き場へ書かない(木の隣の __pycache__ を使う — 置き場を使わない root の前からの形)。"""
+    置き場へ書かない(木の隣の __pycache__ を使う — 置き場を使わない root の前からの形。encodings の外 — _foreign)。"""
     root = _root(tmp_path / "root", placed=False)
     other = tmp_path / "other-root" / ".doeff-pycache"
     _run([str(root.python), "-c", _IMPORT, str(root.tree), "grandchild"], _environ(root, PYTHONPYCACHEPREFIX=str(other)))
-    assert not other.exists()
+    assert _foreign(other) == []
     assert "pkg/__pycache__" in _tree_pycache(root.tree)
 
 
