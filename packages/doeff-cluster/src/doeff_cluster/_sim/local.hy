@@ -211,13 +211,13 @@
 (import doeff_cluster._shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
-                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state outbox-answer outbox-ack-answer outbox-path outbox-query])
+                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state detached-tasks-of-state outbox-answer outbox-ack-answer outbox-path outbox-query])
 (import doeff_cluster._shared.core.capabilities [env-mapping])
 (import doeff_cluster._shared.core.detached_rules [task-placing-json task-notify-json task-rerun-json task-ungated-json task-preemptible-json task-queue-limit-json])
 (import doeff_cluster._shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
-                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer
+                         ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer ReadDetachedTasks DetachedTasksAnswer
                          AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAnswer DetachedAckAnswer])
 (import doeff_cluster._worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster._worker.core.launch [outlives-worker orphan-seconds-of])
@@ -1663,6 +1663,16 @@
   queue)
 
 
+(defk read-detached-tasks [link prefix]
+  {:pre [(: link SimLink) (: prefix str)] :post [(: % DetachedTasksAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedTasks を本番の detached.detached-tasks-read と同じく GET /state の 1 回の読みから答えるため(届かなければ理由の文 —
+   答えの判断は本番と同じ detached.detached-tasks-of-state)。"
+  (<- read tuple (send-resent link "GET" "/state" {} None))
+  (val state (if (is (get read 0) None) (unreached-reason read) (answered-object read "task の一覧を読めない")))
+  (<- tasks DetachedTasksAnswer (detached-tasks-of-state prefix state))
+  tasks)
+
+
 ;; 終わりの出口の待ち手の呼び鈴の鍵(task の key は呼び手が決める語で、NUL を含まない — 重ならない)。
 (val OUTBOX-BELL "\u0000outbox")
 
@@ -2024,6 +2034,9 @@
   (ReadDetachedQueue [key]
     (<- queue DetachedQueueAnswer (read-detached-queue link key))
     (resume queue))
+  (ReadDetachedTasks [prefix]
+    (<- tasks DetachedTasksAnswer (read-detached-tasks link prefix))
+    (resume tasks))
   (CancelDetached [key]
     (<- answer tuple (send-resent link "POST" (detached-path key "/cancel") {} None))
     (resume (get (refused-or-object answer "取り消せない") "cancelled")))

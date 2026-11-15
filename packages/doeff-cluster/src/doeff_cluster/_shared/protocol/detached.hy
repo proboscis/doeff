@@ -47,6 +47,7 @@
                          ServiceViewWire ReadServices ServiceFact ServicesUnreachable ServiceListWire
                          ReadDetachedTiming DetachedTiming StateTasksWire DetachedTimingAnswer
                          ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedQueueAnswer StateQueueWire DetachedGroupWire DetachedLimitWire
+                         ReadDetachedTasks DetachedTasks DetachedTaskPhase DetachedTasksAnswer StatePhasesWire
                          AwaitDetachedOutbox AckDetachedOutbox DetachedEnded DetachedOutbox DetachedOutboxWire DetachedOutboxAnswer
                          DetachedOutboxAcked DetachedAckAnswer])
 (import doeff_hy._wire [Malformed parse])
@@ -224,6 +225,36 @@
     (<- view (| dict str) (detached-view cell options sender key))
     (return (unknown-timing-confirmed queue view)))
   queue)
+
+
+(defk detached-tasks-of-state [prefix state]
+  {:pre [(: prefix str) (: state (| dict str))] :post [(: % DetachedTasksAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "ReadDetachedTasks の答えを決めるため(本番の client と sim の宿が同じ判断): state = coordinator の GET /state の読み(本文の JSON の object か、
+   届かなかった理由の文)。届かない読みと形の違う返事は DetachedUnreachable(task の在否は分からない)・そうでなければ key が prefix で始まる
+   行の key と phase の DetachedTasks(key の順 — key を持たない RemoteJob の task の行は当たらない)。"
+  (when (isinstance state str)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" state))))
+  (<- wire (| StatePhasesWire Malformed) (parse StatePhasesWire state))
+  (match wire
+    (Malformed :fields fields)
+      (DetachedUnreachable :detail (.format "coordinator の GET /state の返事を読めない(task の行の key か phase の欄の形が違う): {}"
+                                            (.join "・" (gfor f fields (+ f.field " " f.reason)))))
+    _ (DetachedTasks :tasks (tuple (sorted (gfor r wire.tasks :if (and (is-not r.key None) (.startswith r.key prefix))
+                                                 (DetachedTaskPhase :key r.key :phase r.phase))
+                                           :key (fn [row] row.key))))))
+
+
+(defk detached-tasks-read [cell options sender prefix]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: prefix str)] :post [(: % DetachedTasksAnswer)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "key の前置きが同じ task の行を読むため(ReadDetachedTasks の本番の答え — 待たずに coordinator の GET /state を 1 回読み、
+   detached-tasks-of-state で答えにする)。届かなければ理由の文を渡して DetachedUnreachable にする。"
+  (<- read (resent-answer cell options "GET" "/state" None None sender.deadline-seconds))
+  (when (isinstance read HttpFailed)
+    (return (DetachedUnreachable :detail (.format "coordinator に届かない: {}" read.detail))))
+  (<- state dict (answer-json read))
+  (<- tasks DetachedTasksAnswer (detached-tasks-of-state prefix state))
+  tasks)
 
 
 (deff unknown-timing-confirmed[#^ DetachedUnknown unknown #^ (| dict str) view]  ; cannot be a defk: 本番の client と sim の宿が同じ判断で「行の無い key」を確かめる
@@ -737,6 +768,9 @@
   (ReadDetachedQueue [key]
     (<- queue (detached-queue-read cell options sender key))
     (resume queue))
+  (ReadDetachedTasks [prefix]
+    (<- tasks (detached-tasks-read cell options sender prefix))
+    (resume tasks))
   (ReadRunners []
     (<- runners (runners-read cell options sender))
     (resume runners))
