@@ -321,6 +321,28 @@
 (val CLOSURE-TABLE-TAG "doeff-cluster/closure-table/1")
 
 
+;; --- root の .pyc の置き場(ADR-DOE-BUILD-002 R3d)----------------------------------------------------------------
+;; --pycache-prefix の在る回は、.pyc を木の中でなく PYTHONPYCACHEPREFIX と同じ並べ方で置き場へ置き(_foundation/bytecode_pool の pyc-path)、
+;; 焼きの記録(閉包の表・木の完成の印)も木の根でなく、置き場の下に木の dir を写した dir(記録の dir)へ置く — 木には何も書かない。
+
+(defk records-dir [prefix tree]
+  {:pre [(: prefix (| str None)) (: tree str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "木 1 つの焼きの記録(閉包の表・木の完成の印)と .pyc を写す dir を求めるため: 置き場 prefix の下に木の絶対 path を写した dir(木の .pyc が
+   並ぶ所の根 — cache_from_source の規則)。prefix が None(置き場を使わない回・前の形の写し元)なら木そのもの。"
+  (if (is prefix None) tree (posixpath.join prefix (.lstrip tree "/"))))
+
+
+(defk placed-pycs [rels tag]
+  {:pre [(: rels (| list tuple)) (: tag str)] :post [(: % list)] :tags {:context "worker" :role "judgment"}}
+  "記録の dir の下の file の相対 path の列から、.pyc を木の走査の答えと同じ綴り(<dir>/__pycache__/<名>.<tag>.pyc — code_plan の
+   compile-plan・tree-problem・marker-content が読む形)の列にするため(名の順)。隠し file と隠し dir の下(焼きの記録)と、tag の違う .pyc
+   は数えない。"
+  (sorted (gfor rel rels
+                :setv parts (.split rel "/")
+                :if (and (not (any (gfor p parts (.startswith p ".")))) (.endswith (get parts -1) (+ "." tag ".pyc")))
+                (posixpath.join #* (cut parts 0 -1) "__pycache__" (get parts -1)))))
+
+
 (defk closure-table-text [rows hy-version]
   {:pre [(: rows tuple) (: hy-version str)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "木 1 つの閉包の表の行(ClosureRow の列)を表の file の中身(JSON の境界の 1 点)に綴るため。Hy の source の import の名は Hy の読み手の
@@ -394,16 +416,20 @@
   (tuple (gfor item (sorted items :key (fn [i] #((- i.size) i.tree i.rel))) #(item.tree item.rel item.name))))
 
 
-(defk bake-argv [python tool jobs paths store-module store progress [inherits #()]]
+(defk bake-argv [python tool jobs paths store-module store progress [inherits #()] * [pycache None] [inherit-pycache None]]
   {:pre [(: python str) (: tool str) (: jobs int) (: paths tuple) (: store-module str) (: store (| str None)) (: progress (| str None))
-         (: inherits tuple)]
+         (: inherits tuple) (: pycache (| str None)) (: inherit-pycache (| str None))]
    :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "焼きの道具(tool = worker 自身のコードの _foundation/bytecode_pool.hy)を起こす命令を組むため(python = 入口と同じ venv の interpreter —
    準備する root の venv・jobs = 並列数・paths = 焼く process の import の路の先頭に足す dir・store-module = worker の版の doeff-hy の
    code_store.py・store = 保存先の dir — None は保存先を使わない・progress = 進みの印の file — 道具が 1 つ用意するたびに時刻を進める・
-   None は印を触らない・inherits = #(木の path 写し元の木の path) の列 — 道具が写し元の .pyc を置いて照らさずに残す・ADR-DOE-BUILD-002 R3c)。"
+   None は印を触らない・inherits = #(木の path 写し元の木の path) の列 — 道具が写し元の .pyc を置いて照らさずに残す・ADR-DOE-BUILD-002 R3c・
+   pycache = root の .pyc の置き場・inherit-pycache = 写し元の木の root の置き場 — None は木の中の __pycache__・R3d)。"
   (+ #(python "-m" "hy" tool "--jobs" (str jobs) "--store-module" store-module)
      (if (is store None) #() #("--store" store))
+     (if (is pycache None) #() #("--pycache-prefix" pycache))
+     (if (is inherit-pycache None) #() #("--inherit-pycache-prefix" inherit-pycache))
+
      (if (is progress None) #() #("--progress" progress))
      (tuple (gfor p paths a #("--path" p) a))
      (tuple (gfor #(tree source) inherits a #("--inherit" tree source) a))))

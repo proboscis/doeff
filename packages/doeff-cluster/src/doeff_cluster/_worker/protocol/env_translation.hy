@@ -64,7 +64,11 @@
 (import doeff_cluster._worker.core.env_prepare [
                      
                       env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+(import inspect)
 (import doeff_cluster._foundation.pycache_scope :as pycache-scope)
+;; venv へ写す置き場の口の source(worker 自身の file — import の時に 1 度だけ読む code の値。準備の file の効果の外: 模擬の世界の file にも
+;; 同じ中身を書く)。
+(val PYCACHE-SCOPE-SOURCE (inspect.getsource pycache-scope))
 
 (val DETAIL-CHARS 600)
 ;; この process の mount の表(置き場の disk の種類を読む — #3676)。
@@ -1128,9 +1132,8 @@
     (<- written (| None FileFailed) (WriteText (posixpath.join site ROOTS-PTH) (+ (.join "\n" roots) "\n")))
     (<- (settled written "import の根の .pth を書けない"))
     ;; root の .pyc の置き場を木の source だけに使う口(頭の註)。venv を写した root では写し元と同じ file なので、置き換えで書く。
-    (<- scope (| str FileFailed) (ReadText pycache-scope.__file__))
-    (<- source str (settled scope "置き場の口の source を読めない"))
-    (<- module (| None FileFailed) (WriteText (posixpath.join site (+ PYCACHE-SCOPE-MODULE ".py")) source :replace True))
+    (<- module (| None FileFailed) (WriteText (posixpath.join site (+ PYCACHE-SCOPE-MODULE ".py")) PYCACHE-SCOPE-SOURCE :replace True))
+
     (<- (settled module "置き場の口を venv へ置けない"))
     (<- hook (| None FileFailed) (WriteText (posixpath.join site PYCACHE-SCOPE-PTH)
                                             (.format "import {0}; {0}.install()\n" PYCACHE-SCOPE-MODULE) :replace True))
