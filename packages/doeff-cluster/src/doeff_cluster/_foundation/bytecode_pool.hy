@@ -34,7 +34,10 @@
 ;;; --store-module = worker の版の doeff-hy の code_store.py(root の版の doeff-hy は保存先の入口を持たない版でありうるので、worker の版の
 ;;; file を path で読む)・--store = 保存先の dir(無ければ保存先を使わずに全部を焼く — DOEFF_HY_CODE_STORE=off)。--path = 焼く process の
 ;;; import の路の先頭に足す dir(前が先 — 焼く source の macro が木の中の別の module を require するため・残すかの照らしも、記録の macro の
-;;; 提供元をこの路で引き直す)。.pyc は source の隣の __pycache__ に置く(python_bytecode の pyc-path)。
+;;; 提供元をこの路で引き直す)。.pyc は source の隣の __pycache__ に置く(python_bytecode の pyc-path)。--pycache-prefix = root の .pyc の
+;;; 置き場(在れば .pyc は木の中でなく、PYTHONPYCACHEPREFIX と同じ並べ方でここへ置く — 木の source の dir の絶対 path を置き場の下に写した
+;;; dir の <名>.<cache の印>.pyc・ADR-DOE-BUILD-002 R3d)。--inherit-pycache-prefix = 写し元の木の root の置き場(在れば写し元の .pyc は
+;;; そこから引く・無ければ写し元の木の中の __pycache__ から — 置き場を使う前の形の root)。
 ;;; --progress = 進みの印の file(呼び手の準備が停滞を見分ける印 — 1 つ用意し終えるたびに時刻を今にする・中身は変えない・無ければ触らない)。
 ;;; 印を焼きの前と後にしか進めないと、保存先に合う code の無い焼き直し(macro を変えた版の後の初めての準備 — 2026-10-27 の node-h-native で
 ;;; 2,400 本・並べる数 2)が 1 file ずつ進んでいても、焼きの全体が停滞の閾(600 秒)を越えて止められ、作り直しも同じ所で止められた。
@@ -78,6 +81,9 @@
 ;; この process で分け合う保存先が使えなくなった理由(None = まだ使える)。process ごとの値 — fork の子は起こされた時の値を持ち、子で
 ;; 使えなくなっても他の子と親へは伝わらない(子ごとに 1 度だけ期限まで待つ)。
 (setv SHARE-DOWN {"reason" None})
+;; この回の .pyc の置き場(--pycache-prefix・--inherit-pycache-prefix — 頭の註。None = 木の中の __pycache__)。入口が pool を起こす前に
+;; 1 度だけ置き、fork の子は起こされた時の値を持つ。
+(setv PYCACHE-PREFIXES {"own" None "inherit" None})
 
 
 (defn #^ ModuleType guard-module []  ; cannot be a defk: root の版の doeff の macro を使わない道具の素の関数(頭の註)
@@ -91,10 +97,20 @@
                                 (.join "・" GUARD-NAMES)))))
 
 
-(defn #^ str pyc-path [#^ str source]  ; cannot be a defk: 内包表記と process の pool の中で呼ぶ path の計算
-  "source の path → 同じ dir の __pycache__ の .pyc の path(import が探す名 — <名>.<cache の印>.pyc)。"
-  (setv #(head tail) (posixpath.split source))
-  (posixpath.join head "__pycache__" (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc")))
+(defn #^ str pyc-path [#^ str source #^ (| str None) [prefix None]]  ; cannot be a defk: 内包表記と process の pool の中で呼ぶ path の計算
+  "source の path → import が探す .pyc の path(<名>.<cache の印>.pyc)。prefix = .pyc の置き場(None = 同じ dir の __pycache__)— 在れば
+   PYTHONPYCACHEPREFIX の import と同じく、source の dir の絶対 path を置き場の下に写した dir(importlib の cache_from_source の規則 —
+   path を正規化しないので、木は子の import の路と同じ綴りで渡す)。"
+  (setv #(head tail) (posixpath.split source)
+        name (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc"))
+  (if (is prefix None)
+      (posixpath.join head "__pycache__" name)
+      (posixpath.join prefix (.lstrip head "/") name)))
+
+
+(defn #^ str own-pyc [#^ str source]  ; cannot be a defk: 内包表記と process の pool の中で呼ぶ path の計算
+  "この回の木の source の .pyc の path(この回の置き場 — 頭の註 --pycache-prefix)。"
+  (pyc-path source (get PYCACHE-PREFIXES "own")))
 
 
 (defn #^ bytes pyc-head [#^ bytes data]  ; cannot be a defk: process の pool の子が呼ぶ素の組み立て
@@ -160,7 +176,7 @@
    今の import の路で引き直す — prepare-path の後に呼ぶ)。"
   (setv source (posixpath.join tree rel))
   (try
-    (setv existing (.read-bytes (Path (pyc-path source)))
+    (setv existing (.read-bytes (Path (own-pyc source)))
           data (.read-bytes (Path source)))
     (.bytecode-is-current (guard-module) source existing data)
     (except [OSError] False)))
@@ -176,11 +192,12 @@
 
 (defn #^ bool carry-pyc [#^ str tree #^ str source #^ str rel]  ; cannot be a defk: 焼く前に親が呼ぶ素の file の置き
   "新しい木 tree の source rel が写し元の木 source の rel と同じ file なら、写し元の .pyc を tree の同じ置き場へ hardlink で置くため
-   (置いたか — 写し元に .pyc が無い・置けない時は偽で、その物は今までどおり保存先の道で用意する)。別の名に link してから置き換える
-   (写し元の .pyc と保存先の .pyc は書き換えない — R6)。既に同じ file が置かれていれば置き直さない。"
+   (置いたか — 写し元に .pyc が無い・置けない時は偽で、その物は今までどおり保存先の道で用意する — 置き場が別の file system の時も)。
+   別の名に link してから置き換える(写し元の .pyc と保存先の .pyc は書き換えない — R6)。既に同じ file が置かれていれば置き直さない。
+   写し元の .pyc は写し元の root の置き場(--inherit-pycache-prefix)から引く。"
   (setv here (posixpath.join tree rel)
-        origin (pyc-path (posixpath.join source rel))
-        target (pyc-path here)
+        origin (pyc-path (posixpath.join source rel) (get PYCACHE-PREFIXES "inherit"))
+        target (own-pyc here)
         temporary (.format "{}.{}.carry" target (os.getpid)))
   (when (not (same-file here (posixpath.join source rel)))
     (return False))
@@ -208,7 +225,7 @@
   (setv source (posixpath.join tree rel)
         modules-of (getattr (guard-module) "bytecode_dependency_modules" None))
   (try
-    (setv pyc (.read-bytes (Path (pyc-path source)))
+    (setv pyc (.read-bytes (Path (own-pyc source)))
           data (.read-bytes (Path source)))
     (except [OSError]
       (return False)))
@@ -227,7 +244,7 @@
     (return None))
   (setv code-store (get sys.modules STORE-MODULE-NAME)
         source (posixpath.join tree rel)
-        cache (pyc-path source))
+        cache (own-pyc source))
   (try
     (setv at (. (os.stat cache) st-mtime-ns))
     (when (< (- (time.time-ns) at) (* code-store.TOUCH-AFTER-SECONDS 1000000000))
@@ -243,8 +260,8 @@
 
 
 (defn #^ None write-pyc [#^ str source #^ bytes pyc]  ; cannot be a defk: process の pool の子が呼ぶ file の書き
-  "source の隣の __pycache__ へ .pyc を置く(別の file へ書いて置き換える — hardlink の先の別の木の .pyc を書き換えない)。"
-  (setv cache (pyc-path source))
+  "source の .pyc をこの回の置き場へ置く(別の file へ書いて置き換える — hardlink の先の別の木の .pyc を書き換えない)。"
+  (setv cache (own-pyc source))
   (os.makedirs (posixpath.dirname cache) :exist-ok True)
   (setv tmp (.format "{}.{}.tmp" cache (os.getpid)))
   (with [f (open tmp "wb")] (.write f pyc))
@@ -255,7 +272,7 @@
 (defn #^ str place-pyc [#^ (| str None) store #^ str source #^ bytes pyc]  ; cannot be a defk: process の pool の子が呼ぶ file の書き
   "source の .pyc を置くため: 保存先が在れば、保存先の中身の同じ file への hardlink で置き(code_store の link-pyc — root ごとに同じ中身を
    新しく書かない)、置けなかった・保存先を使わない時は write-pyc で書く。答え = hardlink で置けなかった理由(置けた・保存先を使わない時は空)。"
-  (setv problem (if (is store None) None (.link-pyc (get sys.modules STORE-MODULE-NAME) store pyc (pyc-path source))))
+  (setv problem (if (is store None) None (.link-pyc (get sys.modules STORE-MODULE-NAME) store pyc (own-pyc source))))
   (when (or (is store None) (is-not problem None))
     (write-pyc source pyc))
   (or problem ""))
@@ -487,7 +504,13 @@
   (.add-argument parser "--path" :action "append" :help "焼く process の import の路の先頭に足す dir(前が先)")
   (.add-argument parser "--inherit" :action "append" :nargs 2 :metavar #("TREE" "SOURCE")
                  :help "木と、その写し元の木(依存のキーの同じ完成済みの root の木 — 頭の註)")
+  (.add-argument parser "--pycache-prefix" :default None :help "root の .pyc の置き場(無ければ木の中の __pycache__ — 頭の註)")
+  (.add-argument parser "--inherit-pycache-prefix" :default None
+                 :help "写し元の木の root の .pyc の置き場(無ければ写し元の木の中の __pycache__ — 頭の註)")
   (setv args (.parse-args parser))
+  (setv (get PYCACHE-PREFIXES "own") args.pycache-prefix
+        (get PYCACHE-PREFIXES "inherit") args.inherit-pycache-prefix)
+
   ;; file の path で起動すると、道具の dir(worker 自身のコードの doeff_cluster/_foundation)が sys.path の先頭に入る。焼く木の module 名が
   ;; そこで解けてしまわないよう外す。
   (setv here (. (.resolve (Path __file__)) parent))

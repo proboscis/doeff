@@ -19,6 +19,11 @@
 
 (val ENV-MARKER ".doeff-env-ready.json")
 (val ENV-MARKER-FORMAT 1)
+;; root ごとの .pyc の置き場(root の直下・repo の木の外 — ADR-DOE-BUILD-002 R3d)。root の venv で起きる子は PYTHONPYCACHEPREFIX で
+;; ここを受け、焼きの道具は木の .pyc と焼きの記録(閉包の表・木の完成の印)をここへ置く。RAM の dir を名指す設定の在る worker では、
+;; ここはその下の root ごとの dir への symlink(root の掃除が symlink の先も消す)。印の欄 pycachePrefix が、この置き場を使う root かを
+;; 名乗る(欄の無い印の root は木の中の __pycache__ を使う前の形)。
+(val ROOT-PYCACHE ".doeff-pycache")
 
 
 (defwire TreeCounts

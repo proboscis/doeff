@@ -10,6 +10,11 @@
 
 
 (val ROOTS-PTH "_doeff_cluster_roots.pth")
+;; root の .pyc の置き場を root の木の source だけに使う口(_foundation/pycache_scope.py)を venv へ写す時の module の名と、それを
+;; 起動の時に入れる .pth の名(site は .pth を名の順に読む — 頭の 0 で venv のほかの .pth より先に包み、ほかの .pth が import する
+;; venv の package も隣の __pycache__ から読む)。
+(val PYCACHE-SCOPE-MODULE "_doeff_pycache_scope")
+(val PYCACHE-SCOPE-PTH "00_doeff_pycache_scope.pth")
 
 
 ;; --- 要求と答え ---------------------------------------------------------------------------
@@ -139,7 +144,8 @@
    memory.current。準備の間に container の memory.peak が上がらなかった・読めなかった組みは None — worker が先の組みを始める前の memory の
    見積もりに読む・#3748)・built = 組んだ native の wheel の数(build の口の報告の無い wheel が在れば None = 数えられない・#3860)・
    entry-place = root の中で子の入口の解ける置き場(job_model の CHILD-ENTRY-PLACES の 1 つ — 準備の確かめが読む。worker が子へ送る名を
-   選ぶ時に印から読む)。"
+   選ぶ時に印から読む)・pycache-prefix = root の .pyc の置き場(env_marker_model の ROOT-PYCACHE — 焼きが置き場を使った準備だけ。
+   worker が root の venv で起こす子へ PYTHONPYCACHEPREFIX として渡す。None = 焼く木の無かった準備・欄の無い前の印 — 子へ渡さない)。"
   (#^ RuntimeEnv env)
   (#^ str key)
   (#^ str platform)
@@ -153,7 +159,8 @@
   (setv #^ (| float None) startup-seconds None)
   (setv #^ (| str None) hy-version None)
   (setv #^ (| int None) build-memory-bytes None)
-  (setv #^ (| str None) entry-place None))
+  (setv #^ (| str None) entry-place None)
+  (setv #^ (| str None) pycache-prefix None))
 
 
 ;; native の wheel をどう用意したか(build の口の報告の観測 — #3860): BUILT = 口が組んだ・STORED = 口が保存先から引いた・
@@ -236,6 +243,8 @@
   (setv #^ (| str None) hy-version None)
   ;; root の中で子の入口の解ける置き場(準備の確かめが読み、完成マーカーへ渡す)。
   (setv #^ (| str None) entry-place None)
+  ;; root の .pyc の置き場(bytecode の処理ステージが焼きに使い、準備の確かめの子と完成マーカーへ渡す — None = 焼く木が無かった)。
+  (setv #^ (| str None) pycache-prefix None)
   ;; venv を写した元の root(同じ依存のキーの完成済みの root — None = 写していない。写した準備は native・依存・wheel の処理ステージを
   ;; 走らせない)。
   (setv #^ (| str None) venv-from None))
@@ -362,13 +371,20 @@
   (#^ str project-dir)
   (#^ tuple trees)
   (#^ tuple entries)
-  (#^ (| int None) jobs))
+  (#^ (| int None) jobs)
+  ;; root の .pyc の置き場(env_marker_model の ROOT-PYCACHE — 答え手が置き場を作り、焼く道具へ --pycache-prefix と PYTHONPYCACHEPREFIX で
+  ;; 渡す)と、写し元の木(BytecodeTree の inherit)の root の置き場(None = 写し元が無い。置き場の無い前の形の root なら、道具が木の中の
+  ;; __pycache__ と記録から引き継ぐ)。
+  (#^ str pycache)
+  (setv #^ (| str None) inherit-pycache None))
 
 
 (defclass [(dataclass :frozen True)] ProbeImports [EffectBase]
-  "子と同じ起こし方で root を読む(roots = 絶対 path)。答え = ProbeReport か EnvFailure(env-incompatible)。"
+  "子と同じ起こし方で root を読む(roots = 絶対 path・pycache = 子と同じく PYTHONPYCACHEPREFIX で渡す root の .pyc の置き場 — None =
+   置き場を使わない root)。答え = ProbeReport か EnvFailure(env-incompatible)。"
   (#^ str project-dir)
-  (#^ tuple roots))
+  (#^ tuple roots)
+  (setv #^ (| str None) pycache None))
 
 
 (defclass [(dataclass :frozen True)] WriteEnvMarker [EffectBase]
