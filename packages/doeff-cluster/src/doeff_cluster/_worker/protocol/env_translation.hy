@@ -443,11 +443,19 @@
                               :detail (.format "{} を clone できない: {}" url detail)))))))
 
 
+;; commit 1 つの fetch で取った commit を指す mirror の ref(次の fetch の交渉で have に出す — fetch-commit の註)。
+(val FETCHED-REF "refs/doeff-env/last-fetched")
+
+
 (defk fetch-commit [mirror commit repo-keys]
   {:pre [(: mirror str) (: commit str) (: repo-keys dict)] :post [(: % (| FetchState EnvFailure))]}
   "commit を mirror に揃える(在れば PRESENT・fetch して在れば FETCHED・remote に無ければ MISSING・届かなければ一時の repo-unreachable)。
    先に commit 1 つを fetch し、それで取れれば終える。取れない時だけ全部の head を取り直す(commit で引けない remote のため)— 前は取れても
-   全部の head を取り、head の多い repo(1 万 5 千本)の新しい版の度に網の往復と ref の書きが 1 回増えた。"
+   全部の head を取り、head の多い repo(1 万 5 千本)の新しい版の度に網の往復と ref の書きが 1 回増えた。
+   commit 1 つの fetch は ref を動かさないので、取れた commit を FETCHED-REF で指す。git の交渉は ref の先から have を出すので、指さないと
+   mirror の ref は最後に全部の head を取った時のまま古くなり、fetch の度にその時からの歴史を取り直した(head 1 万 5 千本の repo で
+   ref が 1 週間古い mirror — 1 commit の fetch が 35,099 objects・75 MB・114 秒。指すと次の fetch は 3 秒)。指せなくても fetch は
+   済んでいるので準備は止めない。"
   (<- first CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
   (if (= first.code 0)
       FetchState.PRESENT
@@ -457,7 +465,8 @@
           (<- (git #("-C" mirror "fetch" "--quiet" "origin" commit) env))
           (<- by-commit CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
           (if (= by-commit.code 0)
-              FetchState.FETCHED
+              (do (<- (git #("-C" mirror "update-ref" FETCHED-REF commit) None))
+                  FetchState.FETCHED)
               (do (<- all-heads CommandResult (git #("-C" mirror "fetch" "--quiet" "origin" "+refs/heads/*:refs/heads/*") env))
                   (<- again CommandResult (git #("-C" mirror "cat-file" "-e" (+ commit "^{commit}")) None))
                   (<- detail str (tail-of all-heads))
