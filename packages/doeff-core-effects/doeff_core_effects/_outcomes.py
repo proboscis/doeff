@@ -55,7 +55,10 @@ if TYPE_CHECKING:
     from doeff import DoExpr, EffectGenerator, Program
 
     # What can be passed to ``<-``: a Program, an effect, or a Result / Maybe value.
-    Bindable: TypeAlias = DoExpr | Program[Any, Any] | EffectBase[Any] | Ok[Any] | Err[Any] | Some[Any] | _NothingType
+    Openable: TypeAlias = DoExpr | Program[Any, Any] | EffectBase[Any] | Ok[Any] | Err[Any] | Some[Any] | _NothingType
+    # What a boundary handler accepts: the above, or the DirectBind the macro absent-as wraps such a body in (DirectBind is defined in the
+    # latter half of this module, so the alias is named as a string). The body inside the DirectBind keeps being checked against Openable.
+    Bindable: TypeAlias = "Openable | DirectBind[Openable]"
 else:
 
     def deprecated(message: str) -> Callable[[Callable[..., object]], Callable[..., object]]:
@@ -64,6 +67,8 @@ else:
 
 
 _D = TypeVar("_D")
+_X = TypeVar("_X")
+_X_co = TypeVar("_X_co", covariant=True)
 
 
 # ---------------------------------------------------------------------------
@@ -182,14 +187,15 @@ class AbsentAsToken:
 
 
 @dataclass(frozen=True)
-class DirectBind:
+class DirectBind(Generic[_X_co]):
     """The ``<-`` / ``!`` expression written directly inside absent-as's literal text (wrapped by the macro absent-as).
 
     ``open_bind`` opens this and marks the ``Absent`` it emits -- absent-as resumes only that Absent with the default value.
+    The type parameter is the wrapped expression's type, so a boundary handler can still check what is inside (``Bindable``).
     """
 
     token: AbsentAsToken
-    expr: object
+    expr: _X_co
 
 
 @dataclass(frozen=True)
@@ -594,7 +600,7 @@ def new_absent_token() -> AbsentAsToken:
     return AbsentAsToken()
 
 
-def direct_bind(token: AbsentAsToken, expr: object) -> DirectBind:
+def direct_bind(token: AbsentAsToken, expr: _X) -> DirectBind[_X]:
     """Wrap the expression of one binding inside absent-as's literal text with the marker (called by the macro absent-as's expansion)."""
     return DirectBind(token, expr)
 
