@@ -72,27 +72,35 @@
    "compileJobs" compile-jobs})
 
 
-(defk lowered-priority-argv [platform]
-  {:pre [(: platform str)] :post [(: % tuple)]}
-  "準備の process の CPU の優先度を下げる命令の頭を組むため(platform = この worker の platform)。Linux は SCHED_IDLE(chrt --idle)と
-   nice 10、他(macOS の worker — chrt が無い)は nice 10 だけ。SCHED_IDLE は同じ Pod の service(SCHED_OTHER・nice 0)が起きた時に
-   必ず譲り、重みも 3 なので、焼きを何本並べても service の CPU の取り分が並べた本数で決まらない(
-   nice 10 の焼き 31 本・20 core の窓で service の和の CPU の待ちが 59%、前後の窓は 15〜16%)。"
-  (if (.startswith platform "linux")
-      #("chrt" "--idle" "0" "nice" "-n" "10")
-      #("nice" "-n" "10")))
+(defk lowered-priority-argv [platform [service False]]
+  {:pre [(: platform str) (: service bool)] :post [(: % tuple)]}
+  "準備の process の CPU の優先度を下げる命令の頭を組むため(platform = この worker の platform・service = 常駐の job の版の切り替えの
+   準備か — PrepareEnv の service)。Linux は SCHED_IDLE(chrt --idle)と nice 10、他(macOS の worker — chrt が無い)は nice 10 だけ。
+   SCHED_IDLE は同じ Pod の service(SCHED_OTHER・nice 0)が起きた時に必ず譲り、重みも 3 なので、焼きを何本並べても service の CPU の
+   取り分が並べた本数で決まらない(nice 10 の焼き 31 本・20 core の窓で service の和の CPU の待ちが 59%、前後の窓は 15〜16%)。
+   service の版の切り替えの準備は nice 10 だけにする(SCHED_IDLE にしない)。cgroup の CPU の重みは、その cgroup の中の走れる task の
+   重みの和で core ごとに分けられるので、重み 3 の task しか居ない core では、service の兄弟の cgroup の重みもほぼ 0 になり、ほかの
+   cgroup の普通の task に毎回負ける — 置いた cgroup の取り分が届かない(load1 50〜150・36 core の機体の本番の準備 3 本で、
+   run queue の待ちが CPU の使いとほぼ同じ 20〜35 秒)。nice 10(重み 110)は、同じ core の動いている service(重み 1024)には
+   今も譲る。"
+  (cond
+    (not (.startswith platform "linux")) #("nice" "-n" "10")
+    service #("nice" "-n" "10")
+    True #("chrt" "--idle" "0" "nice" "-n" "10")))
 
 
 (defk prepare-argv [hy-command tool request result state shared uv-cache repo-keys code-prepare uv progress platform memory
-                    [tree-mount ""] [tree-unmount ""]]
+                    [tree-mount ""] [tree-unmount ""] [service False]]
   {:pre [(: hy-command str) (: tool str) (: request str) (: result str) (: state str) (: shared str) (: uv-cache str) (: repo-keys str)
-         (: code-prepare str) (: uv str) (: progress str) (: platform str) (: memory str) (: tree-mount str) (: tree-unmount str)]
+         (: code-prepare str) (: uv str) (: progress str) (: platform str) (: memory str) (: tree-mount str) (: tree-unmount str)
+         (: service bool)]
    :post [(: % tuple)]}
   "準備の process の起こし方(優先度を下げる — 走っている手番と service の CPU を奪わない・lowered-priority-argv)を組むため。
    state = 世代ごとの state の dir・shared = 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)・platform = この worker の
    platform・memory = worker が組みの間の層の読みを置く file(準備の process が組みの山に読む — env_store の sample-layers)・
-   tree-mount と tree-unmount = repo の木を読み専用の mount で置く・外す命令の雛形(空 = 置かない — env_translation の頭の註)。"
-  (<- lowered tuple (lowered-priority-argv platform))
+   tree-mount と tree-unmount = repo の木を読み専用の mount で置く・外す命令の雛形(空 = 置かない — env_translation の頭の註)・
+   service = 常駐の job の版の切り替えの準備か(優先度の下げ方を選ぶ — lowered-priority-argv)。"
+  (<- lowered tuple (lowered-priority-argv platform service))
   #(#* lowered hy-command "-m" tool "--request" request "--result" result "--state" state "--shared" shared "--uv-cache" uv-cache
     "--repo-keys" repo-keys
     "--code-prepare" code-prepare "--uv" uv "--progress" progress "--tree-mount" tree-mount "--tree-unmount" tree-unmount

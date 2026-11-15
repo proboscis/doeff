@@ -275,6 +275,9 @@
       (= head "place") (assert (= (cut argv 4) #("/bin/sh" "-c" PLACE-SCRIPT services)) argv)
       (= head "group") (assert (= (cut argv 3) #("/bin/sh" "-c" GROUP-SCRIPT)) argv)
       True (assert (!= (get argv 0) "/bin/sh") argv))
+    ;; service の root の準備は SCHED_IDLE にしない(nice 10 だけ — 重み 3 の task だけの core では置いた cgroup の取り分が届かず、
+    ;; run queue の待ちが CPU の使いと同じだけ掛かった・2026-11-15)。
+    (assert (not-in "chrt" argv) argv)
     (assert (in ENV-TOOL argv) argv)))
 
 

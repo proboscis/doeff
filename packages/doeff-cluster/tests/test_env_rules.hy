@@ -130,6 +130,9 @@
   ;; chrt の無い機体(macOS の worker)は nice 10 だけ。
   (<- mac-argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "darwin-arm64" "/m"))
   (assert (= (cut mac-argv 0 6) #("nice" "-n" "10" "/hy" "-m" "tool")) mac-argv)
+  ;; service の版の切り替えの準備は SCHED_IDLE にせず nice 10 だけ(重み 3 の task だけの core では置いた cgroup の取り分が届かない)。
+  (<- service-argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "linux-x86_64" "/m" :service True))
+  (assert (= (cut service-argv 0 6) #("nice" "-n" "10" "/hy" "-m" "tool")) service-argv)
   ;; worker の uv の cache の dir(main の --uv-cache)は準備の process へそのまま渡る(state の下に固定しない)。
   (assert (in #("--uv-cache" "/uc") (zip (cut argv 0 -1) (cut argv 1 None))) argv)
   ;; 世代ごとの state と、世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)は別の引数で渡る。

@@ -136,8 +136,8 @@
    (先の組みの入口はこの層の memory で判じる — core/env_upkeep の warm-refusal。None = 層が無い機体・container の読みで判じる)・
    service-procs = 常駐の job(service)の root の準備(PrepareEnv の service)を置く service の兄弟の cgroup の cgroup.procs(準備の層が無い
    機体だけ使う・None = 置き直さない)。jobs の層は task の CPU の枠(機体の配備の cpu.max と cpu.idle)の下に在り、service の版の切り替えの
-   準備(約 1 分の CPU)が task と枠を分け合うと 6 分を越えた。準備の process の CPU の優先度は今までどおり下げる(lowered-priority-argv —
-   service の兄弟の中でも、動いている service に必ず譲る)。"
+   準備(約 1 分の CPU)が task と枠を分け合うと 6 分を越えた。service の root の準備の process は nice 10 で起こす(SCHED_IDLE に
+   しない — lowered-priority-argv。service の兄弟の中で、同じ core の動いている service には nice の重みで譲る)。"
   (#^ str state)
   (#^ str hy-command)
   (#^ str platform)
@@ -350,7 +350,7 @@
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
                                settings.uv-cache settings.repo-keys
                                settings.code-prepare settings.uv progress settings.platform memory
-                               :tree-mount settings.tree-mount :tree-unmount settings.tree-unmount))
+                               :tree-mount settings.tree-mount :tree-unmount settings.tree-unmount :service service))
   ;; 準備の層が在れば、準備の process(と、それが起こす git・uv・焼く道具の子)を層の下のこの準備の子へ置く(EnvSettings の prepare-procs の
   ;; 註・core/job_cgroup の頭の註の「準備ごとの子」— OOM kill は木を丸ごと止め、終わりに closed-group が残りを止める)。
   (var placed argv)
