@@ -6,7 +6,9 @@ env_marker_model の ROOT-PYCACHE)に置く(木を読み専用で置けるよう
 file から sys.pycache_prefix を置く。process の環境変数(PYTHONPYCACHEPREFIX)では運ばない — 環境変数は起こし口ごとに届いたり届かなかったり
 する(-I で起こす子は読まない・環境を組み直す子には無い・別の root の子へそのまま継がれる — 2026-11-15 の本番)が、root の venv の python は起こし方に
 関わらず site-packages の .pth を読む(-I でも。読まないのは -S だけ)。継いだ PYTHONPYCACHEPREFIX と -X pycache_prefix は、この venv の
-置き場で上書きする(file が空・無い venv では置き場を使わない — 別の root の置き場へ書かない)。
+置き場で上書きする(file が空・無い venv では置き場を使わない — 別の root の置き場へ書かない)。この module の import の前に .pth の
+行が継いだ置き場を外す(この module と、それが import する標準 library の .pyc も継いだ置き場へ書かない — env_prepare_model の
+PYCACHE-SCOPE-LINE)。
 
 ただ Python の prefix は process の全部の source に効くので、そのままでは標準 library(sys.base_prefix の下)と venv に入れた package
 (sys.prefix の下 — uv sync の --compile-bytecode が隣の __pycache__ に焼いた物)の .pyc も置き場で探し、見つからずに起動のたびに compile
