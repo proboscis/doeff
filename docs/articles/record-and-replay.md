@@ -62,6 +62,8 @@ def github(effect: HttpRequest, k):  # every request that reaches it counts as s
 
 ## A recorder performs the effect again
 
+[![The recorder, step by step: latest_releases yields an HttpRequest and pauses; record yields the same request on to github, which counts it as sent and answers with the body; record keeps the method and URL with the body in the tape, leaving the headers out, and resumes k with the same body](../assets/figures/record-performs-outward.gif)](../assets/figures/record-performs-outward.gif)
+
 A recorder sits between the program and the handler that answers:
 
 ~~~python
@@ -78,21 +80,11 @@ def recording(tape: dict):  # perform each request outward and keep its answer
 
 Inside a handler, `yield effect` performs the effect it received once more, and the next handler out answers it. So `record` sees the request go out and the answer come back. It keeps the pair, then resumes `k` with the same answer. `latest_releases` gets what it would have got with no recorder in between, and nothing in it says it is being recorded.
 
-```mermaid
-sequenceDiagram
-    participant program as latest_releases
-    participant record
-    participant github
-    program->>record: yield HttpRequest(GET .../acme/server/...), paused as k
-    record->>github: yield HttpRequest(GET .../acme/server/...)
-    github->>record: the body, {"tag_name": "v2.4.1"}
-    Note over record: tape[("GET", url)] = answer
-    record->>program: Resume(k, answer)
-```
-
 The tape keys each request by its method and URL, not by the request itself. The request holds a dict, its headers, so it has no hash and cannot be a dict key, and two requests that differ only in the token are not equal. So the recorder has to choose what makes two requests the same, and this one leaves the headers out. That choice comes back below, when the token in the header matters.
 
 ## A player answers from the tape
+
+[![The player, step by step: with nothing outside it, replay answers both requests from the tape and nothing is sent; for acme/docs, which the tape does not have, it throws a LookupError into k, which is raised at the program's yield and caught by the try in reported](../assets/figures/replay-throws-at-yield.gif)](../assets/figures/replay-throws-at-yield.gif)
 
 ~~~python
 # releases.py (excerpt)
@@ -211,6 +203,8 @@ The second run builds a new stack with a new storage handler; only the file is t
 
 ## What makes two requests the same
 
+[![The key, step by step: the same request with the token secret and with ci-dummy gets two different default keys, so the replay misses and offline raises LookupError; method_and_url leaves the headers out, both get the same key and the tags come back; the token is not in the file, but the bodies are kept whole](../assets/figures/what-the-key-keeps.gif)](../assets/figures/what-the-key-keeps.gif)
+
 Now replay with another token, as CI would, where the real one is not available:
 
 ~~~python
@@ -287,6 +281,8 @@ The first run goes over HTTP, and the server answers twice. `urlopen` blocks, so
 You may know this from VCR.py, which records cassettes by patching HTTP client libraries such as requests and httpx, or from `unittest.mock`, where a test swaps the client for a mock by name. Both work at the client: VCR.py knows the libraries it patches, and a mock knows the name it replaces. The recorder here works on effects. It does not know which client sends the request, and the same handler records any effect a program yields: [examples/testing_without_mocks/record_replay.py](https://github.com/proboscis/doeff/blob/main/examples/testing_without_mocks/record_replay.py) records a language model's answers, and the docs chapter [Why Effects?](https://github.com/proboscis/doeff/blob/main/docs/20-why-effects-over-di.md#6-keep-the-answers-record-once-replay) records `Chat` and `Draw` with one recorder.
 
 ## Limits
+
+[![The five limits, one per step, on the stack of memo, json_tape and the network: JSON holds text; the default key hashes a pickle; with no storage every request is a miss; POST is recorded too; a replay shows the answers kept, not the API of today](../assets/figures/five-limits.gif)](../assets/figures/five-limits.gif)
 
 - `json_tape` keeps what JSON can hold, so the answers here are bodies, as strings. An effect answered with an object, such as a response with a status and headers, needs a storage handler that encodes it. `json_tape` also reads the whole file for every effect and writes it for every new answer: fine for the tape of a test, slow for a large cache.
 - The default key hashes the pickled request, and a pickle's bytes change with Python: with doeff built from main, a key made on Python 3.13 is not found on 3.14, whose pickle writes a newer protocol by default. Across doeff versions it is not promised either. A key of your own, such as `method_and_url`, is a plain string you control.

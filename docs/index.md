@@ -158,6 +158,7 @@ components are listed separately under
 - **[Algebraic effects for Python](articles/algebraic-effects-in-python.md)** - Handlers stacked around one unchanged card-game battle: a scripted player, bots, record and replay, a hundred fights, statistics and tests, with figures you click through
 - **[Yield and async](articles/yield-and-async.md)** - `await` and `yield` side by side: where the request of a paused coroutine goes, who resumes the paused code, and how to reach async libraries through `Await`, with figures you click through
 - **[Time is an effect](articles/time-and-clocks.md)** - One trading strategy under a backtest, a risk stop, a sweep, a replay, a virtual clock, the wall clock and a live exchange: waiting and the time as effects, and a clock as a handler around the program, with figures you click through
+- **[Record and replay](articles/record-and-replay.md)** - One function that asks the GitHub API for releases, under a handler that records each request and its answer, a player that answers from the tape and throws into `k` what it lacks, and a JSON file that keeps the tape for CI, with figures you click through
 
 ## Pages That Need Other Components
 

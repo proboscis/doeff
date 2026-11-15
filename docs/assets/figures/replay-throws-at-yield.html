@@ -1,0 +1,53 @@
+<!-- The section "A player answers from the tape" of docs/articles/record-and-replay.md, one step per click: replay answers from the tape without going out, and throws LookupError into k for a request it does not have.
+     Written by tools/docs_site/figures_measure/record_and_replay_figures.py; the orders are what record_and_replay.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels is-rings-and-code">
+    <div class="sf-rings">
+      <div class="sf-edge" data-anchor="outside"><span>out here: no handler of <code>HttpRequest</code> · sent: <span data-slot="sent"></span></span></div>
+      <div class="sf-ring" data-anchor="r-replay"><span class="sf-ring-name" data-anchor="n-replay">replay</span><div class="sf-ring-room" data-anchor="m-replay"></div><div class="sf-try" data-anchor="try"><span class="sf-try-name" data-anchor="try-name">reported · try: … except LookupError</span><div class="sf-core" data-anchor="core"><div class="sf-core-head"><span>latest_releases(REPOS, "secret")</span><span>the program</span></div><div class="sf-vars"><span>tags = <span data-slot="tags"></span></span></div><div class="sf-code"><div class="sf-line"><span class="kw">@do</span></div><div class="sf-line"><span class="kw">def</span> <span class="fn">latest_releases</span>(repos: list[str], token: str, api: str = GITHUB):</div><div class="sf-line">    tags = {}</div><div class="sf-line">    <span class="kw">for</span> repo <span class="kw">in</span> repos:</div><div class="sf-line" data-anchor="s-yield">        body = <span class="kw">yield</span> HttpRequest(</div><div class="sf-line">            <span class="st">"GET"</span>,</div><div class="sf-line">            <span class="st">f"{api}/repos/{repo}/releases/latest"</span>,</div><div class="sf-line" data-anchor="s-headers">            headers={<span class="st">"Authorization"</span>: <span class="st">f"Bearer {token}"</span>},</div><div class="sf-line">        )</div><div class="sf-line" data-anchor="s-tag">        tags[repo] = json.loads(body)[<span class="st">"tag_name"</span>]</div><div class="sf-line" data-anchor="s-return">    <span class="kw">return</span> tags</div></div></div></div></div>
+    </div>
+    <section class="sf-panel is-handler is-wrap" data-panel="handlers">
+      <div class="sf-head"><span>the player</span><span>from releases.py</span></div>
+      <div class="sf-code">
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">replaying</span>(tape: dict):</div>
+        <div class="sf-line">    <span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="p-def">    <span class="kw">def</span> <span class="fn">replay</span>(effect: HttpRequest, k):</div>
+        <div class="sf-line" data-anchor="p-key">        key = (effect.method, effect.url)</div>
+        <div class="sf-line" data-anchor="p-if">        <span class="kw">if</span> key <span class="kw">not in</span> tape:</div>
+        <div class="sf-line" data-anchor="p-error">            error = LookupError(<span class="st">f"not recorded: {effect.method} {effect.url}"</span>)</div>
+        <div class="sf-line" data-anchor="p-throw">            <span class="kw">return</span> (<span class="kw">yield</span> ResumeThrow(k, error))  <span class="co"># raised at the program's yield</span></div>
+        <div class="sf-line" data-anchor="p-resume">        <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, tape[key]))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line"><span class="kw">@do</span></div>
+        <div class="sf-line" data-anchor="t-def"><span class="kw">def</span> <span class="fn">reported</span>(program):</div>
+        <div class="sf-line" data-anchor="t-try">    <span class="kw">try</span>:</div>
+        <div class="sf-line" data-anchor="t-yield">        <span class="kw">return</span> (<span class="kw">yield</span> program)</div>
+        <div class="sf-line" data-anchor="t-except">    <span class="kw">except</span> LookupError <span class="kw">as</span> error:</div>
+        <div class="sf-line" data-anchor="t-return">        <span class="kw">return</span> <span class="st">f"LookupError: {error}"</span></div>
+      </div>
+      <div class="sf-tape" data-anchor="tape"><span>tape: what record kept</span><div class="sf-tape-row" data-anchor="tape-1"><code data-slot="tape-1"></code></div><div class="sf-tape-row" data-anchor="tape-2"><code data-slot="tape-2"></code></div></div>
+      <div class="sf-screen" data-anchor="asked"><span>the key</span><code data-slot="key"></code></div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="req">HttpRequest(GET .../acme/server/...)</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of latest_releases</small></div>
+  <div class="sf-token is-value" data-token="body">{"tag_name": "v2.4.1"}</div>
+  <div class="sf-token is-effect" data-token="req2">HttpRequest(GET .../acme/client/...)</div>
+  <div class="sf-token is-value" data-token="body2">{"tag_name": "v1.9.0"}</div>
+  <div class="sf-token is-effect" data-token="req3">HttpRequest(GET .../acme/docs/...)</div>
+  <div class="sf-token is-k" data-token="k3">k <small>the rest of latest_releases</small></div>
+  <div class="sf-token is-fail" data-token="error">LookupError</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": ["outside"], "marks": {"try": "is-off"}, "values": {"call": "run(replaying(tape)(latest_releases(REPOS, \"secret\")))", "result": "", "tags": "{}", "sent": "0", "tape-1": "(\"GET\", \".../acme/server/...\") → {\"tag_name\": \"v2.4.1\"}", "tape-2": "(\"GET\", \".../acme/client/...\") → {\"tag_name\": \"v1.9.0\"}", "key": ""}}'>Only the player is around the program. Nothing outside it answers <code>HttpRequest</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["s-yield", "p-def", "p-key", "p-if", "tape-1"], "marks": {"try": "is-off", "m-replay": "is-on", "asked": "is-on"}, "values": {"key": "(\"GET\", \".../acme/server/...\")"}, "tokens": {"req": {"from": {"at": "s-yield", "place": "end"}, "at": "n-replay", "place": "end"}, "k": {"from": {"at": "s-yield", "place": "end"}, "at": "m-replay", "delay": 0.3}}}'><code>replay</code> makes the key and finds it in the tape.</li>
+  <li data-state='{"active": "handlers", "now": ["p-resume", "s-yield", "s-tag", "outside"], "marks": {"try": "is-off", "asked": "is-on"}, "values": {"tags": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;}"}, "tokens": {"body": {"from": {"at": "n-replay", "place": "end"}, "at": "s-yield", "place": "end", "merge": true}, "k": {"from": "m-replay", "at": "s-yield", "place": "end", "merge": true, "delay": 0.3}}}'><code>replay</code> resumes that <code>k</code> with the recorded body. Nothing is sent.</li>
+  <li data-state='{"active": "handlers", "now": ["p-resume", "tape-2", "outside"], "marks": {"try": "is-off", "asked": "is-on"}, "values": {"key": "(\"GET\", \".../acme/client/...\")", "tags": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;, &#39;acme/client&#39;: &#39;v1.9.0&#39;}", "result": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;, &#39;acme/client&#39;: &#39;v1.9.0&#39;}"}, "tokens": {"req2": {"from": {"at": "s-yield", "place": "end"}, "at": "n-replay", "place": "end"}, "body2": {"from": {"at": "n-replay", "place": "end"}, "at": "s-yield", "place": "end", "merge": true, "delay": 1.5}}}'>Both tags come back, and <code>sent</code> stays at 0.</li>
+  <li data-state='{"active": "handlers", "now": ["s-yield", "p-key", "p-if"], "marks": {"try": "is-new", "m-replay": "is-on", "asked": "is-on is-fail"}, "values": {"call": "run(replaying(tape)(reported(latest_releases([\"acme/docs\"], \"secret\"))))", "result": "", "tags": "{}", "key": "(\"GET\", \".../acme/docs/...\")"}, "tokens": {"req3": {"from": {"at": "s-yield", "place": "end"}, "at": "n-replay", "place": "end"}, "k3": {"from": {"at": "s-yield", "place": "end"}, "at": "m-replay", "delay": 0.3}}}'>A new run asks for <code>acme/docs</code>. The tape has no row for it.</li>
+  <li data-state='{"active": "handlers", "now": ["p-error", "p-throw"], "marks": {"asked": "is-on is-fail", "s-yield": "is-fail"}, "tokens": {"error": {"from": {"at": "n-replay", "place": "end"}, "at": "s-yield", "place": "end"}, "k3": {"from": "m-replay", "at": "s-yield", "place": "end", "merge": true, "delay": 0.3}}}'><code>replay</code> throws a <code>LookupError</code> into <code>k</code>. It is raised at the program's <code>yield</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["t-except", "t-return", "try-name"], "marks": {"s-yield": "is-fail"}, "values": {"result": "LookupError: not recorded: GET https://api.github.com/repos/acme/docs/releases/latest"}, "tokens": {"error": {"from": {"at": "s-yield", "place": "end"}, "at": "try-name", "place": "end", "merge": true}}}'>It travels up like any exception, to the <code>try</code> in <code>reported</code>.</li>
+</ol>

@@ -1,0 +1,46 @@
+<!-- The section "A recorder performs the effect again" of docs/articles/record-and-replay.md, one step per click: record yields each request on to github, keeps the answer in the tape and resumes k with it.
+     Written by tools/docs_site/figures_measure/record_and_replay_figures.py; the orders are what record_and_replay.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels is-rings-and-code">
+    <div class="sf-rings">
+      <div class="sf-ring" data-anchor="r-github"><span class="sf-ring-name" data-anchor="n-github">github · sent: <span data-slot="sent"></span></span><div class="sf-ring-room" data-anchor="m-github"></div><div class="sf-ring" data-anchor="r-record"><span class="sf-ring-name" data-anchor="n-record">record</span><div class="sf-ring-room" data-anchor="m-record"></div><div class="sf-core" data-anchor="core"><div class="sf-core-head"><span>latest_releases(REPOS, "secret")</span><span>the program</span></div><div class="sf-vars"><span>tags = <span data-slot="tags"></span></span></div><div class="sf-code"><div class="sf-line"><span class="kw">@do</span></div><div class="sf-line"><span class="kw">def</span> <span class="fn">latest_releases</span>(repos: list[str], token: str, api: str = GITHUB):</div><div class="sf-line">    tags = {}</div><div class="sf-line">    <span class="kw">for</span> repo <span class="kw">in</span> repos:</div><div class="sf-line" data-anchor="s-yield">        body = <span class="kw">yield</span> HttpRequest(</div><div class="sf-line">            <span class="st">"GET"</span>,</div><div class="sf-line">            <span class="st">f"{api}/repos/{repo}/releases/latest"</span>,</div><div class="sf-line" data-anchor="s-headers">            headers={<span class="st">"Authorization"</span>: <span class="st">f"Bearer {token}"</span>},</div><div class="sf-line">        )</div><div class="sf-line" data-anchor="s-tag">        tags[repo] = json.loads(body)[<span class="st">"tag_name"</span>]</div><div class="sf-line" data-anchor="s-return">    <span class="kw">return</span> tags</div></div></div></div></div>
+    </div>
+    <section class="sf-panel is-handler is-wrap" data-panel="handlers">
+      <div class="sf-head"><span>the handlers</span><span>from releases.py</span></div>
+      <div class="sf-code">
+        <div class="sf-line"><span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="g-def"><span class="kw">def</span> <span class="fn">github</span>(effect: HttpRequest, k):</div>
+        <div class="sf-line" data-anchor="g-sent">    sent[effect.url] += 1</div>
+        <div class="sf-line">    repo = effect.url.removeprefix(<span class="st">f"{GITHUB}/repos/"</span>).removesuffix(<span class="st">"/releases/latest"</span>)</div>
+        <div class="sf-line" data-anchor="g-resume">    <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, json.dumps({<span class="st">"tag_name"</span>: TAGS[repo]})))</div>
+        <div class="sf-line"></div>
+        <div class="sf-line"><span class="kw">def</span> <span class="fn">recording</span>(tape: dict):</div>
+        <div class="sf-line">    <span class="kw">@handler</span></div>
+        <div class="sf-line" data-anchor="r-def">    <span class="kw">def</span> <span class="fn">record</span>(effect: HttpRequest, k):</div>
+        <div class="sf-line" data-anchor="r-yield">        answer = <span class="kw">yield</span> effect  <span class="co"># the next handler out answers</span></div>
+        <div class="sf-line" data-anchor="r-tape">        tape[(effect.method, effect.url)] = answer</div>
+        <div class="sf-line" data-anchor="r-resume">        <span class="kw">return</span> (<span class="kw">yield</span> Resume(k, answer))</div>
+      </div>
+      <div class="sf-tape" data-anchor="tape"><span>tape: the key → the answer</span><div class="sf-tape-row" data-anchor="tape-1"><code data-slot="tape-1"></code></div><div class="sf-tape-row" data-anchor="tape-2"><code data-slot="tape-2"></code></div></div>
+      <div class="sf-screen" data-anchor="left-out"><span>not in the key</span><code>headers={"Authorization": "Bearer secret"}</code></div>
+    </section>
+  </div>
+  <div class="sf-token is-effect" data-token="req">HttpRequest(GET .../acme/server/...)</div>
+  <div class="sf-token is-k" data-token="k">k <small>the rest of latest_releases</small></div>
+  <div class="sf-token is-value" data-token="body">{"tag_name": "v2.4.1"}</div>
+  <div class="sf-token is-effect" data-token="req2">HttpRequest(GET .../acme/client/...)</div>
+  <div class="sf-token is-value" data-token="body2">{"tag_name": "v1.9.0"}</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": ["s-yield"], "marks": {"m-record": "is-on"}, "values": {"call": "run(github(recording(tape)(latest_releases(REPOS, \"secret\"))))", "result": "", "tags": "{}", "sent": "0", "tape-1": "", "tape-2": ""}, "tokens": {"req": {"from": {"at": "s-yield", "place": "end"}, "at": "n-record", "place": "end"}, "k": {"from": {"at": "s-yield", "place": "end"}, "at": "m-record", "delay": 0.3}}}'><code>latest_releases</code> yields a request and pauses. <code>record</code> gets it with <code>k</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["r-def", "r-yield"], "marks": {"m-record": "is-on"}, "tokens": {"req": {"from": {"at": "n-record", "place": "end"}, "at": "n-github", "place": "end"}, "k": {"at": "m-record"}}}'><code>record</code> yields the same request again, so it goes on out to <code>github</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["g-def", "g-sent", "g-resume", "r-yield"], "marks": {"m-record": "is-on"}, "values": {"sent": "1"}, "tokens": {"body": {"from": {"at": "n-github", "place": "end"}, "at": "n-record", "place": "end"}, "k": {"at": "m-record"}}}'><code>github</code> counts it as sent and answers with the body, back to <code>record</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["r-tape", "tape-1"], "marks": {"m-record": "is-on"}, "values": {"tape-1": "(\"GET\", \".../acme/server/...\") → {\"tag_name\": \"v2.4.1\"}"}, "tokens": {"body": {"at": "n-record", "place": "end"}, "k": {"at": "m-record"}}}'><code>record</code> keeps the pair: the method and URL as the key, the body as the answer.</li>
+  <li data-state='{"active": "handlers", "now": ["r-resume", "s-yield", "s-tag"], "values": {"tags": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;}"}, "tokens": {"body": {"from": {"at": "n-record", "place": "end"}, "at": "s-yield", "place": "end", "merge": true}, "k": {"from": "m-record", "at": "s-yield", "place": "end", "merge": true, "delay": 0.3}}}'><code>record</code> resumes <code>k</code> with the same body. That <code>k</code> is now used.</li>
+  <li data-state='{"active": "handlers", "now": ["s-yield", "r-yield", "r-tape", "tape-2"], "values": {"sent": "2", "tape-2": "(\"GET\", \".../acme/client/...\") → {\"tag_name\": \"v1.9.0\"}", "tags": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;, &#39;acme/client&#39;: &#39;v1.9.0&#39;}", "result": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;, &#39;acme/client&#39;: &#39;v1.9.0&#39;}"}, "tokens": {"req2": {"from": {"at": "s-yield", "place": "end"}, "via": [{"at": "n-record", "place": "end"}], "at": "n-github", "place": "end"}, "body2": {"from": {"at": "n-github", "place": "end"}, "via": [{"at": "n-record", "place": "end"}], "at": "s-yield", "place": "end", "merge": true, "delay": 2.1}}}'>The second request goes the same way: two rows in the tape, <code>sent: 2</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["s-headers", "r-tape"], "marks": {"left-out": "is-on is-dead"}}'>The headers, and the token in them, are left out of the key.</li>
+</ol>

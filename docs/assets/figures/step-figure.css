@@ -292,3 +292,39 @@
   .sf-chip, .sf-core { transition: none; }
   .sf-chip.is-new { animation: none; }
 }
+
+/* The figures of docs/articles/record-and-replay.md (record-performs-outward, replay-throws-at-yield, what-the-key-keeps, five-limits). */
+/* The tape and the file: one row per request, the key and the answer kept for it. */
+.sf-tape { margin-top: .45rem; padding: .3rem .45rem; border: 1px solid var(--md-default-fg-color--lighter); border-radius: .25rem; background: var(--md-code-bg-color); font-size: .56rem; }
+.sf-tape > span { display: block; color: var(--md-default-fg-color--light); }
+.sf-tape-row { min-height: 1.3rem; margin-top: .2rem; padding: .05rem .3rem; border: 1px dashed var(--md-default-fg-color--lightest); border-radius: .15rem; transition: background .3s; }
+.sf-tape-row code { padding: 0; background: none; font-size: 1em; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sf-tape-row.is-now, .sf-tape.is-now, .sf-edge.is-now, .sf-try-name.is-now, .sf-ring-name.is-now, .sf-core.is-now { background: var(--sf-now); }
+.sf-tape [data-slot].is-changed { animation: sf-flash .9s ease-out; }
+/* A caller's try around the program (reported): drawn dashed, since it is code of the caller and not a handler. */
+.sf-try { position: relative; padding: 1.25rem .45rem .45rem; border: 2px dashed var(--md-default-fg-color--lighter); border-radius: .4rem; }
+.sf-try-name { position: absolute; top: .2rem; left: .5rem; right: .5rem; font-size: .56rem; font-weight: 700; line-height: 1rem; color: var(--md-default-fg-color--light); border-radius: .1rem; }
+.sf-try.is-off { padding: 0; border-color: transparent; }
+.sf-try.is-off > .sf-try-name { display: none; }
+.sf-try.is-new { animation: sf-ring-in .9s ease-out; }
+/* What a handler leaves out, struck through (record-performs-outward), and what went wrong (replay-throws-at-yield). */
+.sf-screen.is-dead code { opacity: .55; text-decoration: line-through; }
+.sf-screen.is-fail { border-color: var(--sf-fail); }
+/* Two requests side by side, each with the key it gets (what-the-key-keeps). */
+.sf-panels.is-two-requests { grid-template-columns: 1fr 1fr; align-items: start; margin-bottom: .5rem; }
+@container (max-width: 620px) { .sf-panels.is-two-requests { grid-template-columns: 1fr; } }
+.sf-line.is-off { display: none; }
+.sf-line.is-dead { text-decoration: line-through; }
+.sf-keybox { min-height: 2.4rem; margin-top: .35rem; padding: .15rem .45rem; border: 1px dashed var(--md-default-fg-color--lighter); border-radius: .2rem; font-size: .54rem; visibility: hidden; }
+.sf-keybox.is-on { visibility: visible; }
+.sf-keybox > span { display: block; color: var(--md-default-fg-color--light); }
+.sf-keybox code { padding: 0; background: none; font-size: 1em; overflow-wrap: anywhere; }
+.sf-keybox.is-fail { border-color: var(--sf-fail); }
+.sf-keybox.is-same { border-style: solid; border-color: var(--sf-handler); box-shadow: inset 0 0 0 1.5px var(--sf-handler); }
+.sf-badges { display: flex; flex-wrap: wrap; gap: .3rem; min-height: 1.2rem; margin-top: .3rem; }
+.sf-badge { padding: 0 .45rem; border-radius: .8rem; color: var(--sf-on-token); background: var(--sf-handler); font-weight: 700; visibility: hidden; }
+.sf-badge.is-warn { background: var(--sf-k); }
+.sf-badge.is-on { visibility: visible; }
+@media (prefers-reduced-motion: reduce) {
+  .sf-tape-row, .sf-try.is-new { transition: none; animation: none; }
+}

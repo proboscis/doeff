@@ -1,0 +1,50 @@
+<!-- The section "What makes two requests the same" of docs/articles/record-and-replay.md, one step per click: the default key hashes the token too and misses, and method_and_url leaves the headers out and hits.
+     Written by tools/docs_site/figures_measure/record_and_replay_figures.py; the keys are what record_and_replay.py prints. -->
+<div class="sf-stage">
+  <div class="sf-call">
+    <code data-slot="call"></code>
+    <span class="sf-result is-text" data-anchor="result"><span data-slot="result"></span></span>
+  </div>
+  <div class="sf-panels is-two-requests">
+    <section class="sf-panel is-program is-wrap" data-panel="recorded">
+      <div class="sf-head"><span>recorded with</span><span>token secret</span></div>
+      <div class="sf-code"><div class="sf-line">HttpRequest(</div><div class="sf-line" data-anchor="L-method">    method=<span class="st">"GET"</span>,</div><div class="sf-line" data-anchor="L-url">    url=<span class="st">".../repos/acme/server/releases/latest"</span>,</div><div class="sf-line" data-anchor="L-auth">    headers={<span class="st">"Authorization"</span>: <span class="st">"Bearer secret"</span>},</div><div class="sf-line" data-anchor="L-accept">    <span class="co"># and if it also sent Accept: application/json</span></div><div class="sf-line">)</div></div><div class="sf-keybox" data-anchor="L-key"><span>the key</span><code data-slot="L-key"></code></div>
+    </section>
+    <section class="sf-panel is-program is-wrap" data-panel="replayed">
+      <div class="sf-head"><span>replayed with</span><span>token ci-dummy</span></div>
+      <div class="sf-code"><div class="sf-line">HttpRequest(</div><div class="sf-line" data-anchor="R-method">    method=<span class="st">"GET"</span>,</div><div class="sf-line" data-anchor="R-url">    url=<span class="st">".../repos/acme/server/releases/latest"</span>,</div><div class="sf-line" data-anchor="R-auth">    headers={<span class="st">"Authorization"</span>: <span class="st">"Bearer ci-dummy"</span>},</div><div class="sf-line" data-anchor="R-accept">    <span class="co"># and if it also sent Accept: text/html</span></div><div class="sf-line">)</div></div><div class="sf-keybox" data-anchor="R-key"><span>the key</span><code data-slot="R-key"></code></div>
+    </section>
+  </div>
+  <div class="sf-panels is-rings-and-code">
+    <section class="sf-panel is-handler is-wrap" data-panel="handlers">
+      <div class="sf-head"><span>the key</span><span>from on_disk.py</span></div>
+      <div class="sf-code">
+        <div class="sf-line" data-anchor="c-recorded"><span class="kw">def</span> <span class="fn">recorded</span>(program, tape, network, key=<span class="kw">None</span>):</div>
+        <div class="sf-line" data-anchor="c-memo">    memo = make_memo_rewriter(HttpRequest, key_fn=key) <span class="kw">if</span> key <span class="kw">else</span> make_memo_rewriter(HttpRequest)</div>
+        <div class="sf-line"><span class="co">    # …</span></div>
+        <div class="sf-line"></div>
+        <div class="sf-line" data-anchor="c-mu-def"><span class="kw">def</span> <span class="fn">method_and_url</span>(effect: HttpRequest) -&gt; str:</div>
+        <div class="sf-line" data-anchor="c-mu-return">    <span class="kw">return</span> <span class="st">f"{effect.method} {effect.url}"</span></div>
+      </div>
+    </section>
+    <div>
+      <div class="sf-tape" data-anchor="file"><span>the file: <span data-slot="file"></span></span><div class="sf-tape-row" data-anchor="file-1"><code data-slot="file-1"></code></div><div class="sf-tape-row" data-anchor="file-2"><code data-slot="file-2"></code></div><div class="sf-badges"><span class="sf-badge" data-anchor="no-token">no "secret" in the file</span><span class="sf-badge is-warn" data-anchor="whole">the bodies are kept whole: read them before you commit</span></div></div>
+      <div class="sf-edge" data-anchor="network"><span>the network: <code>offline</code> · a miss raises</span></div>
+    </div>
+  </div>
+  <div class="sf-token is-effect" data-token="lookup">MemoExists(key)</div>
+  <div class="sf-token is-value" data-token="no">False</div>
+  <div class="sf-token is-fail" data-token="error">LookupError</div>
+  <div class="sf-token is-effect" data-token="lookup2">MemoExists(key)</div>
+  <div class="sf-token is-value" data-token="yes">True, then MemoGet</div>
+  <div class="sf-token is-value" data-token="body">{"tag_name": "v2.4.1"}</div>
+</div>
+<ol class="sf-steps">
+  <li data-state='{"now": ["L-auth", "R-auth"], "marks": {"L-accept": "is-off", "R-accept": "is-off"}, "values": {"call": "the request of acme/server, recorded and then replayed", "result": "", "L-key": "", "R-key": "", "file": "", "file-1": "", "file-2": ""}}'>Same method and URL. Only the token in the header differs.</li>
+  <li data-state='{"active": "handlers", "now": ["c-memo", "L-method", "L-url", "L-auth", "R-method", "R-url", "R-auth"], "marks": {"L-accept": "is-off", "R-accept": "is-off", "L-key": "is-on", "R-key": "is-on is-fail"}, "values": {"L-key": "f9af44c4711bb083c04c5bab73e3172247d30d13760c36b1767f693667200aa0", "R-key": "2d0282a4b4a245aaef0d57e83abb418c75c2c928da3bae68ac333ac1595891ca"}}'>The default key hashes every field, the headers too. So the keys differ.</li>
+  <li data-state='{"active": "replayed", "now": ["file"], "marks": {"L-accept": "is-off", "R-accept": "is-off", "L-key": "is-on", "R-key": "is-on is-fail", "network": "is-fail"}, "values": {"file": "releases.json, the default key", "file-1": "f9af44c4711bb083c04c5bab73e3172247d30d13760c36b1767f693667200aa0 → …", "file-2": "8537d5d5f13e846463e90ed80817e294243df28952506b9d7317d25a3d30506e → …", "result": "LookupError: not recorded: GET .../acme/server/releases/latest"}, "tokens": {"lookup": {"from": {"at": "R-key", "place": "end"}, "at": "file", "place": "end"}, "no": {"from": {"at": "file", "place": "end"}, "at": "R-key", "place": "end", "delay": 1.5}, "error": {"from": {"at": "network", "place": "end"}, "at": "R-key", "place": "end", "delay": 3.0}}}'>The replay's key is not in the file, and <code>offline</code> raises <code>LookupError</code>.</li>
+  <li data-state='{"active": "handlers", "now": ["c-mu-def", "c-mu-return", "L-method", "L-url", "R-method", "R-url"], "marks": {"L-accept": "is-off", "R-accept": "is-off", "L-auth": "is-dead", "R-auth": "is-dead", "L-key": "is-on is-same", "R-key": "is-on is-same"}, "values": {"L-key": "GET https://api.github.com/repos/acme/server/releases/latest", "R-key": "GET https://api.github.com/repos/acme/server/releases/latest", "result": "", "file": "keyed.json, method_and_url", "file-1": "GET https://api.github.com/repos/acme/server/releases/latest → {\"tag_name\": \"v2.4.1\"}", "file-2": "GET https://api.github.com/repos/acme/client/releases/latest → {\"tag_name\": \"v1.9.0\"}"}}'><code>method_and_url</code> leaves the headers out, so both get the same key.</li>
+  <li data-state='{"active": "replayed", "now": ["file-1"], "marks": {"L-accept": "is-off", "R-accept": "is-off", "L-auth": "is-dead", "R-auth": "is-dead", "L-key": "is-on is-same", "R-key": "is-on is-same"}, "values": {"result": "{&#39;acme/server&#39;: &#39;v2.4.1&#39;, &#39;acme/client&#39;: &#39;v1.9.0&#39;}"}, "tokens": {"lookup2": {"from": {"at": "R-key", "place": "end"}, "at": "file", "place": "end"}, "yes": {"from": {"at": "file", "place": "end"}, "at": "R-key", "place": "end", "delay": 1.5}, "body": {"from": {"at": "file-1", "place": "end"}, "at": "R-key", "place": "end", "merge": true, "delay": 3.0}}}'>Recorded with <code>secret</code>, replayed with <code>ci-dummy</code>: both tags come back.</li>
+  <li data-state='{"now": ["file-1", "file-2"], "marks": {"L-accept": "is-off", "R-accept": "is-off", "L-auth": "is-dead", "R-auth": "is-dead", "L-key": "is-on is-same", "R-key": "is-on is-same", "no-token": "is-on", "whole": "is-on"}}'>The token is not in the file. The bodies are kept whole: read them before you commit.</li>
+  <li data-state='{"now": ["L-accept", "R-accept", "c-mu-return"], "marks": {"L-auth": "is-dead", "R-auth": "is-dead", "L-key": "is-on is-same", "R-key": "is-on is-same"}, "values": {"result": "one key for both: the HTML request gets the JSON body"}}'>The key cannot tell apart what it leaves out. If answers depend on <code>Accept</code>, put it in.</li>
+</ol>

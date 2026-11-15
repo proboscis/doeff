@@ -28,6 +28,7 @@ PUBLISHED_SUBDIR_PAGES = (
     "articles/algebraic-effects-in-python.md",
     "articles/yield-and-async.md",
     "articles/time-and-clocks.md",
+    "articles/record-and-replay.md",
 )
 LINK = re.compile(r"\]\(([^)#\s]+\.md)(?:#[^)]*)?\)")
 
