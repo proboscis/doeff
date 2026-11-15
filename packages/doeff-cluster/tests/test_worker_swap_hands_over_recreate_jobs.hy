@@ -14,6 +14,13 @@
 ;; D2f の前(doeff L2027 の前): 新しい世代の名乗りと同時に前の世代の keeper が止められ、新しい世代の準備の 8 秒の間 誰も動かさなかった
 ;; (本番 10-11 17:36 JST の node-h で 6 分)。D2k の前: 新しい Pod は最初の返事で Ready になり、振り先が移ってから新しい世代の準備の
 ;; 8 秒の後まで keeper へ届かなかった(本番 10-11 18:44 JST の node-h で 2〜7 分)。
+;;
+;; 同じ Pod の中の入れ替え(keeper が同じ container の中で世代を入れ替える — RollWorker の same-pod): 新しい世代は前の世代と同じ Pod の
+;; IP を名乗り、job をどちらの世代が動かしても振り先の番地は変わらない。求める姿: 新しい世代が起こせると報告した recreate の job は、
+;; 受け渡しの止まり(handover-pending)が解けるのを待たず、前の世代が止めて新しい世代が起こす。筋書きは Ready を報告しない handoff の
+;; service slow を並べ、止まりを解けないままにする(本番で全部の job が同時に揃わない間の代役)。直す前: keeper は前の世代の Pod の
+;; 止まりまで前の世代に残り、止まりは新しい世代が ready になるまで始まらない(2026-11-13 に 41 分・11-15 に 46 分 — 待つ間に宣言し
+;; 直した版の準備が揃いを崩し続けた)。2 つの Pod を並べる入れ替えは今どおり前の世代の Pod の止まりまで残す。
 (require doeff-hy.macros [deftest defk <- val var])
 (require doeff-hy.record [defrecord])
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
@@ -23,7 +30,7 @@
 (import doeff_cluster [PlainText])
 (import doeff_cluster [sim-cluster SimWorker SimProcess ProcessesOf RollWorker DrainGeneration StopElder ReadCoordinator])
 (import tests.fixtures.envs [sim-foundation])
-(import tests.fixtures.working_programs [keeping-hosts])
+(import tests.fixtures.working_programs [keeping-hosts keeping-beside-never-ready])
 
 (val PREPARE-SECONDS 8.0)
 (val W1 (SimWorker :name "w1" :provides (frozenset ["cluster-net"]) :prepare-seconds PREPARE-SECONDS))
@@ -107,3 +114,56 @@
   (assert (< (- fresh.started-ms seen.switched-ms) MAX-GAP-MS) #((- fresh.started-ms seen.switched-ms) seen.switched-ms fresh))
   ;; 旧い Pod の preStop は、前の世代の keeper が止まった後に drained を受けた。
   (assert (>= seen.drained-ms elder.ended-ms) #(seen.drained-ms elder)))
+
+
+;; 同じ Pod の中の入れ替えで、新しい世代を起こしてから keeper が新しい世代で起きるまでの上限(受入の 60 秒 — 準備の 8 秒と検めと、
+;; 前の世代の止めの後に新しい世代が印の外れを受けるまで)。読むのもこの長さの後。
+(val HANDOVER-WINDOW-MS 60000)
+
+
+(defrecord SwapSeen
+  "筋書きが読んだ姿: processes = keeper の process(起きた順)・rolled-ms = 新しい世代を起こした刻・ready = 読んだ刻に coordinator が
+   新しい世代を ready(受け渡しの止まりが解けた)と答えたか。"
+  (#^ (get tuple #(SimProcess ...)) processes)
+  (#^ int rolled-ms)
+  (#^ bool ready))
+
+
+(defk rolled-without-leaving [same-pod]
+  {:pre [(: same-pod bool)] :post [(: % SwapSeen)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き: keeper が動き出した後に w1 の新しい世代を先に起こし(same-pod — 同じ Pod の中か)、前の世代の Pod の止まり(preStop)を
+   回さずに HANDOVER-WINDOW-MS 待って読み、前の世代を止める。"
+  (<- (Delay (+ PREPARE-SECONDS 4.0)))
+  (<- rolled int (now-epoch-ms))
+  (<- elder (| str None) (RollWorker "w1" :same-pod same-pod))
+  (assert (is-not elder None))
+  (<- (Delay (/ HANDOVER-WINDOW-MS 1000)))
+  (<- read (| dict PlainText) (ReadCoordinator "/workers/w1"))
+  (<- processes tuple (ProcessesOf "keeper"))
+  (<- (StopElder "w1" elder))
+  (SwapSeen :processes (tuple (sorted processes :key (fn [p] p.started-ms))) :rolled-ms rolled
+            :ready (and (isinstance read dict) (is (.get read "ready") True))))
+
+
+(deftest test-a-recreate-job-moves-inside-the-same-pod-without-waiting-for-the-handover-to-settle
+  (<- seen SwapSeen (sim-cluster :notice-broker (MemoryBroker) :workers #(W1) (keeping-beside-never-ready sim-foundation)
+                                 (rolled-without-leaving True)))
+  ;; 受け渡しの止まりは解けていない(slow が Ready にならない)— Pod の止まりで渡したのではない。
+  (assert (not seen.ready) seen)
+  (assert (= (len seen.processes) 2) seen.processes)
+  (val elder (get seen.processes 0))
+  (val fresh (get seen.processes 1))
+  ;; 前の世代の keeper は止まり、新しい世代の keeper はその後に、新しい世代を起こしてから上限の内に起きた(2 つは重ならない)。
+  (assert (is-not elder.ended-ms None) elder)
+  (assert (>= fresh.started-ms elder.ended-ms) #(elder fresh))
+  (assert (< (- fresh.started-ms seen.rolled-ms) HANDOVER-WINDOW-MS) #((- fresh.started-ms seen.rolled-ms) fresh))
+  (assert (< (- fresh.started-ms elder.ended-ms) MAX-GAP-MS) #((- fresh.started-ms elder.ended-ms) elder fresh)))
+
+
+(deftest test-a-recreate-job-stays-on-the-elder-pod-while-another-pod-takes-over
+  ;; 2 つの Pod を並べる入れ替え(別の Pod の IP)は今どおり: 前の世代の Pod の止まりが始まるまで keeper は前の世代に残る。
+  (<- seen SwapSeen (sim-cluster :notice-broker (MemoryBroker) :workers #(W1) (keeping-beside-never-ready sim-foundation)
+                                 (rolled-without-leaving False)))
+  (assert (not seen.ready) seen)
+  (assert (= (len seen.processes) 1) seen.processes)
+  (assert (is (. (get seen.processes 0) ended-ms) None) seen.processes))

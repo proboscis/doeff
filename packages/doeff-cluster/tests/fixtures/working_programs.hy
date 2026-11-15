@@ -85,6 +85,19 @@
   (keeper (keeping-program foundation "keep") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "recreate"))
 
 
+;; --- 受け渡しの止まりの解けない世代の入れ替え(test_worker_swap_hands_over_recreate_jobs.hy): keeper と、Ready を報告しない handoff の
+;; service(slow — 新しい世代の process も Ready にならないので、受け渡しの止まり handover-pending が解けず、新しい Pod は NotReady の
+;; まま)。本番で全部の job が同時に揃わない間(宣言し直した版の準備が揃いを崩し続けた)の代役。
+(import tests.fixtures.retirement_programs [retiring-program])
+
+
+(defsystem keeping-beside-never-ready [#^ Callable foundation]
+  "見本の系: recreate で入れ替える keeper と、Ready を報告しない handoff の service slow"
+  (keeper (keeping-program foundation "keep") :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"} :update "recreate")
+  (slow (retiring-program foundation "slow" False 1.0 0.0) :replicas 1 :peak-mib 200 :settle-mib 100 :needs #{"cluster-net"}
+        :update "handoff" :readiness {"windowSeconds" 5}))
+
+
 ;; --- 退く知らせを待たない handoff の service(退いた process の寿命の上限を宣言しない): 止められるまで動き続ける。起きた刻を盤に書く。 ----
 ;; 本番の待ち受けの service の形(待ち受けを開いて動き続け、AwaitRetirement を待たない・宣言の readiness に retiredSeconds が無い)。
 (val SERVE-PREFIX "serve")

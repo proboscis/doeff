@@ -114,9 +114,10 @@
 ;;;                             steps-wall の worker にだけ使える(その worker と子 process の GetTime がずれる)。
 ;;;   DrainWorker 名 [ttl]      本番の preStop と同じ要求(drain_client.drain-request — 今の世代の boot を載せる)で drain を頼む。
 ;;;                             答え = 本番の CoordinatorCall と同じ形 {status body} / {error}。
-;;;   RollWorker 名             動いている worker の新しい世代を、今の世代を止めずに先に起こす(本番の Deployment の RollingUpdate の
+;;;   RollWorker 名 [same-pod]  動いている worker の新しい世代を、今の世代を止めずに先に起こす(本番の Deployment の RollingUpdate の
 ;;;                             maxSurge 1 — 同じ機体に新しい Pod を並べる・AL-D2)。今の世代は退いた世代(elder)として動き続け、
-;;;                             StopElder で止めるまで抜けない。答え = 退いた世代の boot。
+;;;                             StopElder で止めるまで抜けない。same-pod = 新しい世代を同じ Pod の中に起こす(keeper の世代の入れ替え —
+;;;                             前の世代と同じ Pod の IP を名乗る)。答え = 退いた世代の boot。
 ;;;   DrainGeneration 名 boot [ttl]  世代 boot の preStop と同じ要求で drain を頼む(退いた世代の旧い Pod の preStop)。答えは DrainWorker と同じ形。
 ;;;   StopElder 名 boot         退いた世代 boot を優雅に止める(旧い Pod の SIGTERM)。抜けるまで待つ。
 ;;;   CrashGeneration 名 worker boot  job の process のうち、worker の世代 boot(今の世代か退いた世代)の宿の物だけを exit 1 で落とす
@@ -754,8 +755,10 @@
 
 (defeffect RollWorker
   "検の effect: 動いている worker name の新しい世代を、今の世代を止めずに先に起こす(本番の RollingUpdate の maxSurge 1・AL-D2)。今の世代は
-   退いた世代として動き続ける(止めるのは StopElder)。答え = 退いた世代の boot(止まっている・止まり始めた worker には None)。"
-  {:fields [(: name str)]
+   退いた世代として動き続ける(止めるのは StopElder)。same-pod = 新しい世代を同じ Pod の中に起こす(本番の keeper が同じ container の
+   中で世代を入れ替える形 — 新しい世代は前の世代と同じ Pod の IP を名乗る。偽 = 別の Pod の IP)。答え = 退いた世代の boot(止まっている・
+   止まり始めた worker には None)。"
+  {:fields [(: name str) (: same-pod bool False)]
    :answer (| str None)
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -4070,9 +4073,9 @@
             (when (is-not revival None)
               (<- (CompletePromise revival None)))
             (resume True))))
-  (RollWorker [name]
+  (RollWorker [name same-pod]
     ;; 新しい世代を先に起こす(AL-D2): 今の世代の真実を退いた世代の鍵へ移し、名には新しい世代の真実を置いて、worker の一生の係の約束を
-    ;; 鳴らす(係は今の世代を退いた世代として見届け、すぐ新しい世代を回す)。
+    ;; 鳴らす(係は今の世代を退いた世代として見届け、すぐ新しい世代を回す)。same-pod なら新しい世代は前の世代の Pod の IP を名乗る。
     (val truth (get hosts name))
     (val rung (.get roll-bells name))
     (if (or truth.down truth.stopping (is rung None) (!= (get rung 0) truth.boot))
@@ -4082,7 +4085,7 @@
             (val generation (+ (get generations name) 1))
             (<- born HostTruth (fresh-truth name generation now (monotonic-ms-of mono) plan.timing))
             ;; 前の世代を止めずに起こした新しい世代は、重なりを名乗る(本番の起動の script の --overlaps-elder — AL-D2e)。
-            (val fresh (replace born :overlaps-elder True))
+            (val fresh (replace born :overlaps-elder True :pod-ip (if same-pod truth.pod-ip born.pod-ip)))
             (:= generations (| generations {name generation}))
             (:= hosts (| hosts {(elder-key name truth.boot) truth name fresh}))
             (:= roll-bells (dfor #(k v) (.items roll-bells) :if (!= k name) k v))

@@ -3290,6 +3290,16 @@
                    (or row.retired-from row.name))))
 
 
+(defn #^ bool shares-pod-address [#^ ClusterState state #^ str name #^ str boot]
+  ;; cannot be a defk: coordinator の純粋な判断(superseded-reply の setv の中 — defn)が呼ぶ
+  "純粋: 名 name の退いた世代 boot が、今の世代と同じ Pod の IP を名乗っているか(最後の報告 WorkerReport.pod-ip — 同じ container の
+   中で世代を入れ替える keeper の形。2 つの Pod を並べる RollingUpdate は IP が違う)。同じなら、job をどちらの世代が動かしても
+   Service の振り先の番地は変わらない。どちらかの報告が無い・IP を名乗らない(Pod の外・旧い worker)時は偽。"
+  (setv current (.row state.observations.statuses name)
+        elder (.row state.observations.elder-statuses (elder-key name boot)))
+  (and (is-not current None) (is-not elder None) (bool current.pod-ip) (= current.pod-ip elder.pod-ip)))
+
+
 (defn #^ HeartbeatReply superseded-reply [#^ ClusterState state #^ str name #^ str boot #^ (| tuple None) statuses #^ ClusterTiming timing
                                 #^ (| dict None) [ready-instances None]]
   "退いた世代の process への heartbeat の返事(2026-09-27)。退く process に新しい仕事を起こさせず、動いている物は安全に畳ませるため:
@@ -3309,8 +3319,12 @@
         current (.row state.observations.statuses name)
         ;; 重なりの組は、この世代の Pod の止まりが始まる(leaving)まで何も渡さない(AL-D2k — Service の振り先は止まりが始まるまで
         ;; この世代の Pod なので、先に渡すと渡した job へ届かない)。始まったら、起こせると報告した job を一度に渡す。
+        ;; 例外: 今の世代と同じ Pod の IP を名乗る世代(shares-pod-address — keeper が同じ container の中で世代を入れ替える形)は、
+        ;; 渡した job も同じ番地で待ち受けるので、止まりを待たずに起こせると報告した job から渡す。待つと、受け渡しの止まり
+        ;; (handover-pending)が解けるまで — 全部の job が同時に起こせる所に揃うまで — 1 つも渡らず、待つ間に宣言し直した版の準備で
+        ;; 揃いが崩れ続けた(2026-11-13 に 41 分・11-15 に 46 分、前の世代が古い版の job を動かし続けた)。
         run (next (gfor r state.superseded-runs :if (and (= r.worker name) (= r.boot boot)) r) None)
-        staying (and (is-not run None) run.overlapped (not run.leaving))
+        staying (and (is-not run None) run.overlapped (not run.leaving) (not (shares-pod-address state name boot)))
         taken (if staying
                   (frozenset)
                   (frozenset (gfor row (if (is current None) #() current.jobs) :if (= row.phase "elder-runs") row.name)))
