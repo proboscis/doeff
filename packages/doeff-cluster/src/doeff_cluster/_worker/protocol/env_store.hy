@@ -55,7 +55,7 @@
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._worker.protocol.observations [ObserveEnvs ObserveEnvDisk])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
-(import doeff_cluster._worker.core.launch [entry-place-of-marker pycache-prefix-of-marker venv-of-marker])
+(import doeff_cluster._worker.core.launch [entry-place-of-marker venv-of-marker])
 (import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv placed-argv])
 (import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MIRROR-UNUSED-SECONDS unused-mirror-names MemoryUse LayerMemoryUse MemoryUnread WarmRoom
@@ -224,15 +224,6 @@
   (<- text (ReadText (+ root "/" ENV-MARKER)))
   (<- place (| str None) (entry-place-of-marker (if (isinstance text str) text None)))
   place)
-
-
-(defk root-pycache-prefix [root]
-  {:pre [(: root str)] :post [(: % (| str None))]}
-  "root の venv で起こす子へ PYTHONPYCACHEPREFIX で渡す root の .pyc の置き場を、root の完成の印から読むため(起こす宿・入口の確かめ・
-   待ちの子の宿が読む。印の中身の読みは launch の pycache-prefix-of-marker — 欄の無い印の root は None = 渡さない)。"
-  (<- text (ReadText (+ root "/" ENV-MARKER)))
-  (<- prefix (| str None) (pycache-prefix-of-marker (if (isinstance text str) text None)))
-  prefix)
 
 
 (defk pycache-targets [aside]

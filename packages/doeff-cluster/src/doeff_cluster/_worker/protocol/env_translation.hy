@@ -23,9 +23,13 @@
 ;;;
 ;;; root の .pyc の置き場(CompileTrees の pycache — root の直下の ROOT-PYCACHE)は、焼く前に答え手が作る。worker の環境に
 ;;; PYCACHE-RAM-ENV(RAM の dir — tmpfs など)が在れば、置き場はその下の root ごとの dir(名 = 置き場の path の digest16)への symlink に
-;;; する(.pyc の書きが disk に届かない — root の掃除 env_store の sweep-leftovers が symlink の先も消す)。焼く道具・準備の確かめの子へは
-;;; PYTHONPYCACHEPREFIX で渡す(UV-DROP は親の PYTHON* を外すが、足す変数は残る)。root の venv には、置き場を木の source だけに使う口
-;;; (_foundation/pycache_scope.py — 標準 library と venv の package は隣の __pycache__ を読み続ける)を import の根の .pth と一緒に置く。
+;;; する(.pyc の書きが disk に届かない — root の掃除 env_store の sweep-leftovers が symlink の先も消す)。置き場は root の venv が持つ:
+;;; root の venv には、置き場を木の source だけに使う口(_foundation/pycache_scope.py — 標準 library と venv の package は隣の
+;;; __pycache__ を読み続ける)を import の根の .pth と一緒に置き、口の隣の file(pycache_scope の PREFIX_FILE)へ置き場の path を書く
+;;; (WriteImportRoots が空で置き、CompileTrees が焼く前に置き場を書く)。その venv の python は起こし方に関わらず起動の .pth でこの
+;;; file を読むので、焼く道具・準備の確かめの子・worker が起こす子のどれにも PYTHONPYCACHEPREFIX を渡さない。uv sync の段は
+;;; PYTHONDONTWRITEBYTECODE を置き、build hook(root の venv の外の build の環境の python)が木の source の .pyc を木の中へ書かない
+;;; (--compile-bytecode は py_compile で書くので、入れた package は焼かれる)。
 ;;;
 ;;; git の子の環境は env-mode EXTEND(親を継いで足す)で、足すのは git-environment の 2 つだけ。uv の子は EXTEND に env-drop UV-DROP(呼び手の
 ;;; venv と uv の設定を持ち込まない)を添え、cache は runtime-env.uv-cache・Python は worker の state dir の下で共有する(UV_CACHE_DIR・UV_PYTHON_INSTALL_DIR)。uv 自身が
@@ -63,7 +67,7 @@
 (import doeff_cluster._worker.core.env_upkeep [LayerSample layer-sample-of-text])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH SHARED-VENV-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH PYCACHE-SCOPE-LINE SHARED-VENV-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 (import inspect)
 (import doeff_cluster._foundation.pycache_scope :as pycache-scope)
 ;; venv へ写す置き場の口の source(worker 自身の file — import の時に 1 度だけ読む code の値。準備の file の効果の外: 模擬の世界の file にも
@@ -284,12 +288,6 @@
             (<- linked (| None FileFailed) (MakeSymlink pycache target))
             (<- (settled linked "root の .pyc の置き場の symlink を置けない")))))
   None)
-
-
-(defk pycache-environ [env pycache]
-  {:pre [(: env tuple) (: pycache (| str None))] :post [(: % tuple)]}
-  "uv の子へ足す変数 env に、root の .pyc の置き場を PYTHONPYCACHEPREFIX で足すため(None = 置き場を使わない root — 足さない)。"
-  (if (is pycache None) env (+ env #((EnvEntry :name "PYTHONPYCACHEPREFIX" :value pycache)))))
 
 
 (defk digest16 [text]
@@ -1428,7 +1426,11 @@
     (val args (+ #(uv "sync" "--frozen" "--compile-bytecode" "--project" project-dir "--python" python "--no-default-groups")
                  (tuple (gfor g groups a ["--group" g] a))
                  (tuple (gfor n no-install a ["--no-install-package" n] a))))
-    (<- result CommandResult (uv-command args project-dir env))
+    ;; PYTHONDONTWRITEBYTECODE(頭の註): 依存の build hook は root の venv の外の build の環境の python で木の source を import し、
+    ;; 置き場の口を通らずに木の中の __pycache__ へ書く(2026-11-15 の本番の root で 6 個と guard の .pyc)。置き場へ向けずに書かせない
+    ;; 訳: build の環境の python には口が無く、prefix は標準 library と build の依存の .pyc まで置き場へ書く — build の時だけの import の
+    ;; .pyc は子が読まない。--compile-bytecode は py_compile で書くのでこの変数に止められない。
+    (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
     (if (= result.code 0)
         (do (val found (.search PREPARED-PATTERN (+ result.stderr result.stdout)))
             (resume (SyncReport :downloaded (if found (int (.group found 1)) 0))))
@@ -1456,9 +1458,11 @@
     (<- module (| None FileFailed) (WriteText (posixpath.join site (+ PYCACHE-SCOPE-MODULE ".py")) PYCACHE-SCOPE-SOURCE :replace True))
 
     (<- (settled module "置き場の口を venv へ置けない"))
-    (<- hook (| None FileFailed) (WriteText (posixpath.join site PYCACHE-SCOPE-PTH)
-                                            (.format "import {0}; {0}.install()\n" PYCACHE-SCOPE-MODULE) :replace True))
+    (<- hook (| None FileFailed) (WriteText (posixpath.join site PYCACHE-SCOPE-PTH) PYCACHE-SCOPE-LINE :replace True))
     (<- (settled hook "置き場の口の .pth を書けない"))
+    ;; 口が読む置き場の file は空で置く(置き場を使うのは CompileTrees が書いた後 — 写した venv が写し元の root の置き場を持ち越さない)。
+    (<- prefix (| None FileFailed) (WriteText (posixpath.join site pycache-scope.PREFIX_FILE) "" :replace True))
+    (<- (settled prefix "置き場の口の file を書けない"))
     (resume None))
 
   (PrepareNote [text]
@@ -1489,19 +1493,23 @@
     ;; 焼く道具は全部の木を 1 回で用意する(cwd = project の dir — 木はどれも絶対 path で渡す)。.pyc は source の中身で引く保存先から書き、
     ;; 無い物だけを焼く(#3858)。写し元の木(BytecodeTree の inherit — 依存のキーの同じ完成済みの root の木)が在れば、道具は変わらない
     ;; source の .pyc と閉包の表をそこから引き継ぐ(ADR-DOE-BUILD-002 R3c — 差の一覧は渡さず、道具が file の同じさで見分ける)。
-    ;; .pyc と焼きの記録は木の外の root の置き場へ(頭の註 — 置き場を先に作り、道具には引数と PYTHONPYCACHEPREFIX の両方で渡す:
-    ;; 道具の中の guard の照らしと import が、子と同じ置き場を読む)。
+    ;; .pyc と焼きの記録は木の外の root の置き場へ(頭の註 — 置き場を先に作り、root の venv の口の file へ書いてから焼く: 道具は
+    ;; 引数の --pycache-prefix で置き場へ書き、root の venv で起きる道具の中の guard の照らしと import は口の file から子と同じ置き場を読む)。
     (<- (pycache-place pycache))
+    (<- site (| str None) (site-packages venv))
+    (when (is site None)
+      (raise (RuntimeError (.format "venv {} に site-packages が無い" venv))))
+    (<- named (| None FileFailed) (WriteText (posixpath.join site pycache-scope.PREFIX_FILE) (+ pycache "\n") :replace True))
+    (<- (settled named "root の venv に置き場を書けない"))
     (<- env tuple (project-uv-environment shared-dir uv-cache venv))
     (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs progress :pycache pycache :inherit-pycache inherit-pycache))
-    (<- placed tuple (pycache-environ (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1"))) pycache))
-    (<- result CommandResult (uv-command args project-dir placed))
+    (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
     (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees venv))
     (resume compiled))
 
-  (ProbeImports [project-dir venv roots pycache]
-    (<- base tuple (project-uv-environment shared-dir uv-cache venv))
-    (<- env tuple (pycache-environ base pycache))
+  (ProbeImports [project-dir venv roots]
+    ;; 置き場は root の venv の口が file から読む(頭の註 — 子と同じ起こし方)。
+    (<- env tuple (project-uv-environment shared-dir uv-cache venv))
 
     (<- name str (digest16 project-dir))
     (val empty (posixpath.join state-dir "probe" name))

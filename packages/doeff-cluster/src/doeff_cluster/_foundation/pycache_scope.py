@@ -1,17 +1,22 @@
-"""root の venv の python が、root の .pyc の置き場(PYTHONPYCACHEPREFIX)を root の木の source だけに使う口。
+"""root の venv の python が、root の .pyc の置き場を root の木の source だけに使う口。
 
 worker は実行環境の root の木の .pyc を木の中(source の隣の __pycache__)に置かず、root ごとの置き場(root の直下の .doeff-pycache —
-env_marker_model の ROOT-PYCACHE)に置き、root の venv で起きる子(job・入口の検め・待ちの子・焼きの道具・準備の確かめ)に
-PYTHONPYCACHEPREFIX でその置き場を渡す(木を読み専用で置けるように・木の中へ .pyc の hardlink を張らないように)。ただ Python の prefix は
-process の全部の source に効くので、そのままでは標準 library(sys.base_prefix の下)と venv に入れた package(sys.prefix の下 — uv sync の
---compile-bytecode が隣の __pycache__ に焼いた物)の .pyc も置き場で探し、見つからずに起動のたびに compile し直す(#3695 — 起動の秒の過半)。
-この口は importlib の cache_from_source を包み、interpreter と venv の prefix の下の source だけを隣の __pycache__ に戻す(置き場を使うのは
-それ以外 — root の木の source)。PYTHONPYCACHEPREFIX の無い process では何もしない。
+env_marker_model の ROOT-PYCACHE)に置く(木を読み専用で置けるように・木の中へ .pyc の hardlink を張らないように)。置き場は root の venv が
+持つ: 準備がこの module の隣(root の venv の site-packages)に置き場の path を書いた file(PREFIX_FILE)を置き、この口が起動の時にその
+file から sys.pycache_prefix を置く。process の環境変数(PYTHONPYCACHEPREFIX)では運ばない — 環境変数は起こし口ごとに届いたり届かなかったり
+する(-I で起こす子は読まない・環境を組み直す子には無い・別の root の子へそのまま継がれる — 2026-11-15 の本番)が、root の venv の python は起こし方に
+関わらず site-packages の .pth を読む(-I でも。読まないのは -S だけ)。継いだ PYTHONPYCACHEPREFIX と -X pycache_prefix は、この venv の
+置き場で上書きする(file が空・無い venv では置き場を使わない — 別の root の置き場へ書かない)。
+
+ただ Python の prefix は process の全部の source に効くので、そのままでは標準 library(sys.base_prefix の下)と venv に入れた package
+(sys.prefix の下 — uv sync の --compile-bytecode が隣の __pycache__ に焼いた物)の .pyc も置き場で探し、見つからずに起動のたびに compile
+し直す(#3695 — 起動の秒の過半)。この口は importlib の cache_from_source を包み、interpreter と venv の prefix の下の source だけを隣の
+__pycache__ に戻す(置き場を使うのはそれ以外 — root の木の source)。
 
 置き方: worker の準備が root の venv の site-packages へこの file を _doeff_pycache_scope.py として写し、`import` の 1 行の .pth
-(env_prepare_model の PYCACHE-SCOPE-PTH — 名の順で venv のほかの .pth より先)を置く(env_translation の WriteImportRoots)。root の版の
-doeff に依らない(標準 library だけを import する — 起動の .pth の段で読まれる)。worker の側でこの module を import しても何も包まない
-(包むのは install を呼んだ時だけ)。
+(env_prepare_model の PYCACHE-SCOPE-PTH — 名の順で venv のほかの .pth より先)と空の PREFIX_FILE を置き(env_translation の
+WriteImportRoots)、焼く前に PREFIX_FILE へ置き場を書く(CompileTrees)。root の版の doeff に依らない(標準 library だけを import する —
+起動の .pth の段で読まれる)。worker の側でこの module を import しても何も包まない(包むのは install を呼んだ時だけ)。
 """
 
 import importlib.util
@@ -24,6 +29,10 @@ import _frozen_importlib_external as external
 
 # 層 foundation の文脈と役の名乗り(DOEFF104)— 隣の otlp_post.py と同じ。
 MODULE_TAGS = {"context": "doeff-cluster", "role": "foundation"}
+
+#: root の venv の置き場の path を書く file の名(この module の隣 — root の venv の site-packages。中身は置き場の絶対 path の 1 行・
+#: 空 = 置き場を使わない venv)。
+PREFIX_FILE = "_doeff_pycache_prefix"
 
 
 def kept_dirs() -> tuple[str, ...]:
@@ -49,10 +58,25 @@ def scoped(prefixed: Callable[..., str], kept: tuple[str, ...]) -> Callable[...,
     return cache_from_source
 
 
+def venv_prefix(site: str) -> str | None:
+    """site(この module の在る dir — root の venv の site-packages)の PREFIX_FILE から、venv の置き場を読むため(file が無い・空・
+    読めない = None — 置き場を使わない venv)。"""
+    try:
+        with open(os.path.join(site, PREFIX_FILE), encoding="utf-8") as handle:
+            text = handle.read().strip()
+    except OSError:
+        return None
+    return text or None
+
+
 def install() -> None:
-    """この process の cache_from_source(importlib の読みの口と importlib.util の名の両方)を scoped で包むため。置き場の無い process・
-    包み済みの process では何もしない。"""
-    if not sys.pycache_prefix or getattr(external.cache_from_source, "doeff_pycache_scope", False):
+    """この process の .pyc の置き場を、この module の在る venv の置き場にするため: sys.pycache_prefix を PREFIX_FILE の置き場で置き直し
+    (継いだ環境変数と -X の値は使わない — 置き場の無い venv では None)、置き場が在れば cache_from_source(importlib の読みの口と
+    importlib.util の名の両方)を scoped で包む。包み済みの process では何もしない。"""
+    if getattr(external.cache_from_source, "doeff_pycache_scope", False):
+        return
+    sys.pycache_prefix = venv_prefix(os.path.dirname(os.path.abspath(__file__)))
+    if not sys.pycache_prefix:
         return
     wrapped = scoped(external.cache_from_source, kept_dirs())
     wrapped.doeff_pycache_scope = True

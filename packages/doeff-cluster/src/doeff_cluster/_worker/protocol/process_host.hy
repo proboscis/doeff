@@ -47,7 +47,7 @@
 (import doeff_cluster._worker.core.shim_timing [ShimSpans shim-deadline-ms])
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix root-venv-path])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
 
 
 (defrecord HostSettings
@@ -453,14 +453,10 @@
   ;; (子は root の版の doeff で起きる)・木の job は worker 自身の置き場(子は worker の hy で起きる)。shim の下の道と待ちの子から
   ;; 分ける道が同じ名を使う。
   (var root-place None)
-  (var pycache None)
   (var venv None)
   (when spec.runtime-env
     (<- found (| str None) (root-entry-place action.code-path))
     (:= root-place found)
-    ;; root の .pyc の置き場(root の完成の印の pycachePrefix — 子へ PYTHONPYCACHEPREFIX で渡す・無い印の root は渡さない)。
-    (<- placed (| str None) (root-pycache-prefix action.code-path))
-    (:= pycache placed)
     ;; 子を起こす hy と PATH・VIRTUAL_ENV の venv も root の完成の印から読む(木の外の venv か、前の形の root の木の中の venv)。
     (<- root-venv str (root-venv-path action.code-path))
     (:= venv root-venv))
@@ -471,7 +467,7 @@
                                  :allowed-env (dfor e allowed e.name e.value) :worker-pid facts.pid
                                  :program-path program-path
                                  :program-env settings.program-env :work-dir work :shim-grace-ms settings.shim.shim-grace-ms
-                                 :notice-env settings.notice-env :pycache-prefix pycache))
+                                 :notice-env settings.notice-env))
 
   (when plan.last-used
     ;; 使った印(掃除は最後に使った時刻の古い root から消す — env_upkeep.sweep-choice)。
