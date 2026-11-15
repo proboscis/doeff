@@ -37,7 +37,7 @@
 (import doeff_time [DelayEffect SimClock sim-time-handler])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster._worker.core.memory_rules [JobRoot JobSteady KillUnit MemoryLevel MemoryLimits MIB UnitKind _job-uses _job-walks _kill-units largest-outside
-                                                spared-steady steady-sizes victim-of])
+                                                declared-roots spared-steady steady-sizes victim-of])
 (import doeff_cluster [ObserveJobRoots])
 (import doeff_cluster._worker.core.eviction_rules [layout-layer-names])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-WINDOW-LOG JOB-PEAK-LOG
@@ -321,9 +321,14 @@
   #(shim uv body task-shim task-body))
 
 
+(val DISPATCH-DECLARED {"dispatch" (* 500 MIB)})
+
+
 (defk resident-victim [rows roots]
   {:pre [(: rows tuple) (: roots tuple)] :post [(: % (| KillUnit None))] :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "dispatch の平常の大きさ(965 MiB)を持つ見張りが、表 rows・根 roots の時に止める単位を選ぶため。"
+  "dispatch の平常の大きさ(965 MiB)と宣言の山(DISPATCH-DECLARED — 平常より小さい)を持つ見張りが、表 rows・根 roots の時に止める単位を
+   選ぶため。"
+  (<- roots tuple (declared-roots roots DISPATCH-DECLARED))
   (<- units tuple (_kill-units rows roots))
   (<- uses tuple (_job-uses rows roots))
   (<- victim (| KillUnit None) (victim-of units uses #((JobSteady :job "dispatch" :bytes (* 965 MIB))) (MemoryLimits)))
@@ -337,8 +342,9 @@
   (<- victim (| KillUnit None) (resident-victim rows roots))
   (assert (is victim None) victim)
   ;; 止めなかった job を名指す。
-  (<- units tuple (_kill-units rows roots))
-  (<- uses tuple (_job-uses rows roots))
+  (<- declared tuple (declared-roots roots DISPATCH-DECLARED))
+  (<- units tuple (_kill-units rows declared))
+  (<- uses tuple (_job-uses rows declared))
   (<- spared tuple (spared-steady units uses #((JobSteady :job "dispatch" :bytes (* 965 MIB))) (MemoryLimits)))
   (assert (= (tuple (gfor s spared s.job)) #("dispatch")) spared))
 
@@ -359,8 +365,8 @@
 
 
 (deftest test-a-resident-job-without-a-steady-size-yet-is-still-a-candidate
-  ;; 平常の大きさがまだ無い job(起こしてから最大の行の間が 1 つも閉じていない)は、前と同じく止める候補。
-  (val roots #((JobRoot :name "dispatch" :pid 60)))
+  ;; 平常の大きさがまだ無い job(起こしてから最大の行の間が 1 つも閉じていない)は、宣言の山(500 MiB)の 1.5 倍以上なら止める候補。
+  (<- roots tuple (declared-roots #((JobRoot :name "dispatch" :pid 60)) DISPATCH-DECLARED))
   (<- rows tuple (resident-rows 950))
   (<- units tuple (_kill-units rows roots))
   (<- uses tuple (_job-uses rows roots))
@@ -380,6 +386,8 @@
   (<- files MemoryFiles (node-files 1.6))
   (val cell (MemoryCell))
   (setv cell.steady #(#((JobSteady :job "svc" :bytes (* 2835 MIB)))))
+  ;; svc は宣言の山(1000 MiB — 平常より小さい)を持つ常駐の job。
+  (setv cell.eviction.declared {"svc" (* 1000 MIB)})
   (<- seen WatchSeen (watched-in (MemoryWatchSettings) files None 16000 cell))
   (val lines seen.lines)
   (<- kills tuple (lines-named lines MEMORY-KILL-LOG))

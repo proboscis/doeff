@@ -127,9 +127,10 @@
      ;; 止めない(長い方の柵 keep-fence-ms まで)。欄を読まない古い worker は今までどおり fence で止める — 旧い worker(e06b01411 の
      ;; handlers.declared-job-spec)は知っている鍵だけを .get で読むので、この欄は捨てられる。
      (if spec.keep-when-cut-off {"keepWhenCutOff" True} {})
-     ;; 宣言の memory の山を持つ job だけ(2026-11-11): worker の memory の見張りは、今の memory がこの値以下の常駐の job を
-     ;; 止めない。欄を読まない古い worker は捨てる(今どおり平常の大きさで判じる)。
-     (if (is spec.peak-mib None) {} {"peakMiB" spec.peak-mib})
+     ;; 宣言の memory の山(2026-11-11・どの job の行も必ず持つ — ClusterJob.peak-mib・2026-11-15): worker の memory の見張りは、今の
+     ;; memory がこの値以下の常駐の job を止めず、越えた job をこの値と平常の大きさの大きい方で判じる。worker は欄の無い行の返事を
+     ;; 読めない返事として断る(worker/protocol/declared.declared-job-spec)。欄を読まない古い worker は捨てる。
+     {"peakMiB" spec.peak-mib}
      ;; CPU の取り分の名を宣言した job だけ: worker は取り分を宣言した機体で、process を services の層の下のその名の子に置く。
      ;; 欄を読まない古い worker は捨てる(今どおり services の層に置く)。
      (if (is spec.cpu-share None) {} {"cpuShare" spec.cpu-share})))

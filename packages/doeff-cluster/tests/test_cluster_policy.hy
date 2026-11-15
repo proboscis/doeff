@@ -14,10 +14,10 @@
 (setv T (ClusterTiming :lease-ms 10000 :fence-ms 10000 :reassign-after-ms 30000))
 
 (defk job [name [needs #()] [pin None] [settle 100]]
-  {:pre [(: name str) (: needs tuple) (: pin (| str None)) (: settle (| int None))] :post [(: % ClusterJob)]
+  {:pre [(: name str) (: needs tuple) (: pin (| str None)) (: settle int)] :post [(: % ClusterJob)]
    :tags {:context "doeff-cluster-test" :role "judgment"}}
-  "要る能力 needs と置き先の指定 pin と落ち着いた memory settle(MiB — None = memory を知らない旧い保存の行)を持つ job の行を作るため。"
-  (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin :peak-mib (if (is settle None) None (* 2 settle)) :settle-mib settle))
+  "要る能力 needs と置き先の指定 pin と落ち着いた memory settle(MiB)を持つ job の行を作るため。"
+  (ClusterJob (JobSpec name "m" #() "rev") :needs needs :pin pin :peak-mib (* 2 settle) :settle-mib settle))
 (defk with-rooms [state]
   {:pre [(: state ClusterState)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "状態 state の worker ごとに、測った空きに当たる tasks 区画(room_rows.compartments-like-rooms)を宣言した状態を作るため(置き方は区画の
@@ -652,23 +652,19 @@
   (val roomy (replace state :workers (! (table-from-rows {"mac" (! (reserved "mac" 0 0 1 300))}))))
   (assert (= (sorted (.keys (! (jobs-placed 0 roomy T)))) ["a" "b" "c"])))
 
-(deftest test-a-worker-without-memory-is-not-bound-and-a-job-without-memory-waits
-  ;; memory を名乗らない worker(枠の file の外の機体)は memory で縛らない: settle の和がどれだけでも置く。memory を知らない job(settleMiB の
-  ;; 無い旧い保存の行)は、memory を名乗らない worker にも新しく置かず、名指して宣言し直しを待つ。
+(deftest test-a-worker-without-memory-is-not-bound
+  ;; memory を名乗らない worker(枠の file の外の機体)は memory で縛らない: settle の和がどれだけでも置く。memory を知らない job は
+  ;; 無い(保存の読み直しが欄の無い行を断る — tests/test_resident_peak_required.hy)。
   ;; (! …) は内包の中に置けない(内包は別の scope で yield できない)ので、for で 1 本ずつ作る。
   (var jobs #())
   (for [n (range 5)]
     (:= jobs (+ jobs #((! (job (.format "j{}" n) :settle 40000))))))
-  (val free (ClusterState (+ jobs #((! (job "old" :settle None)))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))))
+  (val free (ClusterState jobs (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))))
   (val placed (! (jobs-placed 0 free T)))
   (assert (= (sorted (.keys placed)) ["j0" "j1" "j2" "j3" "j4"]) placed)
   (val load (load-of (replace free :placements placed) placed))
   (val mac (.row free.workers "mac"))
-  (assert (is (! (memory-room-of mac load)) None) load)
-  (assert (= (! (memory-misfit mac load (! (job "old" :settle None))))
-             "job old は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ"))
-  (assert (= (get (unplaced-jobs 0 (replace free :placements placed) T) "old")
-             "置ける worker に空きが無い(job old は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ)")))
+  (assert (is (! (memory-room-of mac load)) None) load))
 
 (defk room-beside-jobs [count]
   {:pre [(: count int)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}

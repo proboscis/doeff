@@ -220,28 +220,18 @@
     True (raise (BodyInvalid (.format "{} は文字列か null: {!r}" field value)))))
 
 
-(defn #^ ClusterJob declared-job-from-json [#^ (get Mapping #(str object)) item]
-  "送り手が書く宣言の行(Service の資源の POST・PUT と旧い PUT /jobs)を、memory の欄 peakMiB・settleMiB を必ず求めて読むため
-   (欄の無い宣言は断り、既定の値で埋めない)。保存の読み直しは job-from-json を直に呼び、欄の無い行も受ける。"
-  ;; 行の形の誤り(旧い宣言の形など)は先に job-from-json が今までどおりの理由で断る。欄の無さはその後に言う。
-  (setv job (job-from-json item) problem (memory-refusal (.get item "peakMiB") (.get item "settleMiB")))
-  (when (is-not problem None)
-    (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") problem))))
-  job)
-
-
 (defn #^ ClusterJob job-from-json [#^ (get Mapping #(str object)) item]
-  "宣言の行(送られた行と保存の行)→ ClusterJob。memory の欄は在れば検め、無ければ None で読む — 旧い coordinator は memory を持たずに
-   job を保存したので、新しい coordinator が置き場を読み直す時に欄の無い行を断らない(断ると RefusedJob になり job が止まる)。
-   欄を必ず求めるのは送り手の書く口(declared-job-from-json)だけ。"
+  "宣言の行(送られた行と保存の行)→ ClusterJob。memory の欄 peakMiB・settleMiB は必ず求め、無い・読めない行は BodyInvalid で断る
+   (既定の値で埋めない)。旧い coordinator が欄を持たずに保存した行は、保存の読み直し(state_json.read-service-rows)が置かずに理由つきの
+   RefusedJob にし、宣言し直しで置き換わる(2026-11-15 — 前は None で受けて置き、worker の memory の見張りが基準の大きさの無い常駐の
+   job として止めうる道になった)。"
   (setv peak (.get item "peakMiB") settle (.get item "settleMiB") single-host (.get item "singleHost")
         idle-budget (if (is (.get item "idleBudget") None) None (idle-budget-read (.get item "idleBudget"))))
-  (setv memory-problem (or (if (and (is peak None) (is settle None)) None (memory-refusal peak settle))
-                           (single-host-refusal single-host)
+  (setv declared-problem (or (single-host-refusal single-host)
                            (cpu-share-refusal (.get item "cpuShare"))
                            (if (isinstance idle-budget str) idle-budget None)))
-  (when (is-not memory-problem None)
-    (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") memory-problem))))
+  (when (is-not declared-problem None)
+    (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") declared-problem))))
   (setv replicas (.get item "replicas" 1) readiness (.get item "readiness"))
   (when (not-in replicas #(0 1))
     (raise (BodyInvalid (.format "replicas は 0 か 1(Service は 1 つだけ動かす): {!r}" replicas))))
@@ -256,6 +246,10 @@
   (when (is-not env-refusal None)
     (raise (BodyInvalid env-refusal)))
   (setv spec (spec-of-declaration item) run (.get item "run"))
+  ;; memory の欄の無さは、行の形の誤り(旧い宣言の形など — 上と spec-of-declaration)の後に言う(形の誤りは今までどおりの理由で断る)。
+  (setv peak-problem (memory-refusal peak settle))
+  (when (is-not peak-problem None)
+    (raise (BodyInvalid (.format "Service {} の宣言: {}" (.get item "name") peak-problem))))
   (ClusterJob spec
               (request-needs item "Service の needs")
               (optional-text-field (.get item "pin") "pin")
@@ -265,9 +259,9 @@
               (if (json-object? readiness) readiness None)
               (optional-text-field (.get item "owner") "owner")
               update
-              ;; memory-refusal が整数と確かめた後なので、ここは型を絞るだけ。
-              :peak-mib (if (isinstance peak int) peak None)
-              :settle-mib (if (isinstance settle int) settle None)
+              ;; memory-refusal が 0 以上の整数と確かめた後。
+              :peak-mib peak
+              :settle-mib settle
               :single-host (if (isinstance single-host str) single-host None)
               ;; 読めない予算(理由の文)は上で断った後なので、ここは型を絞るだけ。
               :idle-budget (if (isinstance idle-budget str) None idle-budget)))
@@ -283,8 +277,8 @@
                  (if job.spec.environ {"environ" (dict job.spec.environ)} {})
                  ;; 中身の鍵は送られた宣言にだけ書く(鍵の無い宣言の spec の形は以前と同じ)。
                  (if (is job.spec.content None) {} {"content" job.spec.content})
-                 ;; memory は知っている時だけ書く(旧い coordinator の保存から読んだ job は次の宣言し直しまで知らない)・訳は在る時だけ。
-                 (if (is job.peak-mib None) {} {"peakMiB" job.peak-mib "settleMiB" job.settle-mib})
+                 ;; memory は必ず書く(ClusterJob が必ず持つ)・訳は在る時だけ。
+                 {"peakMiB" job.peak-mib "settleMiB" job.settle-mib}
                  (if (is job.single-host None) {} {"singleHost" job.single-host})
                  ;; 暇な時の予算は宣言した job にだけ書く(書かない宣言の spec の形・版は以前と同じ)。
                  (if (is job.idle-budget None) {} {"idleBudget" (idle-budget-json job.idle-budget)})
@@ -783,7 +777,7 @@
 
 (defn #^ dict load-of [#^ ClusterState state #^ (get Table Placement) placements]
   "worker ごとの担っている数(worker の名 → WorkerLoad): jobs = 常駐の job の置き先(placements)と並べた置き先(surge)・tasks = 置かれた
-   task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和(memory を知らない旧い保存の行の job は 0 — 宣言し直しで知る)・
+   task(PLACED-PHASES)・settle-mib = 置き先と surge の job の settle の和・
    unseen = 置かれた task のうち、worker の測った空きにまだ出ていない物(measured を載せた同じ heartbeat の状態の報告に、動いている行
    task/<id> が無いか、置いた刻 started-ms が measured_room.unseen-since の刻より後 — 走り出したばかりの task の使いは測りに出きって
    いない)・reserved-mib = 置かれた task の memory の予約の和(task ごとに measured_room.reserved-mib-of — 要り〔置いた時に固定した申告 — task_claims.claim-mib-of〕
@@ -798,7 +792,7 @@
         uses (dfor #(name w) (.items state.workers)
                    name (if (or (is w.measured None) (is w.measured.task-memory-MiB None)) {} w.measured.task-memory-MiB))
         settles (dfor name (.keys state.workers) name 0)
-        settle-of (dfor job state.jobs job.spec.name (or job.settle-mib 0))
+        settle-of (dfor job state.jobs job.spec.name job.settle-mib)
         since (dfor #(name w) (.items state.workers) name (run (unseen-since w.measured)))
         ;; 形ごとの測った山と tasks 区画(申告の行の無い置いた task の要りを数える — task_claims.claim-mib-of・compartment-clamp)。
         peaks (run (shape-peaks-of state.tasks state.shape-families))
@@ -846,7 +840,7 @@
   "job(と並べた置き先 surge)を worker に新しく置けない memory の訳を、job を名指す文にするため(置けるなら None)。
    job の側の枠は「置いた job の settle の和 + 新しい job の settle ≤ memory の予算」だけで、数では縛らない。山(peak-mib)は使わない — 山は
    宣言の側の N+1 の照らし(failover_policy の規則 3)が見る。置く時に新しい job の山で照らすと、最後に置く大きい job が落ち着いた値の
-   和では入るのに断られる(本番の node-h では和が 67150 MiB になり、予算 63488 MiB を越えた)。memory を知らない job(settle-mib None — 欄の無い旧い保存の行)は新しく置かず、宣言し直しを待つ。
+   和では入るのに断られる(本番の node-h では和が 67150 MiB になり、予算 63488 MiB を越えた)。
    memory を名乗らない worker(memory-room-of が None)は memory で縛らない。置き先の判断 place-jobs・movable?・drain の move-target は
    どれも can-take を通してこの判断を読む。
    worker が版の準備を待つ間の取り置きを名乗る間(測りの prepare-wait-MiB — worker/core/eviction_rules の頭の註の準備を待つ間の取り置き)は、
@@ -856,8 +850,6 @@
   (val used (. (get load worker.name) settle-mib))
   (val waiting (if (is worker.measured None) None worker.measured.prepare-wait-MiB))
   (cond
-    (is job.settle-mib None)
-      (.format "job {} は memory を知らない(settleMiB の無い旧い保存の行)— 宣言し直しを待つ" job.spec.name)
     (is-not waiting None)
       (.format "job {} を worker {} に置かない — worker は版の準備が空きを待つ間の取り置き {} MiB を名乗っている(準備が走り出すまで新しく置かない)"
                job.spec.name worker.name waiting)
