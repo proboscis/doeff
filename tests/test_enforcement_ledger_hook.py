@@ -318,3 +318,45 @@ def test_checker_is_stdlib_only() -> None:
     }
     stdlib = {"json", "re", "subprocess", "sys", "pathlib", "argparse", "collections", "dataclasses"}
     assert imported <= stdlib, f"imports outside stdlib: {sorted(imported - stdlib)}"
+
+
+# The installed hook is a copy of the original taken once (make hooks-install, the agora worker Pod at its start). A check the
+# original gains later reached no machine until the copy was taken again -- the internal-leftovers entry landed while the Pods
+# kept the older copy, and the daily leftovers stage stayed red. The copy hands each commit to the committing tree's original.
+TREE_ORIGINAL = "#!/bin/sh\necho checks-of-the-tree\nexit 3\n"
+
+
+def _repo_with_tree_original(tmp_path: Path, original: str) -> Path:
+    """A repo whose tracked original differs from the installed copy, next to a hooks dir holding that copy of HOOK."""
+    repo = tmp_path / "repo"
+    (repo / "scripts" / "git-hooks").mkdir(parents=True)
+    (repo / "scripts" / "git-hooks" / "pre-commit").write_text(original, encoding="utf-8")
+    (repo / "staged.txt").write_text("value\n", encoding="utf-8")
+    _git(repo, "init", "-q")
+    _git(repo, "add", "-A")
+    hooks = tmp_path / "hooks"
+    hooks.mkdir()
+    shutil.copy2(HOOK, hooks / "pre-commit")
+    (hooks / "pre-commit").chmod(0o755)
+    return repo
+
+
+def test_installed_copy_hands_the_commit_to_the_tree_original(tmp_path: Path) -> None:
+    repo = _repo_with_tree_original(tmp_path, TREE_ORIGINAL)
+    hooks = tmp_path / "hooks"
+    proc = subprocess.run(
+        ["git", "-C", str(repo), "-c", f"core.hooksPath={hooks}", "-c", "user.name=t", "-c", "user.email=t@example.com",
+         "commit", "-qm", "x"],
+        capture_output=True, text=True, check=False,
+    )
+    assert proc.returncode != 0, "the installed copy passed a commit the tree's original stops"
+    assert "checks-of-the-tree" in proc.stdout + proc.stderr, f"the tree's original did not run: {proc.stdout}{proc.stderr}"
+
+
+def test_handed_over_hook_does_not_hand_over_again(tmp_path: Path) -> None:
+    repo = _repo_with_tree_original(tmp_path, TREE_ORIGINAL)
+    proc = subprocess.run(
+        ["env", "DOEFF_PRE_COMMIT_FROM_TREE=1", "sh", str(tmp_path / "hooks" / "pre-commit")],
+        cwd=repo, capture_output=True, text=True, check=False,
+    )
+    assert "checks-of-the-tree" not in proc.stdout, "a hook already handed over ran the tree's original again"
