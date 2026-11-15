@@ -5,7 +5,9 @@
 ;;; 欠いたまま動き、その事を名乗らない(2026-11-12 — 準備の上限を越えた機体が何時間も仕事を受けなかった)。そこで worker は
 ;;; 起動の引数の能力で先に起き、準備の書き手が書く準備の file を heartbeat の前に読み直して、file の能力を起動の引数の能力に足して名乗り、
 ;;; 準備の状態も heartbeat の欄 prepare で名乗る。coordinator は heartbeat ごとに Worker の行の provides を書き直すので、準備が済んだ
-;;; 次の heartbeat から置き方に効く。
+;;; 次の heartbeat から置き方に効く。読み直すのは書き手が file を置き換えた知らせ(foundation/file_notices)が鳴った時で、読んだ姿が前に
+;;; 送った姿と違えば送る間隔を待たずに heartbeat を送る(coordinator_link)— 済んだ瞬間から置き方に効くまでが file の書きの直後になる。
+;;; 間を置いた読み直しは知らせの取りこぼしを揃える遅い読みだけ(prepare-read-due)。
 ;;;
 ;;; file の形(JSON の object — 書き手は別の名で書いて rename で置き換える。知らない欄は読まずに通す):
 ;;;   state     必須。"running"(準備が続いている)・"done"(済んだ)・"failed"(落ちた — 書き手は間を置いてやり直してよい)
@@ -34,6 +36,11 @@
 (import doeff_cluster._shared.core.capabilities [HOST-PREFIX POOL-PREFIX capability-refusal])
 
 (defenum PrepareState RUNNING DONE FAILED UNREADABLE MALFORMED)
+
+;; 読み直しの間(prepare-read-due): 置き換えの知らせを受けている間は、知らせが鳴った時に読み、間を置いた読みは知らせの取りこぼし
+;; (置き換えずに中身を書き足した書き手・見張りの掛け直しの間)を揃える遅い読みだけ。知らせを受けない間は枠の file と同じ間で読む。
+(val SYNC-READ-EVERY-MS (* 60 1000))
+(val UNWATCHED-READ-EVERY-MS (* 10 1000))
 
 ;; file の state に書ける語(worker が足す unreadable・malformed は書き手が書かない)。
 (val WRITTEN-STATES #("running" "done" "failed"))
@@ -124,6 +131,19 @@
                       :since-ms (if (and (is-not before None) (= before.state reading.state)) before.since-ms now-ms)
                       :stage "" :reason reading.reason)
     _ reading))
+
+
+(defk prepare-read-due [read-ms now-ms watching seen mark]
+  {:pre [(: read-ms (| int None)) (: now-ms int) (: watching bool) (: seen (| int None)) (: mark (| int None))] :post [(: % bool)]
+   :tags {:context "worker" :role "judgment"}}
+  "準備の file を今 読み直すかを決めるため。read-ms = 最後に読んだ刻(None = まだ読んでいない)・watching = 置き換えの知らせの見張りが
+   掛かっている・seen = 最後に読む前に取った知らせの印・mark = 今の印(None = 知らせを受けない)。まだ読んでいない・時計が戻った時は読む。
+   見張りの掛かっている間は、印が進んだ(置き換わった)か SYNC-READ-EVERY-MS を過ぎた時だけ読む。掛かっていない間は
+   UNWATCHED-READ-EVERY-MS ごとに読む。"
+  (cond
+    (or (is read-ms None) (< now-ms read-ms)) True
+    watching (or (!= seen mark) (>= (- now-ms read-ms) SYNC-READ-EVERY-MS))
+    True (>= (- now-ms read-ms) UNWATCHED-READ-EVERY-MS)))
 
 
 (defk prepare-line [before after]
