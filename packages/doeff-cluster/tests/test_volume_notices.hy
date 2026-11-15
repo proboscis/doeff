@@ -6,7 +6,8 @@
 ;;;   見張り      Pod の外(token が無く偽の API も無い)では見張りを立てない・偽の API では Volume と VolumeAttachment を 1 本ずつ名の見張りで
 ;;;               受け、変わった名の鈴を満たす・見張りの止まりの訳は替わった時だけ 1 行
 ;;;   綴り        箱の Longhorn の API の頭は答え手(protocol/workspace_volumes)と同じ
-;;; 鈴は満たした値を覚えるだけの相手役(Bell — 箱が呼ぶのは complete だけ)。見張りの thread の答えは上限つきで待つ。
+;;; 鈴は満たした値を覚えるだけの相手役(Bell — 箱が呼ぶのは complete だけ)。見張りの thread の答えは上限つきで待つ。2 本の見張りの
+;;; 起動の順は約束されないので、鈴の鳴りと、両方の見張りが API を読んだ事(模擬の API の記録)は別々に待つ。
 (require doeff-hy.macros [deftest defk <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import json)
@@ -110,17 +111,33 @@
 (defclass Longhorn []
   "模擬の k8s の API(Longhorn の 2 つの種類の一覧): list には空の一覧を版 1 で、watch には種類ごとに用意した出来事を渡し終えて終わる
    (server が timeoutSeconds で閉じた形 — 見張りは覚えた版から受け直す)。2 度目からの watch は 503 で断る(見張りは retry-seconds の後に
-   list し直す — 空の stream で受け直しを回し続けない)。受けた要求の path を記録する。"
-  (defn #^ None __init__ [self #^ dict events]
-    (setv self.events events self.paths #() self.watched #() self.lock (threading.Lock)))
+   list し直す — 空の stream で受け直しを回し続けない)。受けた要求の path を記録し、記録を待つ手に知らせる。held の種類の要求は release まで
+   受けずに止める(その種類の見張りの最初の要求が遅れた形)。"
+  (defn #^ None __init__ [self #^ dict events [held #()]]
+    (setv self.events events self.held (frozenset held) self.paths #() self.watched #() self.recorded (threading.Condition)
+          self.released (threading.Event)))
+
+  (defn #^ None release [self]
+    "held の種類の要求を受け始める。"
+    (.set self.released))
+
+  (defn #^ frozenset wait-paths [self #^ frozenset paths]
+    "記録した path が paths を全部含むまで WAIT-SECONDS を上限に待ち、その時に記録した path の集合を返す(2 本の見張りの起動の順は
+     約束されないので、鈴の鳴りとは別に両方の要求を待つ)。"
+    (with [self.recorded]
+      (.wait-for self.recorded (fn [] (<= paths (frozenset self.paths))) WAIT-SECONDS)
+      (frozenset self.paths)))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
-    (with [self.lock]
-      (setv kind (get (.split request.url.path "/") -1)
-            first (and (in "watch" request.url.params) (not-in kind self.watched))
+    (setv kind (get (.split request.url.path "/") -1))
+    (when (in kind self.held)
+      (.wait self.released WAIT-SECONDS))
+    (with [self.recorded]
+      (setv first (and (in "watch" request.url.params) (not-in kind self.watched))
             self.paths (+ self.paths #(request.url.path)))
       (when (in "watch" request.url.params)
-        (setv self.watched (+ self.watched #(kind)))))
+        (setv self.watched (+ self.watched #(kind))))
+      (.notify-all self.recorded))
     (cond
       (not-in "watch" request.url.params)
         (httpx.Response 200 :json {"kind" "List" "metadata" {"resourceVersion" "1"} "items" []})
@@ -130,10 +147,15 @@
         (httpx.Response 503 :json {"kind" "Status" "code" 503}))))
 
 
+(val VOLUMES "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes")
+(val ATTACHMENTS "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumeattachments")
+;; Volume NAME の VolumeAttachment が版 7 で変わった出来事。
+(val ATTACHED {"type" "MODIFIED" "object" {"metadata" {"name" NAME "resourceVersion" "7"}}})
+
+
 (deftest test-the-board-follows-volumes-and-attachments-and-rings-the-changed-name [tmp-path]
   (.write-text (/ tmp-path "token") "test-token" :encoding "utf-8")
-  (val event (fn [name version] {"type" "MODIFIED" "object" {"metadata" {"name" name "resourceVersion" version}}}))
-  (val peer (Longhorn {"volumeattachments" #((event NAME "7"))}))
+  (val peer (Longhorn {"volumeattachments" #(ATTACHED)}))
   ;; 鈴を掛けてから見張りを始める(list し直しの全部の鈴の満たしを、掛けた後の 1 回目の出来事と分けて読む)。
   (<- board VolumeNoticeBoard (volume-notices "longhorn-system" :sa-dir (str tmp-path) :transport (httpx.MockTransport peer.handle)
                                               :retry-seconds 0.2 :watch-seconds 1))
@@ -143,9 +165,27 @@
     (assert (not (.arm board NAME (.mark board NAME) bell)))
     (assert (.wait bell.rung WAIT-SECONDS))
     (assert (= (len board.stops) 2) board.stops)
-    (val paths (set peer.paths))
-    (assert (= paths #{"/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumes"
-                       "/apis/longhorn.io/v1beta2/namespaces/longhorn-system/volumeattachments"})
-            paths)
+    ;; 鈴は 1 本の見張りだけでも鳴る — 2 本が両方 API を読んだ事は、鈴とは別に待つ。
+    (val paths (.wait-paths peer (frozenset #(VOLUMES ATTACHMENTS))))
+    (assert (= paths (frozenset #(VOLUMES ATTACHMENTS))) paths)
     (finally
+      (.stop board))))
+
+
+(deftest test-a-late-volume-follower-is-still-awaited-after-the-attachments-ring [tmp-path]
+  ;; Volume の見張りの最初の要求が遅れ、VolumeAttachment の見張りだけで鈴が鳴った後でも、両方の要求を待って確かめる。
+  (.write-text (/ tmp-path "token") "test-token" :encoding "utf-8")
+  (val peer (Longhorn {"volumeattachments" #(ATTACHED)} :held #("volumes")))
+  (<- board VolumeNoticeBoard (volume-notices "longhorn-system" :sa-dir (str tmp-path) :transport (httpx.MockTransport peer.handle)
+                                              :retry-seconds 0.2 :watch-seconds 1))
+  (try
+    (val bell (Bell))
+    (assert (not (.arm board NAME (.mark board NAME) bell)))
+    (assert (.wait bell.rung WAIT-SECONDS))
+    (assert (not-in VOLUMES peer.paths) peer.paths)
+    (.release peer)
+    (val paths (.wait-paths peer (frozenset #(VOLUMES ATTACHMENTS))))
+    (assert (= paths (frozenset #(VOLUMES ATTACHMENTS))) paths)
+    (finally
+      (.release peer)
       (.stop board))))
