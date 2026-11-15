@@ -204,7 +204,8 @@
    margin = 最後の回の余裕(None = まだ)・told-margin = log に出した余裕・reserve = 最後の回の準備の取り置き・prepare-wait = 最後の回の
    準備を待つ間の取り置き(byte — 0 = 待っていない。heartbeat が名乗る・worker/core/eviction_rules の prepare-wait-reserve)・uses = 見張りの最後の読みの
    job ごとの memory(JobUse の tuple — heartbeat の測りが task ごとの今の使いとして名乗る・2026-11-02)・uses-at-ms = その読みの刻(None =
-   まだ)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い)・jobs-held = 同じ回に読んだ jobs の層の
+   まだ)・peaks = 同じ読みの job ごとの最大(JobUse の tuple — bytes = 走り出しからの最大・終わった job は終わりから暫く残る。heartbeat の
+   測りが task ごとの山として名乗る・worker/protocol/memory_watch の頭の註の task ごとの山・2026-11-15)・jobs-current = 最後の回に読んだ jobs の層の memory.current(None = 読めなかった・層が無い)・jobs-held = 同じ回に読んだ jobs の層の
    使い(working set − slab_reclaimable — LayerMemory.held-bytes・None = 読めなかった・層が無い — jobs-intake との差が調整ループの観測する jobs の層の空き
    WorldView.jobs-room)・clis-limit = 最後に書いた clis の層の上限(None = まだ書いていない・掛け直さない)・
    clis-current = 最後の回に読んだ clis の層の memory.current(None = 読めなかった)・lent = 最後の回に clis に床を越えて貸した量
@@ -238,7 +239,7 @@
   (defn #^ None __init__ [self]
     (setv self.kubelet None self.node-read-ms None self.node-reason "" self.line None self.line-at-ms None self.told-kubelet None
           self.told-unread "" self.jobs-limit None self.squeezed False self.told-failure "" self.outside None
-          self.growths #() self.margin None self.told-margin None self.reserve 0 self.prepare-wait 0 self.uses #() self.uses-at-ms None
+          self.growths #() self.margin None self.told-margin None self.reserve 0 self.prepare-wait 0 self.uses #() self.uses-at-ms None self.peaks #()
           self.jobs-current None self.jobs-held None self.clis-limit None self.clis-current None self.lent 0
           self.box None self.needs #() self.pending 0 self.jobs-intake None self.jobs-intake-urgent None self.keep-room None self.keep-room-at-ms None
           ;; 線の内の貸し(worker/core/load_rules の頭の註): lend-room = heartbeat の測りが最後に読んだ「MemAvailable − 貸す下の線」(byte —

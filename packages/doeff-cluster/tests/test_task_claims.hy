@@ -14,7 +14,7 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord TaskClaim ComponentVersion])
 (import doeff_cluster._coordinator.core.task_claims [claims-noted shape-peaks-of task-need-of])
 (import doeff_cluster._coordinator.core.cluster_policy [load-of tasks-for])
-(import doeff_cluster._coordinator.core.measured_room [SHAPE-PEAK-MARGIN PEAK-STEP-MIB UNDECLARED-TASK-MIB TASK-CORES])
+(import doeff_cluster._coordinator.core.measured_room [SHAPE-PEAK-MARGIN SHAPE-MARGIN-CAP PEAK-STEP-MIB UNDECLARED-TASK-MIB TASK-CORES])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json task-claim-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_hy._table [TableWrite])
@@ -89,7 +89,8 @@
   (val offers (tasks-for kept "a"))
   (assert (= (tuple (gfor o offers #(o.id o.memory-mib))) #(#("run" CLAIM-MIB))) offers)
   (<- next-need int (task-need-of (! (task-of "next" 4096 SHAPE)) None (! (shape-peaks-of kept.tasks))))
-  (assert (= next-need (+ (ceil (* GROWN-PEAK-MIB SHAPE-PEAK-MARGIN)) PEAK-STEP-MIB)) next-need)
+  ;; 615 と 2,000 MiB の 2 本の finished の散らばり(3.25 倍)は上限 SHAPE-MARGIN-CAP で止まる(measured_room の頭の註の形ごとの余裕)。
+  (assert (= next-need (+ (ceil (* GROWN-PEAK-MIB SHAPE-MARGIN-CAP)) PEAK-STEP-MIB)) next-need)
   ;; 置いた phase を出た歩: 申告が外れる。
   (val ended (replace placed :phase "finished" :finished-ms 500 :peak-mib 700))
   (val finished (replace kept :tasks (.with-writes kept.tasks #((TableWrite "run" ended)))))

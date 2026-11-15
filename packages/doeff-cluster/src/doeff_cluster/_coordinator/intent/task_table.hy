@@ -23,10 +23,12 @@
 (defrecord ShapePeak
   "形 1 つの測った山(measured_room の頭の註の測った山で数える要り — task_claims.shape-peaks-of): mib = 形を名乗り山を測った行のうち、
    まだ終わっていない行と、近い回の終わった行(終わった刻の新しい順に RECENT-PEAK-RUNS 本 — 保持の間の全部ではない)の山の最大・
-   settled = その近い回に終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限にしない)。"
-  {:check [(>= mib 0)]}
+   settled = その近い回に終わり(finished)まで走った行が在るか(真 = 山は終わりまでの測り — 名乗りを要りの下限にしない)・spread = その近い回の
+   finished の行の山の散らばり(最大 / 最小 — finished の行が 2 本未満か最小が 0 なら 1.0。measured_room.learned-need が形ごとの余裕に読む)。"
+  {:check [(>= mib 0) (>= spread 1.0)]}
   (#^ int mib)
-  (#^ bool settled))
+  (#^ bool settled)
+  (setv #^ float spread 1.0))
 
 
 ;; 形の山に数える近い回の終わった行の数(ADR-DOE-CLUSTER-005 R4 の改め 2026-11-15)。以前は保持の間(約 24 時間)の終わった行の全部の
@@ -77,11 +79,20 @@
   (tuple (cut (sorted runs :key (fn [r] #((get r 0) (get r 1))) :reverse True) 0 RECENT-PEAK-RUNS)))
 
 
+(defn #^ float spread-of-runs [#^ tuple recent]
+  "近い回の終わった行 recent(recent-runs の答え)のうち finished の行の山の最大 / 最小(ShapePeak.spread — 2 本未満か最小が 0 なら 1.0)。
+   止まった行(lost・failed)の山は止まった時までの途中の値なので数えない(散らばりを途中の値で広げない)。"
+  (setv done (lfor r recent :if (get r 3) (get r 2)))
+  (if (and (>= (len done) 2) (> (min done) 0))
+      (/ (max done) (min done))
+      1.0))
+
+
 (defn #^ (| ShapePeak None) peak-of-runs [#^ tuple live-peaks #^ tuple recent]
   "まだ終わっていない行の山の列 live-peaks と近い回の終わった行 recent(recent-runs の答え)から ShapePeak(山が 1 つも無ければ None)。"
   (setv values (+ (tuple live-peaks) (tuple (gfor r recent (get r 2)))))
   (if values
-      (ShapePeak :mib (max values) :settled (any (gfor r recent (get r 3))))
+      (ShapePeak :mib (max values) :settled (any (gfor r recent (get r 3))) :spread (spread-of-runs recent))
       None))
 
 
@@ -263,7 +274,8 @@
   "形ごとの測った山を、形の族の近い回の山で補った値(形 → ShapePeak — ADR-DOE-CLUSTER-005 R4 の改め 2026-11-15)を全部の行から知るため:
    families = 形 → 族の関係(ClusterState.shape-families — 行は shape と family を持つ)。形そのものに近い回の finished の行が在れば
    形の山のまま。無い形のうち族を持つ形は、族の山(族の全部の形のまだ終わっていない行の山と、族の全部の形の終わった行の近い
-   RECENT-PEAK-RUNS 本 — peak-of-runs)と形の山の大きい方を山にし、settled は族の近い回に finished が在るか。族の山も無ければ形の山のまま。"
+   RECENT-PEAK-RUNS 本 — peak-of-runs)と形の山の大きい方を山にし、settled は族の近い回に finished が在るか・spread は族の近い回の散らばり。
+   族の山も無ければ形の山のまま。"
   (when (= (.size families) 0)
     (return index.peaks))
   (setv members {})
@@ -284,7 +296,8 @@
   (for [row (.rows families)]
     (setv own (.get peaks row.shape) family (.get by-family row.family))
     (when (and (is-not family None) (or (is own None) (not own.settled)))
-      (setv (get peaks row.shape) (ShapePeak :mib (max family.mib (if (is own None) 0 own.mib)) :settled family.settled))))
+      (setv (get peaks row.shape) (ShapePeak :mib (max family.mib (if (is own None) 0 own.mib)) :settled family.settled
+                                              :spread family.spread))))
   peaks)
 
 

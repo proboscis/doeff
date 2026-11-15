@@ -153,7 +153,9 @@
    (PSI の file の無い機体と、full の行の無い kernel の cpu は None)・cpu-nice = cpu-busy の内の nice の分(0〜1 — cpu-busy と同じ読みで
    None)・task-cpu-some-avg10 = task の層の CPU の PSI の some の avg10(%— 層の無い・読めない worker は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
    の tuple — task-uses-of。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator の置き先は名乗られない task の要りの全部を
-   予約する・2026-11-02)・jobs-room-mib = task の層(jobs)の今の空き(MiB — 見張りが最後に決めた新しい受けの上限 − 読んだ
+   予約する・2026-11-02)・task-peaks = task ごとの memory の山(TaskMemory の tuple — mib = 見張りの読みの走り出しからの最大で、終わった
+   task も終わりから暫く名乗る〔worker/protocol/memory_watch の頭の註の task ごとの山〕。None = 名乗らない〔task-uses と同じ古さの決め〕—
+   coordinator は task の行の山をこの値で書く・2026-11-15)・jobs-room-mib = task の層(jobs)の今の空き(MiB — 見張りが最後に決めた新しい受けの上限 − 読んだ
    使い(working set − slab_reclaimable)・jobs-room-of。負もありうる。None = 名乗らない〔線が無いか古い・層が無い〕— coordinator の置き先は、名乗った worker
    には要りがこの空きに収まる task だけを置く・2026-11-09)・prepare-wait-mib = keeper が版の準備を待つ間に新しい受けの外へ取り置いた量
    (MiB — worker/core/eviction_rules の prepare-wait-reserve。None = 待っていないか名乗らない〔線が無いか古い〕— coordinator の置き先は、
@@ -185,6 +187,7 @@
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
   (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None)
+  (setv #^ (| (get tuple #(TaskMemory ...)) None) task-peaks None)
   (setv #^ (| int None) jobs-room-mib None)
   (setv #^ (| int None) prepare-wait-mib None)
   (setv #^ (| (get tuple #(JobMeter ...)) None) job-meters None)

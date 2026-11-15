@@ -215,7 +215,10 @@
    内の nice > 0 の process の分(0〜1 — None = 名乗らない〔測りの前の版の worker・数えられない読み〕)・task-cpu-some-avg10 = task を
    置く cgroup の層の CPU の PSI の some の avg10(%— None = 層の無い・読めない・前の版の worker)・task-memory-MiB =
    走っている task ごとの memory の今の使い(task の id → MiB — 見張りの最後の読みの task の木の rss の和。None = 名乗らない〔見張りの
-   読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)・jobs-room-MiB = task を置く cgroup の層
+   読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)・task-peak-MiB = task ごとの memory の山
+   (task の id → MiB — 見張りの 5 秒ごとの読みの task の木の rss の和の、走り出しからの最大。worker の log の「job の memory の最大」と同じ値で、
+   終わった task も終わりから暫く名乗る。None = 名乗らない〔見張りの読みが古い・前の版の worker〕— core/cluster_policy の task-peaks-noted が
+   task の行の山を書く・2026-11-15)・jobs-room-MiB = task を置く cgroup の層
    (jobs)の今の空き(MiB — 層の memory.max − memory.current・負もありうる。None = 名乗らない〔層の無い・線の古い・前の版の worker〕—
    置き先は名乗った worker には要りがこの空きにも収まる task だけを置く・2026-11-09)・prepare-wait-MiB = worker の版の準備が空きを待つ間に、
    worker が新しい受けの外へ取り置いた量(MiB — None = 待っていない・前の版の worker。置き先は名乗った worker に新しく常駐の job を置かない —
@@ -237,9 +240,10 @@
            (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10 task-cpu-some-avg10) (or (is v None) (>= v 0))))
            (or (is cpu-nice None) (<= 0 cpu-nice 1)) (or (is prepare-wait-MiB None) (>= prepare-wait-MiB 0))
            (or (is reclaim-MiB None) (> reclaim-MiB 0)) (or (is hosted-lend-MiB None) (>= hosted-lend-MiB 0))
-           (or (is task-memory-MiB None)
-               (all (gfor #(k v) (.items task-memory-MiB)
-                          (and (isinstance k str) (isinstance v int) (not (isinstance v bool)) (>= v 0)))))]}
+           (all (gfor told #(task-memory-MiB task-peak-MiB)
+                      (or (is told None)
+                          (all (gfor #(k v) (.items told)
+                                     (and (isinstance k str) (isinstance v int) (not (isinstance v bool)) (>= v 0)))))))]}
   (#^ int at-ms)
   (#^ int cpus)
   (#^ int memory-total-MiB)
@@ -252,6 +256,7 @@
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
   (setv #^ (| dict None) task-memory-MiB None)
+  (setv #^ (| dict None) task-peak-MiB None)
   (setv #^ (| int None) jobs-room-MiB None)
   (setv #^ (| int None) prepare-wait-MiB None)
   (setv #^ (| (get tuple #(MeasuredJob ...)) None) job-uses None)

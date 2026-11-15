@@ -130,6 +130,8 @@
    #** (if (is load.prepare-wait-mib None) {} {"prepareWaitMiB" load.prepare-wait-mib})
    ;; task ごとの memory の今の使い(名乗る時だけ — 2026-11-02)。
    #** (if (is load.task-uses None) {} {"taskMemoryMiB" (dfor u load.task-uses u.id u.mib)})
+   ;; task ごとの memory の山(名乗る時だけ — 2026-11-15。終わった task の最後の山も載る)。
+   #** (if (is load.task-peaks None) {} {"taskPeakMiB" (dfor u load.task-peaks u.id u.mib)})
    ;; 常駐の job ごとの CPU の累計と memory の今(名乗る時だけ — 2026-11-10。jobUsesAtMs = 見張りの読みの刻・pssMiB・pssAtMs・
    ;; bodyAnonymousMiB は PSS を読めた job だけ・startedAtMs は根を起こした刻を知る job だけ)。
    #** (if (is load.job-meters None) {}
