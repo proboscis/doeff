@@ -108,3 +108,85 @@ pub fn traverse_zeroed_visits(ty: &Bound<'_, PyType>) -> (usize, usize) {
     }
     (counters.visits, counters.nulls)
 }
+
+// ---------------------------------------------------------------------------
+// Census by type without holding the objects
+// ---------------------------------------------------------------------------
+
+#[cfg(Py_3_12)]
+unsafe extern "C" {
+    /// CPython 3.12+: call `callback(op, arg)` for every object the cycle collector
+    /// tracks (the free-threaded build stops the world for the walk; the build with
+    /// the GIL walks under the GIL). Iteration stops when the callback returns 0.
+    fn PyUnstable_GC_VisitObjects(
+        callback: unsafe extern "C" fn(*mut ffi::PyObject, *mut c_void) -> c_int,
+        arg: *mut c_void,
+    );
+}
+
+/// The visitor of [`gc_type_counts`]: count `op` under its type. It reads the
+/// type pointer only — no reference to `op` is taken, and it runs no Python code
+/// (the free-threaded build runs it with every other thread stopped). The first
+/// time a type is met it takes one reference to the type, so the type outlives
+/// the walk while the dict of the answer is built.
+#[cfg(Py_3_12)]
+unsafe extern "C" fn count_by_type(op: *mut ffi::PyObject, arg: *mut c_void) -> c_int {
+    // SAFETY: `arg` is the `&mut HashMap` handed to `PyUnstable_GC_VisitObjects`
+    // below, which calls this synchronously on the calling thread; `op` is a live
+    // object for the duration of the call.
+    let counts = unsafe { &mut *arg.cast::<std::collections::HashMap<usize, usize>>() };
+    let ty = unsafe { ffi::Py_TYPE(op) };
+    match counts.entry(ty as usize) {
+        std::collections::hash_map::Entry::Occupied(mut seen) => *seen.get_mut() += 1,
+        std::collections::hash_map::Entry::Vacant(first) => {
+            // SAFETY: `ty` is the live type of a live object.
+            unsafe { ffi::Py_INCREF(ty.cast::<ffi::PyObject>()) };
+            first.insert(1);
+        }
+    }
+    1
+}
+
+/// Count the objects the cycle collector tracks, by type — the same population as
+/// `gc.get_objects()` (objects frozen by `gc.freeze()` are not in it) — without
+/// building the list of them.
+///
+/// `gc.get_objects()` holds a strong reference to every object until the list is
+/// dropped. Taken from a thread other than the one using an object, the list can
+/// keep alive a temporary the code relies on dying at once (asyncio's
+/// `StreamReader.readexactly` takes `bytes(memoryview(buf)[:n])` then
+/// `del buf[:n]`, which raises `BufferError` while the memoryview lives). Taking
+/// the list in a forked copy avoids that, but the copy writes the reference count
+/// of every listed object and so copies the pages that hold them: a census of 2M
+/// tracked objects copied 140 MiB (38% of the process) locally and 280 MiB within
+/// two seconds in a production job, which the memory watch rightly counted as
+/// memory. This walk holds nothing past the visit and copies nothing.
+#[cfg(Py_3_12)]
+pub fn gc_type_counts(py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyDict>> {
+    let mut counts: std::collections::HashMap<usize, usize> =
+        std::collections::HashMap::with_capacity(4096);
+    // SAFETY: the caller holds the thread state (`py`); the visitor touches only
+    // `counts` and the type it reads, and returns 1 to walk every object.
+    unsafe {
+        PyUnstable_GC_VisitObjects(
+            count_by_type,
+            (&mut counts as *mut std::collections::HashMap<usize, usize>).cast::<c_void>(),
+        );
+    }
+    let answer = pyo3::types::PyDict::new(py);
+    for (ty, count) in counts {
+        // SAFETY: the visitor took one reference to `ty` when it first met it; the
+        // bound object takes that reference over and releases it when dropped.
+        let ty = unsafe { Bound::from_owned_ptr(py, ty as *mut ffi::PyObject) };
+        answer.set_item(ty, count)?;
+    }
+    Ok(answer)
+}
+
+/// CPython 3.11 has no call that walks the tracked objects without listing them.
+#[cfg(not(Py_3_12))]
+pub fn gc_type_counts(_py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyDict>> {
+    Err(pyo3::exceptions::PyNotImplementedError::new_err(
+        "gc_type_counts needs CPython 3.12+ (PyUnstable_GC_VisitObjects)",
+    ))
+}

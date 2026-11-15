@@ -132,6 +132,16 @@ fn doeff_vm(m: &Bound<'_, PyModule>) -> PyResult<()> {
         gc::traverse_zeroed_visits(cls)
     }
 
+    /// Count the objects the cycle collector tracks, by type (`{type: count}` — the
+    /// population of `gc.get_objects()`), without listing them and without holding
+    /// a reference to any of them past the walk (see `gc::gc_type_counts`). Needs
+    /// CPython 3.12+ (NotImplementedError on 3.11). Like `gc_traverse_zeroed_visits`,
+    /// callers import it from `doeff_vm.doeff_vm`.
+    #[pyfn(m)]
+    fn gc_type_counts(py: Python<'_>) -> PyResult<Bound<'_, pyo3::types::PyDict>> {
+        gc::gc_type_counts(py)
+    }
+
     Ok(())
 }
 

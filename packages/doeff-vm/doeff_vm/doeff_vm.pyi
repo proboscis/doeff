@@ -42,6 +42,11 @@ def _set_scheduler_step_budget_armed(armed: bool) -> None:
     (STEP_BUDGET_ARMED in src/scheduler.rs)."""
     ...
 
+def gc_type_counts() -> dict[type, int]:
+    """Count the objects the cycle collector tracks, by type (the population of gc.get_objects()), without listing them and without
+    holding a reference to any of them past the walk - CPython 3.12+ (NotImplementedError on 3.11). See gc_type_counts in src/gc.rs."""
+    ...
+
 class StateHandler:
     """Responder for state (a Rust handler - src/state_handler.rs). Answers Get / Put (instances of two classes) from the store inside the VM.
     The only constructor is doeff_core_effects._handlers.state. Called by the VM; calling it from Python raises TypeError."""
