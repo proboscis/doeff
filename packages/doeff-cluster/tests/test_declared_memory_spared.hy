@@ -4,7 +4,7 @@
 ;; まだ無い時に止める候補にする。平常の大きさは観測から決まるので、暇な時間(約 300 MiB)の後に宣言の CLI を job の process の中で
 ;; 走らせる job(CLI の間 約 2 GiB — 宣言の peak-mib の内)は候補になり、DANGER の機体で止められうる。
 ;;   - coordinator は宣言の peak-mib を heartbeat の返事の job の行(peakMiB)で worker へ運び、worker は JobSpec の比べない欄に読む
-;;     (指紋 spec-hash に入らない)。欄の無い返事(旧い coordinator)は宣言なし。
+;;     (指紋 spec-hash に入らない)。欄の無い返事は読めない返事(2026-11-15 — tests/test_resident_peak_required.hy)。
 ;;   - 宣言の内の常駐の job は、平常の大きさの 2 倍でも・平常の大きさが無くても止める候補でない。宣言を越えた job は今どおり。
 ;;   - 群れの止めも、宣言の内の job には当てない。止める単位が無い行は、宣言の内なので止めなかった job を名指す。
 ;;
@@ -12,7 +12,7 @@
 ;; まだ無い job は、宣言の山を少しでも越えていれば止める候補だったので、宣言 565 MiB で 591 MiB の常駐の job が、worker の起動の直後の
 ;; DANGER の機体で 7 分に 5 回止められ、起こし直しが止まった(止めた間の最大は平常に残さないので、平常の大きさを覚えられない)。
 ;;   - 宣言を越えた job は、平常の大きさと宣言の山の大きい方(基準の大きさ)の steady-ratio 倍以上の時だけ止める候補。
-;;   - 宣言も平常の大きさも無い job は今どおり止める候補。
+;;   - 宣言の外の process(返事の宣言に名の無い根)は止める候補(tests/test_resident_peak_required.hy)。
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
@@ -71,12 +71,8 @@
   (<- read JobSpec (declared-job-spec spelled False))
   (assert (= read.peak-mib 2600) read)
   (assert (= read (replace read :peak-mib 300)))
-  ;; 欄の無い返事(旧い coordinator)と、整数でない欄は宣言なし。宣言の無い spec の行は欄を書かない。
-  (<- old JobSpec (declared-job-spec {"name" "dispatch" "entry" "m" "revision" "rev"} False))
-  (<- odd JobSpec (declared-job-spec {"name" "dispatch" "entry" "m" "revision" "rev" "peakMiB" True} False))
-  (assert (= #(old.peak-mib odd.peak-mib) #(None None)))
-  (<- plain dict (spec-json old))
-  (assert (not-in "peakMiB" plain) plain))
+  ;; 欄の無い返事・整数でない欄は断る(tests/test_resident_peak_required.hy)。
+  (assert (= (. (! (declared-job-spec (| spelled {"peakMiB" 300}) False)) peak-mib) 300)))
 
 
 (deftest test-a-resident-job-inside-its-declared-peak-is-not-a-candidate
@@ -115,7 +111,7 @@
   ;; 宣言の山の 1.5 倍(848 MiB)以上に跳ねた物は、平常の大きさが無くても止める。
   (<- jumped (| KillUnit None) (dispatch-victim 900 565 #()))
   (assert (= #(jumped.job jumped.kind jumped.head.pid) #("dispatch" UnitKind.LEAF 62)) jumped)
-  ;; 宣言も平常の大きさも無い job は今どおり止める。
+  ;; 宣言の外の process は止める。
   (<- unknown (| KillUnit None) (dispatch-victim 576 None #()))
   (assert (= #(unknown.job unknown.head.pid) #("dispatch" 62)) unknown)
   ;; 止める単位が無い時の log に、基準の大きさ(宣言の山)と一緒に名指す job。

@@ -141,7 +141,7 @@
   (#^ str field))
 
 
-(val JOB-ROW {"name" "web" "entry" "m" "revision" "r2"})
+(val JOB-ROW {"name" "web" "entry" "m" "revision" "r2" "peakMiB" 200})
 (val BAD-REPLIES #((BadReply :reply {"jobs" [JOB-ROW]} :field "draining")
                    (BadReply :reply {"jobs" [JOB-ROW] "draining" "yes"} :field "draining")
                    (BadReply :reply {"draining" False} :field "jobs")

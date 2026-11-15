@@ -35,7 +35,10 @@
   ;; (provides)を持つので読む — 手書きの task の枠の欄は読まない(この版の task の置き先は測った空きから数える)。測った空きは保存
   ;; しないので、読み直した worker は次の heartbeat まで task を受けない(labels だけの旧い形の行は今までどおり読まない —
   ;; state_json.state-from-json・durable_kv.state-from-kv)。
-  (assert (= (lfor job state.jobs job.spec.name) ["beacon"]) (lfor job state.jobs job.spec.name))
+  ;; ec727f20 の Service の行は memory の欄 peakMiB・settleMiB を持たないので、置かずに理由つきの RefusedJob として読む(2026-11-15 —
+  ;; 宣言し直しで置き換わる・tests/test_resident_peak_required.hy)。
+  (assert (= (lfor job state.jobs job.spec.name) []) (lfor job state.jobs job.spec.name))
+  (assert (in "peakMiB" (. (.row state.refused "beacon") reason)) (.row state.refused "beacon"))
   (assert (in "sim-worker" (.keys state.workers)) (sorted (.keys state.workers)))
   (assert (is (. (.row state.workers "sim-worker") measured) None) (.row state.workers "sim-worker"))
   (val kept (lfor task (.rows state.tasks) :if (= task.key "k-done") task))

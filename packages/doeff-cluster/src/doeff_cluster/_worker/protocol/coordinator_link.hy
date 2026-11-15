@@ -663,7 +663,7 @@
     ;; 宣言の memory の山を見張りの入れ物へ渡す(宣言の内で動く常駐の job を止めない — worker/core/memory_rules の頭の註の宣言の内)。
     ;; 返事ごとに置き直す(宣言だけを変えて process を起こし直さない宣言し直しも、次の返事から効く)。
     (when (is-not state.eviction None)
-      (setv state.eviction.declared (dfor spec jobs :if (is-not spec.peak-mib None) spec.name (* spec.peak-mib MIB))))
+      (setv state.eviction.declared (dfor spec jobs spec.name (* spec.peak-mib MIB))))
     (<- tasks tuple (accepted-tasks state (.get answered "tasks" [])))
     (setv state.last-tasks tasks)
     (<- (fetched-programs state cell options (+ state.last-jobs state.last-tasks)))

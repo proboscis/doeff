@@ -46,12 +46,17 @@
    中か)— 版を据え置く印 hold-version に写す(#3684)。既定の値は持たない: 既定があると、新しい読み手が渡し忘れた時に drain 中の
    worker が新しい版を黙って起こす(既定が無ければ、渡し忘れは呼んだ所で引数の不足として止まる)。
    Program の job の行に版 versions(名 → 版の object)が無ければ DeclaredReplyMalformed — 古い coordinator(7decfe5f7 の前)の返事で、
-   配備の順の誤り(coordinator を先に上げる)を名乗る。"
+   配備の順の誤り(coordinator を先に上げる)を名乗る。宣言の memory の山 peakMiB(0 以上の整数)の無い行も DeclaredReplyMalformed —
+   常駐の job は必ず宣言の山を持ち、見張りはそれを基準の大きさに入れる(worker/core/memory_rules の頭の註 — 2026-11-15。前は宣言なしで
+   受け、起動の直後の見張りが基準の大きさの無い常駐の job として止めえた)。"
   (when (and (in "program" job) (not (isinstance (.get job "versions") dict)))
     (raise (DeclaredReplyMalformed (.format "heartbeat の返事の Program の job {} の行に versions(名 → 版の object)が無い: {!r} — 古い coordinator の返事(coordinator を worker より先に上げる)"
                                             (.get job "name") (.get job "versions")))))
-  (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
   (val peak (.get job "peakMiB"))
+  (when (not (and (isinstance peak int) (not (isinstance peak bool)) (>= peak 0)))
+    (raise (DeclaredReplyMalformed (.format "heartbeat の返事の job {} の行の peakMiB(宣言の memory の山)が 0 以上の整数でない: {!r} — 宣言の山の無い常駐の job は受けない"
+                                            (.get job "name") peak))))
+  (<- placed EnvPlacement (env-placement (.get job "runtimeEnv") (get job "revision")))
   (val share (.get job "cpuShare"))
   (JobSpec (get job "name") (get job "entry") (tuple (.get job "args" [])) placed.revision
            :once (.get job "once" False) :placement (.get job "placement")
@@ -83,9 +88,8 @@
            :hold-version (or draining (is (.get job "holdVersion" False) True))
            ;; 中身の鍵(送り手が鍵を渡した job だけが持つ・無ければ None = 版と commit で宣言の変わりを判じる)。
            :content (.get job "content")
-           ;; 宣言の memory の山(MiB — 2026-11-11・持つ job だけ。無い・0 以上の整数でなければ None = 宣言なし。欄を知らない
-           ;; 旧い coordinator の返事も同じ — 見張りは今どおり平常の大きさで判じる)。
-           :peak-mib (if (and (isinstance peak int) (not (isinstance peak bool)) (>= peak 0)) peak None)
+           ;; 宣言の memory の山(MiB — 2026-11-11・上で 0 以上の整数と確かめた)。
+           :peak-mib peak
            ;; CPU の取り分の名(持つ job だけ。無い・名の規則に合わなければ None = 取り分なし — 欄を知らない旧い coordinator の返事も同じ)。
            :cpu-share (if (and (isinstance share str) (is (cpu-share-refusal share) None)) share None)))
 

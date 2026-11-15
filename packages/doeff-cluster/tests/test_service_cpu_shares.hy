@@ -126,7 +126,7 @@
   ;; 欄の無い返事(旧い coordinator)と名の規則の外の欄は取り分なし。
   (<- old JobSpec (declared-job-spec (| spelled {"cpuShare" "_shared"}) False))
   (assert (is old.cpu-share None) old)
-  (val plain (ClusterJob (JobSpec "plain" "m" #() "rev")))
+  (val plain (ClusterJob (JobSpec "plain" "m" #() "rev") :peak-mib 200 :settle-mib 100))
   (assert (not-in "cpuShare" (job-to-json (replace plain :run {})))))
 
 

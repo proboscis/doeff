@@ -14,7 +14,7 @@
 
 
 (val PROGRAM-SHA (* "a" 64))
-(val OLD-COORDINATOR-ROW {"name" "web" "entry" "m" "revision" "r2" "program" PROGRAM-SHA})
+(val OLD-COORDINATOR-ROW {"name" "web" "entry" "m" "revision" "r2" "program" PROGRAM-SHA "peakMiB" 200})
 (val NEW-COORDINATOR-ROW (| OLD-COORDINATOR-ROW {"versions" {"python" "3.14.3"}}))
 
 

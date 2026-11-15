@@ -140,8 +140,8 @@
   ;; httpx の MockTransport が要求ごとに同期で呼ぶ callback(Program の外)— 届くかどうかは呼ばれた時の up で決まる。
   (val handle (fn #^ httpx.Response [#^ httpx.Request request]
                 (if up
-                    (httpx.Response 200 :json {"jobs" [{"name" "writer-a" "entry" "m" "args" [] "revision" "r" "handoff" True}
-                                                       {"name" "turn-runner" "entry" "m" "args" [] "revision" "r"}]
+                    (httpx.Response 200 :json {"jobs" [{"name" "writer-a" "entry" "m" "args" [] "revision" "r" "peakMiB" 200 "handoff" True}
+                                                       {"name" "turn-runner" "entry" "m" "args" [] "revision" "r" "peakMiB" 200}]
                                                "tasks" [] "timing" {"fence_ms" 20000} "draining" False})
                     (raise (httpx.ConnectError "coordinator を作り直している")))))
   (val link (LinkRig "http://coord" "node-a" #() 20000 :transport (httpx.MockTransport handle)

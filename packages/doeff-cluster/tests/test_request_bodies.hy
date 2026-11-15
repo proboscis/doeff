@@ -176,10 +176,10 @@
   (assert (in "jobs" single.reason) single))
 
 
-(deftest test-a-declared-service-without-its-memory-is-refused-but-a-stored-row-without-it-loads
+(deftest test-a-declared-service-without-its-memory-is-refused-and-so-is-a-stored-row-without-it
   ;; 送り手の書く宣言(Service の資源の POST・PUT と旧い PUT /jobs)は memory の欄 peakMiB・settleMiB を必ず持つ — 欠けた・型の違う・
-  ;; 山を越える宣言は判断の前に 400 で、job と欄を名指して断る(既定の値で埋めない)。保存の読み直しは
-  ;; 旧い coordinator が欄の無いまま保存した行を断らず、memory を None で読む(断ると RefusedJob になり job が止まる)。
+  ;; 山を越える宣言は判断の前に 400 で、job と欄を名指して断る(既定の値で埋めない)。保存の読み直しも
+  ;; 旧い coordinator が欄の無いまま保存した行を置かず、理由つきの RefusedJob にする(2026-11-15 — 宣言し直しで置き換わる)。
   (val bare {"revision" "r" "run" SAMPLE-RUN "needs" ["net"]})
   (<- made (body-of (! (http-request "POST" "/resources/Service" {} {"name" "web" "spec" bare}))))
   (assert (isinstance made BodyMalformed) made)
@@ -201,9 +201,8 @@
   (assert (= (get (job-to-json full.job) "peakMiB") 900) full)
   (val stored (read-service-rows [(| bare {"name" "old"})]))
   (val jobs (get stored 0))
-  (assert (= (len (.rows (get stored 1))) 0) stored)
-  (assert (= #((. (get jobs 0) peak-mib) (. (get jobs 0) settle-mib) (. (get jobs 0) single-host)) #(None None None)) jobs)
-  (assert (not-in "peakMiB" (job-to-json (get jobs 0))) jobs))
+  (assert (= jobs #()) jobs)
+  (assert (in "peakMiB・settleMiB は 0 以上の整数" (. (.row (get stored 1) "old") reason)) stored))
 
 
 (deftest test-the-service-body-carries-the-idle-budget

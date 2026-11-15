@@ -90,7 +90,7 @@
   (assert (= held.spec.content "sha256:k1") held.spec)
   (assert (= (get (job-to-json held) "content") "sha256:k1") "coordinator の状態に残る")
   (assert (= (job-from-json (job-to-json held)) held) "読み戻しで同じ job")
-  (<- wire dict (spec-json held.spec))
+  (<- wire dict (spec-json (replace held.spec :peak-mib held.peak-mib)))
   (assert (= (get wire "content") "sha256:k1") wire)
   (<- received JobSpec (declared-job-spec wire False))
   (assert (= received.content "sha256:k1") received)

@@ -52,10 +52,10 @@
   ;; overlay は消した。持つ行は宣言の口と読み直しで断る — cluster_policy.program-row-refusal)。
   (setv #^ str update "recreate")
   ;; --- memory と 1 台に縛る訳 ---
-  ;; 起動の memory の山と落ち着いた値(MiB)。宣言の口は必ず受け取る(cluster_policy.declared-job-from-json)が、旧い coordinator が
-  ;; 欄の無いまま保存した行は None で読む(次の宣言し直しで知る)。process の形ではない — JobSpec に入れず、指紋 spec-hash に入らない。
-  (setv #^ (| int None) peak-mib None)
-  (setv #^ (| int None) settle-mib None)
+  ;; 起動の memory の山と落ち着いた値(MiB)。必ず持つ(既定の値は無い — 宣言の口も保存の読み直しも欄の無い行を断る・
+  ;; cluster_policy.job-from-json・2026-11-15)。process の形ではない — JobSpec に入れず、指紋 spec-hash に入らない。
+  (setv #^ int peak-mib (field :kw-only True))
+  (setv #^ int settle-mib (field :kw-only True))
   (setv #^ (| str None) single-host None)  ; job を 1 台の worker に縛ってよい訳(無ければ None)
   ;; 暇な時の予算(宣言の行の idleBudget・規則は job_rules.idle-budget-read — 無ければ None)。読むのは Service の spec を読む使う側で、
   ;; coordinator は運んで保存し Service の spec に載せるだけ(置き方と process の形は読まない — 指紋 spec-hash に入らない)。
@@ -168,8 +168,7 @@
 
 (defrecord WorkerLoad
   "worker 1 台の担っている数(cluster_policy.load-of の値): jobs = 常駐の job の置き先と並べた置き先(surge)の数・tasks = 置かれた task
-   (PLACED-PHASES)の数・settle-mib = 置いた job と surge の落ち着いた memory(ClusterJob.settle-mib)の和(MiB — memory を知らない旧い
-   保存の行の job は 0 と数える)・unseen = 置いた task のうち、worker の測った空き(measured)にまだ出ていない数(測った刻 −
+   (PLACED-PHASES)の数・settle-mib = 置いた job と surge の落ち着いた memory(ClusterJob.settle-mib)の和(MiB)・unseen = 置いた task のうち、worker の測った空き(measured)にまだ出ていない数(測った刻 −
    measured_room.TASK-RAMP-MS より後に置いた task — 測りの無い worker は 0)・reserved-mib = 置いた task の memory の予約の和(MiB —
    task ごとの max(0, 要り − 測りの名乗る今の使い)・measured_room.reserved-mib-of — 2026-11-02)。job の側の空き(memory-room-of・
    memory-misfit)は settle-mib と worker の memory-mib から、task の空き(task-room-of・task-memory-room-of)は worker の measured と

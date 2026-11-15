@@ -112,7 +112,9 @@ Program の中の `with-handlers` で並べます(実行先は handler を 1 つ
   `:replicas 0` に書き換えた系を宣言し直す事です。
 - `:peak-mib` / `:settle-mib` は job の起動の memory の山と落ち着いた値(MiB の 0 以上の整数・落ち着きは山以下)で、必ず書きます
   (省けば展開の時点で `SyntaxError` — 既定の値はありません)。静的な記述と宣言の行に `peakMiB`・`settleMiB` で載り、coordinator は
-  欄の無い宣言を 400 で断ります。process の形ではないので、数を直して宣言し直しても job は入れ替わりません。
+  欄の無い宣言を 400 で断ります。保存の読み直しでも欄の無い行(旧い coordinator の保存した行)は置かず、理由つきの受け付けない行に
+  し、宣言し直しで置き換わります。worker も `peakMiB` の無い job の行を持つ heartbeat の返事を読めない返事として断ります。process の
+  形ではないので、数を直して宣言し直しても job は入れ替わりません。
 - `:single-host "<訳>"` は job を 1 台の worker に縛ってよい訳で、任意です(空の文字列は断ります)。書いた job は N+1 の照らしの
   「置ける worker が 2 台以上」を当てません。宣言の行に `singleHost` で載ります。
 - `:idle-budget {:cpu-cores <数> :pss-mb <整数> :from-cpu-cores <数> :from-pss-mb <整数>}` は job の暇な時の予算で、任意です。

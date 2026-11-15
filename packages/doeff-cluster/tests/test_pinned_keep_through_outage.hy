@@ -44,8 +44,8 @@
   ;; 受入 1(worker の判断): coordinator に 20 分届かない(長い方の柵 240 秒を越える)途絶でも、縛られた worker は印の在る job を止めない。
   ;; 縛られていない worker・止まり始めた世代・長い柵を渡さない coordinator(返事の timing に欄が無い)の 3 つは今までどおり 240 秒で止める。
   ;; 印の無い job はどれも fence(20 秒)で止める。
-  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "keepWhenCutOff" True} False))
-  (<- plain JobSpec (declared-job-spec {"name" "b" "entry" "m" "revision" "r"} False))
+  (<- marked JobSpec (declared-job-spec {"name" "a" "entry" "m" "revision" "r" "peakMiB" 200 "keepWhenCutOff" True} False))
+  (<- plain JobSpec (declared-job-spec {"name" "b" "entry" "m" "revision" "r" "peakMiB" 200} False))
   (val silent (int (* OUTAGE-SECONDS 1000)))
   (assert (> silent T.keep-fence-ms))
   (defk kept-names [fence]
