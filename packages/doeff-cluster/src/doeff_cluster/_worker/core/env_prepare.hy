@@ -382,10 +382,10 @@
   {:pre [(: source KnownRoot)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
   "写し元の完成済みの root の venv の path を選ぶため: root の直下の venv(root-venv)に pyvenv.cfg が在ればそれ、無ければ venv を木の外へ
    移す前の形の root の、project の木の中の venv(tree-venv — 次の掃除で消えるまで写し元に残る)。"
-  (<- held (| str None) (FileSha256 (.format "{}/pyvenv.cfg" (root-venv source.root))))
+  (<- held (| str None) (FileSha256 (.format "{}/pyvenv.cfg" (! (root-venv source.root)))))
   (if (is-not held None)
-      (root-venv source.root)
-      (tree-venv source.env source.root)))
+      (! (root-venv source.root))
+      (! (tree-venv source.env source.root))))
 
 
 (defk stage-venv [request state]
@@ -406,7 +406,7 @@
     (return state))
   (<- from-venv str (venv-source-path source))
   (<- copied (| VenvCopied VenvRefused)
-      (CopyVenv from-venv (root-venv request.root) source.root request.root))
+      (CopyVenv from-venv (! (root-venv request.root)) source.root request.root))
   (match copied
     (VenvRefused :reason reason)
     (do (<- (PrepareNote (.format "venv を root {} から写せず uv sync で作る: {}" source.root reason)))
@@ -459,7 +459,7 @@
   (<- pdir str (project-dir request.env request.root))
   (val project request.env.project)
   (<- report (| SyncReport EnvFailure)
-      (SyncProject pdir (root-venv request.root) project.python project.groups (tuple (gfor w project.native w.package))))
+      (SyncProject pdir (! (root-venv request.root)) project.python project.groups (tuple (gfor w project.native w.package))))
   (match report
     (EnvFailure) report
     (SyncReport :downloaded n) (replace state :downloaded n)))
@@ -471,7 +471,7 @@
   (<- pdir str (project-dir request.env request.root))
   (if (not state.wheels)
       state
-      (do (<- done (InstallWheels pdir (root-venv request.root) state.wheels))
+      (do (<- done (InstallWheels pdir (! (root-venv request.root)) state.wheels))
           (if (isinstance done EnvFailure) done state))))
 
 
@@ -479,7 +479,7 @@
   {:pre [(: request PrepareRequest) (: state PrepareState)] :post [(: % PrepareState)]}
   "import の根を venv の .pth に宣言の順で並べる(子に PYTHONPATH を置かずに根を解くため)。書く file は .pth の 1 つ(#3676)。"
   (<- roots tuple (absolute-roots request.env request.root))
-  (<- (WriteImportRoots (root-venv request.root) roots))
+  (<- (WriteImportRoots (! (root-venv request.root)) roots))
   (replace state :written 1))
 
 
