@@ -33,7 +33,8 @@
 ;;;                                                          閉包の表を写し元の木から引き継ぐ(R3c — inherit-trees)。
 ;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)。
 ;;;                                                          .pyc と焼きの記録は木の外の root の置き場(ROOT-PYCACHE)へ置き、
-;;;                                                          置き場は完成マーカーの pycachePrefix へ(子へ PYTHONPYCACHEPREFIX で渡す)
+;;;                                                          置き場は root の venv の口の file と完成マーカーの pycachePrefix へ
+;;;                                                          (子は起こし方に関わらず venv の口で置き場を読む)
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
@@ -205,8 +206,8 @@
    ;; entryPlace(root の中で子の入口の解ける置き場 — worker が root へ送る子の入口と待ちの子の名を選ぶ)。欄の
    ;; 無い印(足す前の worker の印)は job_model の LEGACY-ENTRY-PLACE と読む(worker/protocol/env_store の root-entry-place)。
    "entryPlace" marker.entry-place
-   ;; pycachePrefix(root の .pyc の置き場 — worker が root の venv で起こす子へ PYTHONPYCACHEPREFIX で渡す・worker/protocol/env_store の
-   ;; root-pycache-prefix)。null と欄の無い印(足す前の worker の印)の root は木の中の __pycache__ を使う形で、子へ渡さない。
+   ;; pycachePrefix(root の .pyc の置き場を使う root かの名乗り — 子は印でなく root の venv の口の file から置き場を読む・
+   ;; _foundation/pycache_scope)。null と欄の無い印(足す前の worker の印)の root は木の中の __pycache__ を使う形。
    "pycachePrefix" marker.pycache-prefix
    ;; venv(root の venv の root からの相対 path — 子の起動・待ちの子・入口の検めが引く venv)。欄の無い印(venv を木の外へ移す前の
    ;; worker の印)の root は venv が project の木の中(runtime_env.tree-venv)と読む(launch の venv-of-marker)。
@@ -628,7 +629,7 @@
   "子と同じ起こし方で root を読み、子の約束の版と根の名前の影を確かめる(cloudpickle の参照が送り手と同じ source に解けるため)。"
   (<- pdir str (project-dir request.env request.root))
   (<- roots tuple (absolute-roots request.env request.root))
-  (<- report (| ProbeReport EnvFailure) (ProbeImports pdir (! (root-venv request.root)) roots :pycache state.pycache-prefix))
+  (<- report (| ProbeReport EnvFailure) (ProbeImports pdir (! (root-venv request.root)) roots))
   (match report
     (EnvFailure) report
     ;; 欄の名に - を含むので、型だけで受けて欄は属性で読む(match のキーワードの型は - の欄へ写らない)。

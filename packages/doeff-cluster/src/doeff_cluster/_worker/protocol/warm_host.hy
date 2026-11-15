@@ -29,7 +29,7 @@
 (import doeff_core_effects [EnvEntry])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace WARM-CHILD-FLAGS warm-place warm-child-argv])
 (import doeff_cluster._worker.core.job_cgroup [placed-argv])
-(import doeff_cluster._worker.protocol.env_store [root-entry-place root-pycache-prefix root-venv-path])
+(import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
 
 
 (defrecord WarmSettings
@@ -104,16 +104,12 @@
   (<- read tuple (ReadEnvironment (tuple (sorted CHILD-ENV-ALLOWED)) :prefixes CHILD-ENV-PREFIXES))
   ;; 待ちの子の入口の名は root の完成の印の置き場から選ぶ(待ちの子は root の版の doeff で起きる)。
   (<- entry-place (| str None) (root-entry-place launch.root))
-  ;; root の .pyc の置き場(root の完成の印の pycachePrefix)を job の子と同じく渡す — 待ちの子から分けた task は待ちの子の置き場を継ぐ。
-  (<- pycache (| str None) (root-pycache-prefix launch.root))
-  (val allowed (if (is pycache None)
-                   read
-                   (+ (tuple (gfor e read :if (!= e.name "PYTHONPYCACHEPREFIX") e))
-                      #((EnvEntry :name "PYTHONPYCACHEPREFIX" :value pycache)))))
+  ;; root の .pyc の置き場は渡さない: 待ちの子・分けた task・見張り(-I)は root の venv の起動の口が venv の file から読む
+  ;; (_foundation/pycache_scope)。
   ;; uv run --project の venv も root の完成の印から読み、UV_PROJECT_ENVIRONMENT で uv へ渡す(venv は project の木の外 — 前の形の
   ;; root は木の中の venv)。渡さないと uv は <project>/.venv を引く。
   (<- venv str (root-venv-path launch.root))
-  (val env (+ allowed #((EnvEntry :name "UV_PROJECT_ENVIRONMENT" :value venv))))
+  (val env (+ read #((EnvEntry :name "UV_PROJECT_ENVIRONMENT" :value venv))))
   (<- plain tuple (warm-child-argv settings.uv launch place entry-place))
   ;; service だけが分かれる root の待ちの子は service の兄弟の cgroup へ移ってから起こす(WarmSettings の service-procs の註 — 外の
   ;; job-cgroup-placer は包んだ argv を包み直さない)。

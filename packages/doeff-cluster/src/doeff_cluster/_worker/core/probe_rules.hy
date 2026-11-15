@@ -9,7 +9,7 @@
 (import doeff_core_effects [EnvEntry EnvMode])
 (import doeff_cluster._shared.intent.job_model [JobSpec])
 (import doeff_cluster._worker.intent.worker_model [CodeLayout])
-(import doeff_cluster._worker.core.launch [JobLaunch child-environment project-hy pycache-environ uv-run-environ])
+(import doeff_cluster._worker.core.launch [JobLaunch child-environment project-hy uv-run-environ])
 
 
 ;; 入口の検め 1 回(同じ木の束 1 本)の時間の上限(2026-09-27 に 60 → 300)。上限は import の速さを測る物ではなく、import の途中で
@@ -134,28 +134,27 @@
   results)
 
 
-(defk probe-command [code-path runtime-env targets * venv hy-command layout allowed-env probe-dir [pycache-prefix None]]
+(defk probe-command [code-path runtime-env targets * venv hy-command layout allowed-env probe-dir]
   {:pre [(: code-path str) (: runtime-env (| str None)) (: targets tuple) (: venv (| str None)) (: hy-command str) (: layout CodeLayout)
-         (: allowed-env dict) (: probe-dir str) (: pycache-prefix (| str None))]
+         (: allowed-env dict) (: probe-dir str)]
    :post [(: % JobLaunch)] :tags {:context "worker" :role "judgment"}}
   "検めの子(shim の下で起こす本体)の起こし方を、渡された値だけから決めるため。実行環境の job は子と同じ root の venv の
    hy を uv run を挟まずに直に起こす `<root の venv>/bin/hy -c …`(子と同じ字面 — launch.project-hy・venv = 呼び手が root の完成の印から
    launch.venv-of-marker で読んだ root の venv の path — 木の検めは None)・
    環境変数は子と同じ許可表(allowed-env = worker の環境のうち許可表の名と LC_* の分)と宣言の env-vars に root の venv の 2 つ
    (launch.uv-run-environ)を足した物・PYTHONPATH を置かない・cwd = probe-dir(REPLACE)。それ以外は worker の hy と木の PYTHONPATH を
-   worker の環境の上に足す(EXTEND)・cwd = 木。shim の命令の並びは呼び手が前に足す。pycache-prefix = root の .pyc の置き場(実行環境の
-   検めだけ — 子と同じく launch.pycache-environ で PYTHONPYCACHEPREFIX に足す・None = 置き場を使わない root)。"
+   worker の環境の上に足す(EXTEND)・cwd = 木。shim の命令の並びは呼び手が前に足す。root の .pyc の置き場は渡さない(root の venv の
+   起動の口が venv の file から読む — _foundation/pycache_scope)。"
   (if runtime-env
       (do (val declared (json.loads runtime-env))
           (<- child-env dict (child-environment allowed-env {} (dfor v (.get declared "envVars" []) (get v "name") (get v "value")) {}))
           (when (is venv None)
             (raise (ValueError (.format "実行環境の検めの root {} の venv の path が渡されていない" code-path))))
           (<- venv-env dict (uv-run-environ venv child-env))
-          (<- probe-env dict (pycache-environ venv-env pycache-prefix))
           (<- root-hy str (project-hy venv))
           (JobLaunch :argv (+ #(root-hy "-c" PROBE-PROGRAM) targets)
                      :cwd probe-dir
-                     :env (tuple (gfor k (sorted probe-env) (EnvEntry :name k :value (get probe-env k))))
+                     :env (tuple (gfor k (sorted venv-env) (EnvEntry :name k :value (get venv-env k))))
                      :env-mode EnvMode.REPLACE :work-dir None :last-used None))
       (JobLaunch :argv (+ #(hy-command "-c" PROBE-PROGRAM) targets)
                  :cwd code-path
