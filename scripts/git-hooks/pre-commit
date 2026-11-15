@@ -28,6 +28,18 @@ fi
 TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$TOP" ] || exit 0
 
+# (0) The installed hook is a copy taken once (make hooks-install, or the agora worker Pod at its start), so a check added to
+# this file later did not reach the machines until the copy was taken again: the internal-leftovers entry (3c) landed on
+# 2026-11-14 while the Pods kept the copy of 11-13, and the daily leftovers stage stayed red. The copy hands the commit to
+# the committing tree's own original when the two differ, so every commit passes the checks of the tree it commits to.
+# Trees without the original keep the checks of the copy below; DOEFF_PRE_COMMIT_FROM_TREE stops a second hand-over.
+TREE_HOOK="$TOP/scripts/git-hooks/pre-commit"
+if [ -z "${DOEFF_PRE_COMMIT_FROM_TREE:-}" ] && [ -f "$TREE_HOOK" ] && ! cmp -s "$0" "$TREE_HOOK"; then
+  DOEFF_PRE_COMMIT_FROM_TREE=1
+  export DOEFF_PRE_COMMIT_FROM_TREE
+  exec sh "$TREE_HOOK" "$@"
+fi
+
 # (1) Apply the semgrep rules (.semgrep.yaml) to the staged files. Which entry applies to which file is in one place, the
 # semgrep entry of .pre-commit-config.yaml (alias semgrep-rules) -- here we only fire that alias with the pre-commit of the uv.lock version (the working tree's .venv is not needed).
 # Without it, a commit on a machine with only the plain hook would not pass the semgrep rules, and the findings would first
