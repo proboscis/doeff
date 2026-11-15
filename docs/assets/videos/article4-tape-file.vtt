@@ -1,0 +1,97 @@
+WEBVTT
+
+t1
+00:00:00.250 --> 00:00:03.650
+This video moves the tape from a dict into a file.
+
+t2
+00:00:04.200 --> 00:00:08.800
+doeff is a library for algebraic effects in Python.
+
+t3
+00:00:09.350 --> 00:00:13.250
+We follow recorded, which uses doeff's own recorder.
+
+t4
+00:00:14.600 --> 00:00:18.400
+Notes kept in memory are gone when the process ends.
+
+t5
+00:00:18.950 --> 00:00:23.700
+Notes kept in a file stay, so another run can read them.
+
+t6
+00:00:25.050 --> 00:00:29.550
+json_tape makes storage, a handler over a JSON file.
+
+t7
+00:00:30.100 --> 00:00:33.750
+It reads the file for every effect it gets.
+
+t8
+00:00:34.300 --> 00:00:38.500
+MemoExists: it resumes its k with yes or no.
+
+t9
+00:00:39.050 --> 00:00:43.450
+MemoGet: it resumes its k with the stored answer.
+
+t10
+00:00:44.000 --> 00:00:48.050
+MemoPut: it writes the answer and saves the file.
+
+t11
+00:00:49.400 --> 00:00:54.600
+recorded first makes doeff's rewriter for HttpRequest.
+
+t12
+00:00:55.150 --> 00:01:00.450
+memo answers a hit from storage, and sends a miss out.
+
+t13
+00:01:01.000 --> 00:01:04.600
+json_tape goes around it, then the network.
+
+t14
+00:01:05.150 --> 00:01:09.000
+The last line runs it, with the rewriter's log dropped.
+
+t15
+00:01:10.350 --> 00:01:13.050
+offline stands where the network would.
+
+t16
+00:01:13.600 --> 00:01:17.450
+Any request that reaches it raises LookupError.
+
+t17
+00:01:18.800 --> 00:01:22.050
+First run, with github as the network.
+
+t18
+00:01:22.600 --> 00:01:26.750
+MemoExists says no, so memo sends the request out.
+
+t19
+00:01:27.300 --> 00:01:30.800
+github answers, and MemoPut writes it to the file.
+
+t20
+00:01:32.800 --> 00:01:37.200
+Second run: a new stack, with offline as the network.
+
+t21
+00:01:37.750 --> 00:01:42.100
+MemoExists says yes, and MemoGet gives the answer.
+
+t22
+00:01:42.650 --> 00:01:47.700
+offline is never reached. Same tags, sent stays at 0.
+
+t23
+00:01:49.050 --> 00:01:53.250
+The rewriter never opens a file. It yields three effects.
+
+t24
+00:01:53.800 --> 00:01:57.500
+Answer them from a dict, and the tape stays in memory.

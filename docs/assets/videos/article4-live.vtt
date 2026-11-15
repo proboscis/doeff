@@ -1,0 +1,85 @@
+WEBVTT
+
+l1
+00:00:00.250 --> 00:00:05.050
+This video records from a real HTTP server, then stops it.
+
+l2
+00:00:05.600 --> 00:00:09.950
+doeff is a library for algebraic effects in Python.
+
+l3
+00:00:10.500 --> 00:00:14.800
+We follow send, a handler that sends with urllib.
+
+l4
+00:00:16.150 --> 00:00:19.750
+Record once against the real service, and keep the file.
+
+l5
+00:00:20.300 --> 00:00:24.450
+Then tests run from that file, with no network at all.
+
+l6
+00:00:25.800 --> 00:00:29.550
+fetch opens the URL and waits for the response.
+
+l7
+00:00:30.100 --> 00:00:34.450
+It returns the body as text. It blocks while it waits.
+
+l8
+00:00:35.800 --> 00:00:39.600
+send builds a urllib Request from the effect.
+
+l9
+00:00:40.150 --> 00:00:45.200
+It yields Await, so fetch runs on a worker thread.
+
+l10
+00:00:45.750 --> 00:00:48.650
+With the body back, it resumes its k.
+
+l11
+00:00:50.000 --> 00:00:54.200
+The script starts a local server that answers like GitHub.
+
+l12
+00:00:54.750 --> 00:00:59.350
+recorded with send: two requests go over HTTP.
+
+l13
+00:00:59.900 --> 00:01:03.300
+The server answers twice, and the file keeps both.
+
+l14
+00:01:04.650 --> 00:01:06.550
+Then the server stops.
+
+l15
+00:01:07.100 --> 00:01:11.500
+The same program runs with offline, and the file answers.
+
+l16
+00:01:12.050 --> 00:01:15.200
+latest_releases has no async anywhere.
+
+l17
+00:01:16.550 --> 00:01:21.300
+VCR.py patches HTTP clients. A mock replaces a name.
+
+l18
+00:01:21.850 --> 00:01:25.950
+This recorder sees only effects, whoever sends them.
+
+l19
+00:01:26.500 --> 00:01:30.250
+So it can keep a model's answers or a random draw too.
+
+l20
+00:01:31.600 --> 00:01:35.200
+Three files, doeff from main, and nothing else.
+
+l21
+00:01:35.750 --> 00:01:39.800
+Record once, then replay in CI with offline.
