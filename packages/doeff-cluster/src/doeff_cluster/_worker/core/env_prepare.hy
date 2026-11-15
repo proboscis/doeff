@@ -26,7 +26,9 @@
 ;;;                                                          (宣言の bytecode-entries が在れば、木をまたいだ import の閉包だけ)。
 ;;;                                                          依存のキーの同じ root から写した木は、変わらない source の .pyc と
 ;;;                                                          閉包の表を写し元の木から引き継ぐ(R3c — inherit-trees)。
-;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)
+;;;                                                          焼いた数と処理ごとの秒は完成マーカーの bytecode の欄へ(#3607 の H2)。
+;;;                                                          .pyc と焼きの記録は木の外の root の置き場(ROOT-PYCACHE)へ置き、
+;;;                                                          置き場は完成マーカーの pycachePrefix へ(子へ PYTHONPYCACHEPREFIX で渡す)
 ;;;  10 確かめ    ProbeImports                               子の約束の版・根の最上位の名の解け先(env-incompatible)
 ;;;  11 完成      WriteEnvMarker                             完成マーカーを最後に置く(無い root は使わない)
 ;;;
@@ -41,6 +43,7 @@
 (import collections.abc [Callable])
 (import dataclasses [dataclass replace])  ; dataclass は defrecord の展開が使う
 (import datetime [datetime])
+(import posixpath)
 (import re)
 (import doeff_time [GetMonotonic GetTime])
 (import doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv RepoCheckout EnvFailure EnvFailureKind CHILD-PROTOCOL
@@ -50,7 +53,7 @@
 (import doeff_cluster._shared.core.runtime_env [project-dir])
 (import doeff_cluster._shared.core.native_wheel [wheel-out-dir])
 (import doeff_cluster._worker.core.env_upkeep [LayerSample])
-(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256])
+(import doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot VenvCopied VenvRefused CopyVenv StageTime StagePart TreeSource TreePlaced MIRROR-PRESENT MIRROR-FETCHED VolumeKind MirrorReady FetchState RepoMirror EnvMarker WheelOrigin WheelReady SyncReport BytecodeTree BytecodeReport ProbeReport EnvReady PrepareState StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample EnsureMirror FetchCommit MaterializeTree EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts ENV-MARKER-FORMAT FileSha256 ROOT-PYCACHE])
 
 (defk absolute-roots [env root]
   {:pre [(: env RuntimeEnv) (: root str)] :post [(: % tuple)]}
@@ -196,7 +199,10 @@
    "buildMemoryBytes" marker.build-memory-bytes
    ;; entryPlace(root の中で子の入口の解ける置き場 — worker が root へ送る子の入口と待ちの子の名を選ぶ)。欄の
    ;; 無い印(足す前の worker の印)は job_model の LEGACY-ENTRY-PLACE と読む(worker/protocol/env_store の root-entry-place)。
-   "entryPlace" marker.entry-place})
+   "entryPlace" marker.entry-place
+   ;; pycachePrefix(root の .pyc の置き場 — worker が root の venv で起こす子へ PYTHONPYCACHEPREFIX で渡す・worker/protocol/env_store の
+   ;; root-pycache-prefix)。null と欄の無い印(足す前の worker の印)の root は木の中の __pycache__ を使う形で、子へ渡さない。
+   "pycachePrefix" marker.pycache-prefix})
 
 
 ;; /proc/self/mountinfo の 1 行: `<id> <親> <major:minor> <根> <mount の点> <選択> [<任意の欄>…] - <fs の型> <mount の元> <super の選択>`。
@@ -532,13 +538,21 @@
   (<- hy-version (| str None) (ReadHyVersion pdir))
   (val with-hy (replace state :hy-version hy-version))
   (<- trees tuple (bytecode-trees request with-hy editable))
+  ;; .pyc と焼きの記録は木の外の root の置き場へ(ADR-DOE-BUILD-002 R3d — 木を読み専用で置ける・木の中へ hardlink を張らない)。写し元の
+  ;; 木は inherit-trees が選んだ 1 つの root の木(<root>/<repo の dir>)なので、その root の置き場も同じ名で引ける。
+  (val pycache (posixpath.join request.root ROOT-PYCACHE))
+  (val inherited (next (gfor t trees :if (is-not t.inherit None) t.inherit) None))
+  (val inherit-pycache (if (is inherited None) None (posixpath.join (posixpath.dirname inherited) ROOT-PYCACHE)))
   (if (not trees)
       with-hy
       (do (<- (StageStarted BYTECODE-STAGE))
-          (<- report (| BytecodeReport EnvFailure) (CompileTrees pdir trees request.env.bytecode-entries request.compile-jobs))
+          (<- report (| BytecodeReport EnvFailure)
+              (CompileTrees pdir trees request.env.bytecode-entries request.compile-jobs pycache :inherit-pycache inherit-pycache))
           (<- (StageStarted BYTECODE-STAGE))
           (<- outcome (| PrepareState EnvFailure) (bytecode-outcome trees report with-hy))
-          outcome)))
+          (match outcome
+            (PrepareState) (replace outcome :pycache-prefix pycache)
+            _ outcome))))
 
 
 (defk stage-probe [request state]
@@ -546,7 +560,7 @@
   "子と同じ起こし方で root を読み、子の約束の版と根の名前の影を確かめる(cloudpickle の参照が送り手と同じ source に解けるため)。"
   (<- pdir str (project-dir request.env request.root))
   (<- roots tuple (absolute-roots request.env request.root))
-  (<- report (| ProbeReport EnvFailure) (ProbeImports pdir roots))
+  (<- report (| ProbeReport EnvFailure) (ProbeImports pdir roots :pycache state.pycache-prefix))
   (match report
     (EnvFailure) report
     ;; 欄の名に - を含むので、型だけで受けて欄は属性で読む(match のキーワードの型は - の欄へ写らない)。
@@ -634,6 +648,6 @@
                                          :interpreter outcome.interpreter :child-protocol CHILD-PROTOCOL
                                          :bytecode outcome.bytecode :volume outcome.volume :startup-seconds startup
                                          :hy-version outcome.hy-version :build-memory-bytes build-memory
-                                         :entry-place outcome.entry-place)))
+                                         :entry-place outcome.entry-place :pycache-prefix outcome.pycache-prefix)))
           (EnvReady :env request.env :key request.key :root request.root :stages outcome.stages
                     :downloaded outcome.downloaded :built outcome.built :interpreter outcome.interpreter))))
