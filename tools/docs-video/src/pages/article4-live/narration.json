@@ -1,0 +1,23 @@
+[
+ {"id": "l1", "text": "This video records from a real HTTP server, then stops it."},
+ {"id": "l2", "text": "doeff is a library for algebraic effects in Python."},
+ {"id": "l3", "text": "We follow send, a handler that sends with urllib."},
+ {"id": "l4", "text": "Record once against the real service, and keep the file."},
+ {"id": "l5", "text": "Then tests run from that file, with no network at all."},
+ {"id": "l6", "text": "fetch opens the URL and waits for the response."},
+ {"id": "l7", "text": "It returns the body as text. It blocks while it waits."},
+ {"id": "l8", "text": "send builds a urllib Request from the effect."},
+ {"id": "l9", "text": "It yields Await, so fetch runs on a worker thread."},
+ {"id": "l10", "text": "With the body back, it resumes its k."},
+ {"id": "l11", "text": "The script starts a local server that answers like GitHub."},
+ {"id": "l12", "text": "recorded with send: two requests go over HTTP."},
+ {"id": "l13", "text": "The server answers twice, and the file keeps both."},
+ {"id": "l14", "text": "Then the server stops."},
+ {"id": "l15", "text": "The same program runs with offline, and the file answers."},
+ {"id": "l16", "text": "latest_releases has no async anywhere."},
+ {"id": "l17", "text": "VCR.py patches HTTP clients. A mock replaces a name."},
+ {"id": "l18", "text": "This recorder sees only effects, whoever sends them."},
+ {"id": "l19", "text": "So it can keep a model's answers or a random draw too."},
+ {"id": "l20", "text": "Three files, doeff from main, and nothing else."},
+ {"id": "l21", "text": "Record once, then replay in CI with offline."}
+]
