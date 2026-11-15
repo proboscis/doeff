@@ -54,7 +54,7 @@
                                                 carries-content ws-refusal-status send-overflows closing-of HttpProbe HttpProbeAnswer
                                                 probe-for probe-answer WsTextArrived WsBinaryArrived HttpHeader
                                                 WsShortcut WsShortcutAnswered WsShortcutFailed ws-shortcut-for ws-shortcut-outcome ws-shortcut-stage
-                                                HttpShortcut HttpShortcutFailed http-shortcut-for http-shortcut-outcome])
+                                                HttpShortcut HttpShortcutCarried HttpShortcutFailed http-shortcut-for http-shortcut-outcome])
 (import doeff_core_effects._file_effects [ReadBytes FileFailed])
 
 (val CLOSED-REASON "the script's request queue is exhausted")
@@ -205,6 +205,13 @@
   (#^ HttpProbe probe))
 
 
+(defrecord ShortcutSpot
+  "A request that a request mouth answered on the spot: served = the record of the answer the terminal receives, carried = the already answered event passed to the body
+   (HttpShortcutCarried -- the request with its carried value) or None (HttpProbeAnswer -- the request is not passed to the body)."
+  (#^ HttpServed served)
+  (#^ (| HttpRequestArrived None) carried))
+
+
 (defk probe-hit [probes event]
   {:pre [(: probes (of tuple HttpProbe ...)) (: event (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened))] :post [(: % (| ProbeHit None))]
    :tags {:context "http-server" :role "judgment"}}
@@ -228,9 +235,10 @@
 
 (defk shortcut-served [requests bodies event]
   {:pre [(: requests (of tuple HttpShortcut ...)) (: bodies (of dict str ScriptedBody)) (: event (| HttpRequestArrived WsTextArrived WsBinaryArrived WsClosed WsOpened))]
-   :post [(: % (| HttpServed None))] :tags {:context "http-server" :role "foundation"}}
+   :post [(: % (| ShortcutSpot None))] :tags {:context "http-server" :role "foundation"}}
   "To answer the script's next event on the spot if it is a request that hits a request mouth (http-shortcuts of HttpListen -- http-shortcut-for), the same as the real one: run answer on its
-   body with http-shortcut-outcome and, for an HttpProbeAnswer, the record of the answer the terminal receives (the request is not passed to the body). None = pass it to the body as usual (no
+   body with http-shortcut-outcome and, for an HttpProbeAnswer, the record of the answer the terminal receives (the request is not passed to the body); for an HttpShortcutCarried, the record
+   and the request passed to the body already answered with its carried value. None = pass it to the body as usual (no
    mouth hit, the body is not read in full ahead -- no declared length, as with chunked, or the body script has failed -- or the answer was None or fell)."
   (when (not (isinstance event HttpRequestArrived))
     (return None))
@@ -240,10 +248,15 @@
   (when (or (is shortcut None) (is declared None) (and (is-not body None) (is-not body.failed None)))
     (return None))
   (val outcome (http-shortcut-outcome shortcut (if (is body None) b"" body.data)))
-  (if (isinstance outcome HttpProbeAnswer)
-      (do (<- answer HttpServed (probe-served event outcome))
-          answer)
-      None))
+  (match outcome
+    (HttpProbeAnswer) (do (<- answer HttpServed (probe-served event outcome))
+                          (ShortcutSpot :served answer :carried None))
+    (HttpShortcutCarried :answer answer :carried carried)
+    (do (<- served HttpServed (probe-served event answer))
+        (ShortcutSpot :served served
+                      :carried (HttpRequestArrived :ticket event.ticket :method event.method :path event.path :target event.target :headers event.headers
+                                                   :upgrade event.upgrade :received-at event.received-at :remote event.remote :carried carried)))
+    _ None))
 
 
 (defrecord ScriptTake
@@ -274,13 +287,17 @@
   (var answering True)
   (while (and answering rest)
     (<- hit (| ProbeHit None) (probe-hit mouths (get rest 0)))
-    (<- spot (| HttpServed None) (shortcut-served (if (is hit None) requests #()) bodies (get rest 0)))
+    (<- spot (| ShortcutSpot None) (shortcut-served (if (is hit None) requests #()) bodies (get rest 0)))
     (cond
       (is-not hit None) (do (<- answer HttpServed (probe-served hit.arrival (probe-answer hit.probe)))
                             (:= record (+ record #(answer)))
                             (:= rest (cut rest 1 None)))
-      (is-not spot None) (do (:= record (+ record #(spot)))
-                             (:= rest (cut rest 1 None)))
+      (and (is-not spot None) (is spot.carried None)) (do (:= record (+ record #(spot.served)))
+                                                          (:= rest (cut rest 1 None)))
+      ;; Answered on the spot and passed to the body already answered (HttpShortcutCarried): the event with its carried value is the head.
+      (is-not spot None) (do (:= record (+ record #(spot.served)))
+                             (:= rest (+ #(spot.carried) (cut rest 1 None)))
+                             (:= answering False))
       True (:= answering False)))
   (when (not rest)
     (return (ScriptTake :event None :pending rest :served record :opened opened :tally tally :backlog backlog :readable readable
@@ -323,7 +340,8 @@
     (:= counted dropped)
     (<- kept dict (without-ticket boxes head.ticket))
     (:= boxes kept))
-  (when (isinstance head HttpRequestArrived)
+  ;; A request passed already answered (carried) takes no command and has no body to read (the same as the real one).
+  (when (and (isinstance head HttpRequestArrived) (is head.carried None))
     (<- declared (| int None) (declared-length head.headers))
     (:= reading (| readable {head.ticket declared}))
     (:= handed (| arrived {head.ticket head})))

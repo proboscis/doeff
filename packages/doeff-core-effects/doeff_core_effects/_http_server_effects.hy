@@ -91,7 +91,10 @@
 ;;;   http-shortcuts of HttpListen = a list of HttpShortcut. If a request that does not ask for a ws Upgrade has the method and path (excluding the query) of an HttpShortcut
 ;;;   (http-shortcut-for - the first one), and the answerer has read its whole body before lining it up, the answerer runs answer (a function that receives the body's bytes and returns a closed
 ;;;   Program) in its own run (http-shortcut-outcome - like probe-answer, it touches neither the main run's handlers nor state). If the Program answers HttpProbeAnswer, the answerer sends that
-;;;   answer and the request never becomes an event (it does not reach HttpNextRequest - the ticket is counted the same way as other requests). If it answers None, the request lines up as
+;;;   answer and the request never becomes an event (it does not reach HttpNextRequest - the ticket is counted the same way as other requests). If it answers HttpShortcutCarried (an answer
+;;;   and a value carried), the answerer sends that answer on the spot and then lines the request up as the event HttpRequestArrived with the value in its field carried - an already
+;;;   answered request: the main body folds the value without answering it (its ticket takes no command, and its body is not read again), so a request the main body must see is not kept
+;;;   waiting for its answer while the main body's processing loop is busy. If it answers None, the request lines up as
 ;;;   before and its body can still be read once with HttpReadBody (the main body answers as usual). If answer failed or its answer's type is wrong, the answerer logs one line of the reason
 ;;;   (HttpShortcutFailed) and the request lines up as if it had answered None.
 ;;;   The answers run one at a time, in the order the requests arrive (the real answerer: on one thread of their own, outside the listener's loop; the script: in the script's order) - so an
@@ -145,7 +148,8 @@
 
 (defrecord HttpRequestArrived
   "One request that arrived: ticket, method, path (without query), target (with query), the list of headers, whether an Upgrade to ws was requested, the beat received (header comment),
-   remote = the sender's address (IP spelling - None when the answerer cannot determine it)."
+   remote = the sender's address (IP spelling - None when the answerer cannot determine it), carried = the value a request entry's answer handed to the main body
+   (HttpShortcutCarried - None if not handed). A request with carried was already answered on the spot: its ticket takes no command and its body is not read again."
   (#^ str ticket)
   (#^ str method)
   (#^ str path)
@@ -153,7 +157,8 @@
   (#^ (get tuple #(HttpHeader ...)) headers)
   (#^ bool upgrade)
   (setv #^ (| float None) received-at None
-        #^ (| str None) remote None))
+        #^ (| str None) remote None
+        #^ object carried None))
 
 
 (defrecord WsOpened
@@ -304,11 +309,19 @@
 
 (defrecord HttpShortcut
   "One request entry that the answerer answers on the spot (header comment): method and path = matches a request with that method and path (excluding the query) that does not ask for a ws
-   Upgrade, answer = a function that receives the whole body's bytes and returns a closed Program answering HttpProbeAnswer (sent on the spot - the request never reaches the main body) or None
-   (the request reaches the main body as usual). The answerer runs it in its own run for each request, one request at a time."
+   Upgrade, answer = a function that receives the whole body's bytes and returns a closed Program answering HttpProbeAnswer (sent on the spot - the request never reaches the main body),
+   HttpShortcutCarried (sent on the spot - the request reaches the main body as an already answered event carrying a value) or None (the request reaches the main body as usual). The
+   answerer runs it in its own run for each request, one request at a time."
   (#^ str method)
   (#^ str path)
   (#^ (get Callable #([bytes] Program)) answer))
+
+
+(defrecord HttpShortcutCarried
+  "The answer of a request entry's answer that answers on the spot and still hands a value to the main body (header comment): answer = sent on the spot, carried = the value put in the field
+   carried of the request's event HttpRequestArrived, which lines up as an already answered request (no command, no body read)."
+  (#^ HttpProbeAnswer answer)
+  (#^ object carried))
 
 
 (defrecord HttpShortcutFailed
@@ -522,17 +535,20 @@
 
 
 (deff http-shortcut-outcome [shortcut data]  ; cannot be a defk: entry that the answerer calls outside the main body's Program (real = a thread outside the listener's loop; script = a handler clause) and runs a closed answer in its own run
-  {:pre [(: shortcut HttpShortcut) (: data bytes)] :post [(: % (| HttpProbeAnswer HttpShortcutFailed None))] :tags {:context "http-server" :role "foundation"}}
+  {:pre [(: shortcut HttpShortcut) (: data bytes)] :post [(: % (| HttpProbeAnswer HttpShortcutCarried HttpShortcutFailed None))] :tags {:context "http-server" :role "foundation"}}
   "To decide, without touching the main body's run (scheduler, session values, Await's shared event loop), whether one request that hit a request entry is answered on the spot (header comment):
-   runs the answer Program for the body data in its own run - HttpProbeAnswer = send it on the spot, None = pass the request to the main body, and if it failed or the answer's type is wrong,
-   HttpShortcutFailed (the request is passed to the main body). The two answerers answer with this same function."
+   runs the answer Program for the body data in its own run - HttpProbeAnswer = send it on the spot, HttpShortcutCarried = send its answer on the spot and pass the request to the main body as
+   an already answered event carrying the value, None = pass the request to the main body, and if it failed or the answer's type is wrong, HttpShortcutFailed (the request is passed to the
+   main body). The two answerers answer with this same function."
   (try
     (setv answer (run (shortcut.answer data)))
     (except [error Exception]
       (return (HttpShortcutFailed :reason (+ (. (type error) __name__) ": " (str error))))))
-  (if (or (is answer None) (isinstance answer HttpProbeAnswer))
-      answer
-      (HttpShortcutFailed :reason (+ "answer's answer is neither HttpProbeAnswer nor None: " (repr answer)))))
+  (match answer
+    None answer
+    (HttpProbeAnswer) answer
+    (HttpShortcutCarried :answer (HttpProbeAnswer)) answer
+    _ (HttpShortcutFailed :reason (+ "answer's answer is neither HttpProbeAnswer, HttpShortcutCarried nor None: " (repr answer)))))
 
 
 ;; --- Script vocabulary (scripted-http-server) -----------------------------------------------------------------------------
