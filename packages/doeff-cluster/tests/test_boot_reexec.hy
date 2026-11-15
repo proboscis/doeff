@@ -78,6 +78,27 @@
   (assert (in "準備済み" done.stderr) done.stderr))
 
 
+(deftest test-a-kept-mirror-fetches-from-the-current-url [tmp-path]
+  ;; 失敗ケース: 置き場(node の dir に残る)を最初の repo から clone した機体で、起動の source の repo を替える(WORKER_DOEFF_URL を
+  ;; 新しい repo へ向ける)と、取り寄せが置き場の origin(最初の repo)から取り続け、新しい repo にだけ在る commit を取れずに起動が落ちた。
+  (<- made tuple (prepared-root tmp-path "echo \"old root\"\n"))
+  (val moved (/ tmp-path "moved"))
+  (.mkdir moved)
+  (<- (git moved "init" "-q"))
+  (val deploy (/ moved "packages" "doeff-cluster" "deploy"))
+  (.mkdir deploy :parents True)
+  (.write-text (/ deploy "boot.sh") "echo \"moved root: $ROLE\"\n")
+  (<- (git moved "add" "packages"))
+  (<- (git moved "-c" "user.email=t@t" "-c" "user.name=t" "commit" "-q" "-m" "moved"))
+  (<- head str (git moved "rev-parse" "HEAD"))
+  (val sha (.strip head))
+  (<- done subprocess.CompletedProcess (boot tmp-path (str moved) sha "records"))
+  (assert (= done.returncode 0) done.stderr)
+  (assert (in "moved root: records" done.stdout) (+ done.stdout done.stderr))
+  (<- origin str (git (/ tmp-path "work" "boot" "doeff.git") "remote" "get-url" "origin"))
+  (assert (= (.strip origin) (str moved)) #("置き場の origin が WORKER_DOEFF_URL に合っていない" origin (get made 0))))
+
+
 (deftest test-an-unknown-role-is-refused-before-anything-is-extracted [tmp-path]
   ;; 失敗ケース: 知らない役を worker の起動へ落とすと、走っている worker の Pod の中で 2 つ目の worker が起きる。名指しで断り、
   ;; 展開もしない(mirror の dir を作らない)。
