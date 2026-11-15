@@ -657,8 +657,9 @@
   (<- made (| None FileFailed) (MakeDirectory dest))
   (<- answer (| VenvCopied VenvRefused)
       (match #(listed made)
-        #((FileFailed :path path :detail detail) _) (VenvRefused :reason (.format "写し元の venv を歩けない: {}: {}" path detail))
-        #(_ (FileFailed :path path :detail detail)) (VenvRefused :reason (.format "venv の dir を作れない: {}: {}" path detail))
+        ;; 断りは値なので Pure で包む(<- は effect か program だけを受け、素の値を渡すと準備の process が落ちる)。
+        #((FileFailed :path path :detail detail) _) (Pure (VenvRefused :reason (.format "写し元の venv を歩けない: {}: {}" path detail)))
+        #(_ (FileFailed :path path :detail detail)) (Pure (VenvRefused :reason (.format "venv の dir を作れない: {}: {}" path detail)))
         _ (venv-entries source dest source-root dest-root listed)))
   (when (isinstance answer VenvRefused)
     (<- (RemoveTree dest)))
