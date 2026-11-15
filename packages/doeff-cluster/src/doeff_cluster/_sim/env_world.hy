@@ -13,6 +13,10 @@
 ;;;                 業務の kind と一時かは翻訳 env-translation が出力と終わりから読み分ける — 世界は業務の語を持たない)。
 ;;;   disk-free   = 空き(byte)。child-protocol = root の中の子の入口の約束の版。
 ;;;   mounts      = この process の mount の表(/proc/self/mountinfo の中身 — 置き場の disk の種類を読む・#3676)。
+;;;   tree-mount / tree-unmount = 翻訳の設定 runtime-env.tree-mount・tree-unmount(空 = 木を mount で置かない)。世界は台本の命令
+;;;                 TREE-MOUNT-COMMAND・TREE-UNMOUNT-COMMAND(木を読み専用で見せる外の daemon の代役)を持つ: 置く命令は commit の木を dir の下へ
+;;;                 書き(翻訳の file の効果の外 — 世界が書く)、mount の表に行を足す。外す命令は行を消し、dir を中身ごと消す。
+;;;   mount-refused = 置く命令が断る commit(外の daemon の保存先にまだ無い commit の代役)。
 ;;; 模擬の uv.lock の書き方: 1 行 1 package で `名==版`、第三者の package の最上位の import の名は ` top=a,b` で添える
 ;;; (処理ステージ 10 の名前の影を起こすため)。editable で入る package は ` editable=<project の dir からの相対 path>` を添える
 ;;; (sync が venv の site-packages に本物の uv と同じ形の .pth — 中身は dir の絶対 path 1 行 — を置く)。`#` で始まる行は読まない。
@@ -43,7 +47,8 @@
 (import posixpath)
 (import doeff_core_effects [Ask])
 (import doeff_core_effects [ProcessOutcome RunProcess])
-(import doeff_core_effects [PathKind FileFailed PathStat MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText AppendText MakeDirectory WalkTree])
+(import doeff_core_effects [PathKind FileFailed PathStat MemoryFile MemoryFiles ReadMemoryFiles StatPath ReadText WriteText AppendText MakeDirectory WalkTree
+                           ListDirectory RemoveTree])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_core_effects [ScriptedCommand ProcessScript scripted-process-handler])
 (import doeff_time [Delay])
@@ -71,7 +76,15 @@
 (val GIT-FATAL 128)
 (val BAD-USAGE 129)
 (val UNREACHABLE-TEXT "fatal: Could not read from remote repository.\n")
-(val LOG-FIELDS #("clones" "fetches" "head-fetches" "archives" "diffs" "expanded" "syncs" "downloads" "builds" "compiles" "stored"))
+(val LOG-FIELDS #("clones" "fetches" "head-fetches" "archives" "diffs" "expanded" "syncs" "downloads" "builds" "compiles" "stored"
+                  "mounts" "unmounts"))
+;; 木を読み専用で見せる外の daemon の代役の命令の名と、その命令を使う翻訳の設定の雛形(筋書きが EnvWorld の tree-mount・tree-unmount に置く)。
+(val TREE-MOUNT-COMMAND "tree-mount")
+(val TREE-UNMOUNT-COMMAND "tree-unmount")
+(val TREE-MOUNT-TEMPLATE "tree-mount --read-only --commit {commit} {dir}")
+(val TREE-UNMOUNT-TEMPLATE "tree-unmount {dir}")
+;; 代役の命令が断った時の終わり。
+(val REFUSED-CODE 1)
 ;; 模擬の焼く道具の保存先(source の中身で引く — 本物の code_store の代役・木の相対 path と中身の組を印の file の名にする)。
 (val CODE-STORE-PATH "/world/code-store")
 
@@ -134,6 +147,9 @@
   ;; root の中で子の入口の解ける置き場(準備の確かめの答え entryPlace — None = どの置き場にも入口の無い root)。
   (setv #^ (| str None) entry-place (get CHILD-ENTRY-PLACES 0))
   (setv #^ str mounts SIM-MOUNTS)
+  (setv #^ str tree-mount "")
+  (setv #^ str tree-unmount "")
+  (setv #^ frozenset mount-refused (frozenset))
   (setv #^ float cold-seconds 60.0)
   (setv #^ float warm-seconds 5.0)
   ;; 組みの山の memory(byte — None = cgroup の memory.current と memory.peak を置かない台・#3748)。
@@ -146,7 +162,8 @@
    ではない)・compiled-trees = bytecode を焼いた木と、その木の中の import の根(#(木 根の tuple) の列・焼いた順)・stored = 保存先の
    code から書いた .pyc の数(木ごとに足す・#3858)・entries = 最後の bytecode の焼く範囲の入口・rebuilt = 木ごとに焼いた source の
    相対 path(#(木 path の tuple) の列・焼いた順)・diffed = git diff で読んだ 2 つの commit(#(旧 新) の列・読んだ順 — どの root を写し元に
-   選んだかを commit で確かめる)・head-fetches = 全部の head を取り直す git fetch の呼び・notes = 準備の記録の行。"
+   選んだかを commit で確かめる)・head-fetches = 全部の head を取り直す git fetch の呼び・mounts・unmounts = 木を置く・外す代役の命令が
+   通った回数・notes = 準備の記録の行。"
   (setv #^ int clones 0)
   (setv #^ int fetches 0)
   (setv #^ int head-fetches 0)
@@ -158,6 +175,8 @@
   (setv #^ int builds 0)
   (setv #^ int compiles 0)
   (setv #^ int stored 0)
+  (setv #^ int mounts 0)
+  (setv #^ int unmounts 0)
   (setv #^ tuple entries #())
   (setv #^ tuple compiled-trees #())
   (setv #^ tuple rebuilt #())
@@ -463,6 +482,49 @@
     (<- (write-file (posixpath.join dest path) text)))
   (<- (bump {"expanded" (len tree)}))
   (ProcessOutcome :stdout (.join "" (gfor path tree (+ path "\n"))) :stderr "" :exit-code 0))
+
+
+;; --- 木を読み専用で見せる外の daemon の代役 --------------------------------------------------------
+
+(defk tree-mount-script [world commands request]
+  {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
+  "tree-mount --read-only --commit <sha> <dir> に答える台本: 断る commit(mount-refused)・世界に無い commit・中身の在る dir は断り、
+   それ以外は commit の木を dir の下へ書いて mount の表に dir の行を足す(本物の daemon と同じく、置いた木の file は翻訳が書かない)。"
+  (val argv (tuple request.argv))
+  (<- sha str (required-option-of argv "--commit"))
+  (val dir (get argv -1))
+  (<- commit (| WorldCommit None) (commit-of world sha))
+  (<- listed (| tuple FileFailed) (ListDirectory dir))
+  (cond
+    (in sha world.mount-refused)
+    (ProcessOutcome :stdout "" :stderr (.format "commit {} is not in the store\n" sha) :exit-code REFUSED-CODE)
+    (is commit None)
+    (ProcessOutcome :stdout "" :stderr (.format "no commit {}\n" sha) :exit-code REFUSED-CODE)
+    (and (isinstance listed tuple) listed)
+    (ProcessOutcome :stdout "" :stderr (.format "{} is not empty\n" dir) :exit-code REFUSED-CODE)
+    True
+    (do (for [f commit.files]
+          (<- (write-file (posixpath.join dir f.path) f.text)))
+        (<- table str (read-or-empty MOUNT-TABLE))
+        (<- (WriteText MOUNT-TABLE (+ table (.format "90 1 0:90 / {} ro,nosuid,nodev - fuse.tree tree ro\n" dir)) :replace True))
+        (<- (bump {"mounts" 1}))
+        (ProcessOutcome :stdout (.format "mounted {}\n" dir) :stderr "" :exit-code 0))))
+
+
+(defk tree-unmount-script [commands request]
+  {:pre [(: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
+  "tree-unmount <dir> に答える台本: mount の表に dir の行が無ければ断り、在れば行を消して dir を中身ごと消す(本物の daemon が mount を
+   外して空の mount 点を消すのと同じ — 木の file は翻訳の消しを通らない)。"
+  (val dir (get (tuple request.argv) -1))
+  (<- table str (read-or-empty MOUNT-TABLE))
+  (val lines (.splitlines table :keepends True))
+  (val kept (lfor line lines :if (!= (get (+ (.split line " ") ["" "" "" "" ""]) 4) dir) line))
+  (if (= (len kept) (len lines))
+      (ProcessOutcome :stdout "" :stderr (.format "{} is not mounted\n" dir) :exit-code REFUSED-CODE)
+      (do (<- (WriteText MOUNT-TABLE (.join "" kept) :replace True))
+          (<- (RemoveTree dir))
+          (<- (bump {"unmounts" 1}))
+          (ProcessOutcome :stdout (.format "closed {}\n" dir) :stderr "" :exit-code 0))))
 
 
 ;; --- uv -----------------------------------------------------------------------------------
@@ -773,7 +835,9 @@
    "runtime-env.code-prepare" CODE-PREPARE
    "runtime-env.uv" "uv"
    "runtime-env.progress" ""
-   "runtime-env.notes" NOTES-PATH})
+   "runtime-env.notes" NOTES-PATH
+   "runtime-env.tree-mount" world.tree-mount
+   "runtime-env.tree-unmount" world.tree-unmount})
 
 
 (defk world-files-of [world]
@@ -801,7 +865,9 @@
   "世界の宣言から、memory の置き場・台本の子 process・翻訳の設定・翻訳の handler の列(外側が先)を作る(外側に状態の置き場と時計が要る)。"
   (val script (ProcessScript :commands #((ScriptedCommand :name "git" :run (partial git-script world))
                                          (ScriptedCommand :name "tar" :run tar-script)
-                                         (ScriptedCommand :name "uv" :run (partial uv-script world)))))
+                                         (ScriptedCommand :name "uv" :run (partial uv-script world))
+                                         (ScriptedCommand :name TREE-MOUNT-COMMAND :run (partial tree-mount-script world))
+                                         (ScriptedCommand :name TREE-UNMOUNT-COMMAND :run tree-unmount-script))))
   (<- files MemoryFiles (world-files-of world))
   (<- settings dict (world-settings world))
   [(memory-file-handler files) (scripted-process-handler script) (world-settings-reader settings) env-translation])

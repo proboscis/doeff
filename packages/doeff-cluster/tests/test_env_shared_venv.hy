@@ -93,7 +93,7 @@
   "翻訳の設定(runtime-env.*)を、分け合う dir を state-dir にして作るため。"
   {"runtime-env.state" (str state-dir) "runtime-env.shared" (str state-dir) "runtime-env.uv-cache" (str (/ state-dir "uv-cache"))
    "runtime-env.repo-keys" {} "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" ""
-   "runtime-env.notes" "/dev/null"})
+   "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
 
 
 (deftest test-a-second-root-of-one-dependency-key-places-a-thin-venv-of-at-most-100-files [tmp-path]

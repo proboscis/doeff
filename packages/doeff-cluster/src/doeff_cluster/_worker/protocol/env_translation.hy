@@ -20,6 +20,11 @@
 ;;;   runtime-env.uv            uv の命令(既定 "uv" — PATH で引く)
 ;;;   runtime-env.progress      処理ステージの進みの印の file(空 = 書かない)
 ;;;   runtime-env.notes         準備の記録の行を足す file(入口の既定 /dev/stderr)
+;;;   runtime-env.tree-mount    repo の木を読み専用の mount として置く命令の雛形(空白で語に分け、語の中の {commit} と {dir} を埋める —
+;;;                             空 = 置かない)。命令が通れば木の file を写さない。断った・失敗した・置いた dir が空の時は、今までの写しか
+;;;                             展開で置く(準備を止めない — 断りは準備の記録の行に残す)
+;;;   runtime-env.tree-unmount  mount で置いた木を外す命令の雛形({dir} を埋める — 空 = 外さない)。途中で止まった root を脇へ退ける前に、
+;;;                             root の下の mount 点(この process の mount の表)ごとに撃つ
 ;;;
 ;;; root の .pyc の置き場(CompileTrees の pycache — root の直下の ROOT-PYCACHE)は、焼く前に答え手が作る。worker の環境に
 ;;; PYCACHE-RAM-ENV(RAM の dir — tmpfs など)が在れば、置き場はその下の root ごとの dir(名 = 置き場の path の digest16)への symlink に
@@ -50,6 +55,7 @@
 (import json)
 (import posixpath)
 (import re)
+(import shlex)
 (import sys)
 (import datetime [datetime])
 (import doeff [Program Pure])
@@ -67,7 +73,7 @@
 (import doeff_cluster._worker.core.env_upkeep [LayerSample layer-sample-of-text])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH PYCACHE-SCOPE-LINE SHARED-VENV-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo mounts-under prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND TREE-MOUNT EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH PYCACHE-SCOPE-LINE SHARED-VENV-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 (import inspect)
 (import doeff_cluster._foundation.pycache_scope :as pycache-scope)
 ;; venv へ写す置き場の口の source(worker 自身の file — import の時に 1 度だけ読む code の値。準備の file の効果の外: 模擬の世界の file にも
@@ -355,6 +361,12 @@
                       :interpreter (get done "interpreter"))))
   (<- kind PathKind (kind-at request.root))
   (when (!= kind PathKind.MISSING)
+    ;; 途中の root の中に mount で置いた木は、退ける前に外す(脇の名の path を外す頼みは断られ、掃除の rmtree が読み専用の木で落ちる)。
+    ;; 外せなかった mount は記録の行に残して退ける(新しい root の木は同じ path の mount を頼み直すか、写しか展開で置く)。
+    (<- unmount str (asked-text "runtime-env.tree-unmount"))
+    (<- left tuple (unmounted-under MOUNT-TABLE unmount request.root))
+    (for [line left]
+      (<- (PrepareNote (.format "途中の root の木を外せないまま退ける: {}" line))))
     (<- now datetime (GetTime))
     (val aside (posixpath.join (posixpath.dirname request.root) (.format ".{}.broken.{}" request.key (int (* 1000 (.timestamp now))))))
     (<- moved (| None FileFailed) (RenamePath request.root aside))
@@ -1058,6 +1070,85 @@
             _ tried))))
 
 
+;; 設定の命令(木を置く・外す — runtime-env.tree-mount・tree-unmount)1 回の秒の上限。命令は置き場の外の daemon への頼み 1 往復なので
+;; ずっと短い — 答えない daemon で準備や掃除を止め続けない。
+(val TREE-COMMAND-SECONDS 60.0)
+
+
+(defk template-argv [template commit dir]
+  {:pre [(: template str) (: commit str) (: dir str)] :post [(: % tuple)]}
+  "設定の命令の雛形を起こす命令の語の列にするため: 空白で語に分け(sh と同じ引用の読み)、語の中の {commit} と {dir} を埋める
+   (埋めた値は空白を含んでも 1 語のまま — 命令は sh を通さない)。"
+  (tuple (gfor word (shlex.split template) (.replace (.replace word "{commit}" commit) "{dir}" dir))))
+
+
+(defk tree-command [template commit dir]
+  {:pre [(: template str) (: commit str) (: dir str)] :post [(: % CommandResult)]}
+  "設定の命令(木を置く・外す)を 1 回撃って結果を読むため(秒の上限 TREE-COMMAND-SECONDS — 越えた子は止めて失敗と読む)。"
+  (<- argv tuple (template-argv template commit dir))
+  (<- outcome ProcessOutcome (RunProcess :argv argv :env None :env-mode EnvMode.EXTEND :timeout TREE-COMMAND-SECONDS))
+  (<- result CommandResult (outcome-result outcome))
+  result)
+
+
+(defk mounted-tree [mount unmount commit dest]
+  {:pre [(: mount str) (: unmount str) (: commit str) (: dest str)] :post [(: % (| TreePlaced str))]}
+  "commit の木を設定の命令 mount で dest に読み専用の mount として置くため(木の file を 1 つも写さない・展開しない)。答え = 置いた結果か、
+   置けなかった訳(呼び手は写しか展開に戻る)。命令が通っても dest が空か読めなければ置けなかった物と読み、外す命令 unmount を撃って
+   から訳を返す(空の mount 点に写しを置かない)。"
+  (<- result CommandResult (tree-command mount commit dest))
+  (when (!= result.code 0)
+    (<- detail str (tail-of result))
+    (return (.format "木を置く命令が断った(終わり {}): {}" result.code detail)))
+  (<- listed (| tuple FileFailed) (ListDirectory dest))
+  (match listed
+    (tuple) :if listed (TreePlaced :how TREE-MOUNT :copied 0 :removed 0 :replaced 0)
+    _ (do (when unmount
+            (<- (tree-command unmount commit dest)))
+          "木を置く命令は通ったが、置いた dir が空か読めない")))
+
+
+(defk placed-tree [mirror commit dest source progress mount unmount notes]
+  {:pre [(: mirror str) (: commit str) (: dest str) (: source (| TreeSource None)) (: progress str) (: mount str) (: unmount str) (: notes str)]
+   :post [(: % TreePlaced)]}
+  "MaterializeTree に答えるため: 木を置く命令の設定(mount — 空 = 無い)が在れば木を読み専用の mount で置き、置けなければ訳を準備の
+   記録の行に残して、今までどおり写し元からの写しか mirror からの展開で置く(準備を止めない — daemon の無い機体・daemon の store に
+   まだ無い commit)。"
+  (when mount
+    (<- tried (| TreePlaced str) (mounted-tree mount unmount commit dest))
+    (match tried
+      (TreePlaced) (return tried)
+      _ (do (<- (AppendText notes (.format "env: 木 {} を mount で置けず、写しか展開で置く: {}\n" dest tried)))
+            (<- (remove-if-present dest)))))
+  (<- placed TreePlaced (materialize mirror commit dest source progress))
+  placed)
+
+
+(defk unmounted-under [table unmount root]
+  {:pre [(: table str) (: unmount str) (: root str)] :post [(: % tuple)]}
+  "root を脇へ退ける・消す前に、root の下の mount 点(mount の表 table — この process の mountinfo)を、外す命令の雛形 unmount で深い順に
+   外すため(mount で置いた木の file を rmtree で 1 つずつ消さない — 読み専用の mount の中の rmtree は落ちる。外す頼みは . で始まる脇の
+   名の path を断るので、退ける前に撃つ)。答え = 外せなかった mount 点ごとの訳の文の列(空 = 全部外した・mount が無い・雛形が空。表を
+   読めない機体は mount の無い物と読む)。"
+  (when (not unmount)
+    (return #()))
+  (<- text (| str FileFailed) (ReadText table))
+  ;; mount の表は実の path で書くので、root の綴りと symlink を解いた実の path の両方で引く。
+  (<- seen (| PathStat FileFailed) (StatPath root))
+  (val real (match seen (PathStat :real-path path) path _ root))
+  (val table-text (match text (str) text _ ""))
+  (<- spelled tuple (mounts-under table-text root))
+  (<- resolved tuple (mounts-under table-text real))
+  (val points (+ spelled (tuple (gfor p resolved :if (not-in p spelled) p))))
+  (var left #())
+  (for [point points]
+    (<- result CommandResult (tree-command unmount "" point))
+    (when (!= result.code 0)
+      (<- detail str (tail-of result))
+      (:= left (+ left #((.format "{}: 外す命令が断った(終わり {}): {}" point result.code detail))))))
+  left)
+
+
 (defk file-sha256 [path]
   {:pre [(: path str)] :post [(: % (| str None))]}
   "file の中身の sha256(file でなければ None)。"
@@ -1308,7 +1399,7 @@
 
 (defk asked-text [key]
   {:pre [(: key str)] :post [(: % str)]}
-  "文字列の設定(runtime-env.state・uv-cache・code-prepare・uv・progress・notes)を読むため。Ask の答えは object なので、ここで str と確かめる
+  "文字列の設定(runtime-env.state・uv-cache・code-prepare・uv・progress・notes・tree-mount・tree-unmount)を読むため。Ask の答えは object なので、ここで str と確かめる
    (違う型が来たら、使う所ではなく読んだ所で落ちる)。"
   (<- value str (Ask key))
   value)
@@ -1333,6 +1424,8 @@
   (session val uv (! (asked-text "runtime-env.uv")))
   (session val progress (! (asked-text "runtime-env.progress")))
   (session val notes (! (asked-text "runtime-env.notes")))
+  (session val tree-mount (! (asked-text "runtime-env.tree-mount")))
+  (session val tree-unmount (! (asked-text "runtime-env.tree-unmount")))
 
   (StageStarted [name]
     ;; 進みの印: worker の env-host は印の file の時刻で準備の停滞を見分ける(空 = 印を書かない)。同じ名で
@@ -1391,7 +1484,7 @@
 
   (MaterializeTree [mirror commit dest source]
     (<- (touched-mirror mirror))
-    (<- placed TreePlaced (materialize mirror commit dest source progress))
+    (<- placed TreePlaced (placed-tree mirror commit dest source progress tree-mount tree-unmount notes))
     (resume placed))
 
   (CopyVenv [source dest source-root dest-root]

@@ -58,7 +58,7 @@
 
 (defrecord StagePart
   "処理ステージの中の 1 区切りの秒と数(#3676 — 木の処理ステージと mirror の処理ステージの repo ごと)。name = repo の名・how = 置き方(木は
-   TREE-COPY = 同じ repo を持つ別の root からの写し・TREE-EXPAND = mirror からの展開、mirror は MIRROR-PRESENT = commit が在った・
+   TREE-COPY = 同じ repo を持つ別の root からの写し・TREE-EXPAND = mirror からの展開・TREE-MOUNT = 設定の命令の読み専用の mount、mirror は MIRROR-PRESENT = commit が在った・
    MIRROR-FETCHED = 取った)・seconds = 経過の秒・copied・removed・replaced = 木の file の数の内訳(TreePlaced と同じ意味・#3677 — mirror の
    区切りは 0)。"
   (#^ str name)
@@ -71,6 +71,8 @@
 
 (val TREE-COPY "copy")
 (val TREE-EXPAND "expand")
+;; 設定の命令(runtime-env.tree-mount)で commit の木を読み専用の mount として置いた(file を写さず、展開もしない)。
+(val TREE-MOUNT "mount")
 (val MIRROR-PRESENT "present")
 (val MIRROR-FETCHED "fetched")
 
@@ -108,7 +110,8 @@
 
 (defrecord TreePlaced
   "木 1 つを置いた結果。how = 置き方(TREE-COPY = 写し元の木を hardlink で写し、変わった path だけ新しく置いた・TREE-EXPAND = mirror から
-   全部展開した — 写し元が在っても、写し元の commit が mirror に無い・差が読めない・写せない時は展開し、その理由を reason に書く)・
+   全部展開した — 写し元が在っても、写し元の commit が mirror に無い・差が読めない・写せない時は展開し、その理由を reason に書く・
+   TREE-MOUNT = 設定の命令で読み専用の mount として置いた — 数は 3 つとも 0。命令が断った時は写しか展開に戻り、断りを reason に書く)・
    copied = 写し元から hardlink で写して持ち越した file の数・removed = 写し元の木の file のうち、新しい木へ持ち越さなかった数(変わった・
    消えた path の旧い file — 写さないので、写し元の file はその場で書き換わらない)・replaced = 新しい中身を置いた file の数(変わった・
    増えた path。展開は木の file の全部)。持ち越した後の木の file の数 = copied + replaced(展開は replaced だけ)。"

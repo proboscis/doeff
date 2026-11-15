@@ -16,7 +16,8 @@
 #                      WORKER_TOOLS = 名乗る道具に足す物(名=版,…)・WORKER_PASS_ENV = job の子へ渡す worker の環境変数の名
 #                      (`,` で並べる — 実行環境の job の子は worker の環境を許可表でしか継がないので、機体の設定の path や URL を名で渡す)・
 #                      WORKER_ENV_ROOTS_GIB / WORKER_ENV_MIN_FREE_GIB = 実行環境の root の置き場の 2 つの量(GiB の整数・下の既定の註)・
-#                      WORKER_ROOT_LINK_DIRS = 掃除が link の先の root を消さない dir(下の註))
+#                      WORKER_ROOT_LINK_DIRS = 掃除が link の先の root を消さない dir(下の註)・
+#                      WORKER_TREE_MOUNT / WORKER_TREE_UNMOUNT = root の repo の木を読み専用の mount で置く・外す命令の雛形(下の註))
 #   ROLE=drain       … worker の Pod の preStop: coordinator に drain を頼み、この worker の上の job が他へ移るまで
 #                      (上限 DRAIN_DEADLINE 秒・既定 90)待つ。結末は container の log(PID 1 の stderr)へ 1 行
 #   ROLE=prepare     … WORKER_DOEFF_COMMIT の自己起動の root を展開して準備する(.pyc の焼きまで)だけで、何も起こさずに root の path を
@@ -1331,6 +1332,11 @@ esac
 #   WORKER_ROOT_LINK_DIRS   下に置いた symlink の先の root を消さない dir(`,` で並べる・既定は空 = 読まない)。機体の配備が root の
 #                           venv の bin を link で指す設定の dir の木を置く時に、その木の dir を書く(link の先の root を消すと、次に
 #                           その木から起きる物が起動のたびに落ちる)。
+# root の repo の木は、機体の配備が命令を渡せば、file を写さずに読み専用の mount で置く(既定は空 = 写しか展開で置く):
+#   WORKER_TREE_MOUNT       木を置く命令の雛形(空白で語に分け、語の中の {commit} = 40 桁の commit・{dir} = 木の dir を埋める)。
+#                           命令が断った・失敗した時は、今までどおり写しか展開で置く(準備を止めない)。
+#   WORKER_TREE_UNMOUNT     置いた木を外す命令の雛形({dir} を埋める)。root を脇へ退ける前に、root の下の mount 点ごとに撃つ
+#                           (外せない root は消さずに残す)。
 env_roots_gib=${WORKER_ENV_ROOTS_GIB:-20}
 env_min_free_gib=${WORKER_ENV_MIN_FREE_GIB:-25}
 for amount in "WORKER_ENV_ROOTS_GIB=$env_roots_gib" "WORKER_ENV_MIN_FREE_GIB=$env_min_free_gib"; do
@@ -1363,4 +1369,5 @@ exec hy -m doeff_cluster._worker.entry.main --coordinator "$COORDINATOR_URL" --n
   --repo-keys "$repo_keys" --repo-access "$repo_access_script" --tools "$tools" --pass-env "${WORKER_PASS_ENV:-}" \
   --env-roots-cap "$((env_roots_gib * 1073741824))" --env-min-free "$((env_min_free_gib * 1073741824))" \
   --root-link-dirs "${WORKER_ROOT_LINK_DIRS:-}" \
+  --tree-mount "${WORKER_TREE_MOUNT:-}" --tree-unmount "${WORKER_TREE_UNMOUNT:-}" \
   --code-store "$DOEFF_HY_CODE_STORE" --uv-cache "$DOEFF_UV_CACHE_DIR"

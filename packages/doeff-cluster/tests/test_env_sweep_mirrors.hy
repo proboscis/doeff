@@ -137,7 +137,7 @@
   (<- mirror Path (placed-mirror (/ state-dir "mirrors") (+ (get NAMES USED-URL) ".git") old))
   (val settings {"runtime-env.state" (str state-dir) "runtime-env.shared" (str state-dir) "runtime-env.uv-cache" (str (/ tmp-path "uv-cache"))
                  "runtime-env.repo-keys" {} "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" ""
-                 "runtime-env.notes" "/dev/null"})
+                 "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (<- ready MirrorReady (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                                        (EnsureMirror USED-URL)))
   (assert (= ready.path (str mirror)) ready)

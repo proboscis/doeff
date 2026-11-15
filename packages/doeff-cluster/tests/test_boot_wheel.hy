@@ -237,7 +237,7 @@
    DOEFF_UV_CACHE_DIR・shared-dir = 世代をまたいで分け合う dir — None は state と同じ)。"
   (val out-dir (native-wheel.wheel-out-dir (str (/ state-dir.parent "worker-root")) native-wheel.DOEFF-VM-PACKAGE))
   (val settings {"runtime-env.state" (str state-dir) "runtime-env.shared" (str (or shared-dir state-dir)) "runtime-env.uv-cache" (str uv-cache) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
-                 "runtime-env.uv" (str uv) "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
+                 "runtime-env.uv" (str uv) "runtime-env.progress" "" "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (<- ready (| WheelReady EnvFailure)
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                      (ensure-wheel source-dir out-dir)))

@@ -65,7 +65,7 @@
                                              overdue-failure root-project declared-project oom-kills-of memory-killed-failure])
 (import doeff_cluster._worker.core.worker_due [due-after])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
-(import doeff_cluster._worker.protocol.env_translation [digest16 listed-url shared-venv-lock SHARED-VENVS])
+(import doeff_cluster._worker.protocol.env_translation [digest16 listed-url shared-venv-lock SHARED-VENVS unmounted-under])
 (import doeff_cluster._shared.core.runtime_env [root-venv])
 
 
@@ -102,6 +102,8 @@
 (val MEMORY-UNMEASURED-LOG "worker: 先の組みの memory を測れない")
 ;; 終わった準備の子の cgroup を消せなかった行の名(欄: key・group = 子の dir・detail = 止めの script の stderr)。
 (val GROUP-UNCLOSED-LOG "worker: 準備の子の cgroup を消せない")
+;; 消すと選んだ root の中の mount で置いた木を外せず、root を退けなかった行の名(欄: key・left = 外せなかった mount 点と訳)。
+(val TREE-UNMOUNTED-LOG "worker: root の木の mount を外せない — root を消さずに残す")
 ;; 準備の子の止めと消しを待つ秒の上限(止めの script は SIGKILL の後の退きを 5 秒まで待つ)。
 (val CLOSE-TIMEOUT-SECONDS 10.0)
 ;; 準備の層の memory の上限で殺された準備を、失敗にせず待ちへ戻した行の名(欄: key・oom-kills = 準備の子の memory.events の oom_kill —
@@ -158,7 +160,13 @@
   ;; root の worker の外の使い手の読み(掃除の選びの拍 — root-users): proc-dir = 走っている process を読む /proc の置き場・link-dirs =
   ;; 下に置いた symlink の先の root を消さない dir の列(機体の配備が置く設定の dir の木 — 値は main の --root-link-dirs・空 = 読まない)。
   (setv #^ str proc-dir "/proc")
-  (setv #^ (get tuple #(str ...)) link-dirs #()))
+  (setv #^ (get tuple #(str ...)) link-dirs #())
+  ;; repo の木を読み専用の mount で置く・外す命令の雛形(空 = 置かない・外さない — 値は main の --tree-mount・--tree-unmount、起動の
+  ;; script の WORKER_TREE_MOUNT・WORKER_TREE_UNMOUNT。準備の process へそのまま渡す — env_translation の頭の註)と、掃除が root を退ける
+  ;; 前に root の下の mount 点を読む mount の表(この process の mountinfo)。
+  (setv #^ str tree-mount "")
+  (setv #^ str tree-unmount "")
+  (setv #^ str mount-table "/proc/self/mountinfo"))
 
 
 (defrecord PendingEnv
@@ -341,7 +349,8 @@
   (<- (refreshed-repo-access settings))
   (<- argv tuple (prepare-argv settings.hy-command settings.tool request result settings.state (or settings.shared settings.state)
                                settings.uv-cache settings.repo-keys
-                               settings.code-prepare settings.uv progress settings.platform memory))
+                               settings.code-prepare settings.uv progress settings.platform memory
+                               :tree-mount settings.tree-mount :tree-unmount settings.tree-unmount))
   ;; 準備の層が在れば、準備の process(と、それが起こす git・uv・焼く道具の子)を層の下のこの準備の子へ置く(EnvSettings の prepare-procs の
   ;; 註・core/job_cgroup の頭の註の「準備ごとの子」— OOM kill は木を丸ごと止め、終わりに closed-group が残りを止める)。
   (var placed argv)
@@ -978,8 +987,13 @@
 (defk set-aside [settings key now-ms]
   {:pre [(: settings EnvSettings) (: key str) (: now-ms int)] :post [(: % bool)]}
   "消すと選んだ root を . で始まる脇の名へ退けるため(名の付け替え 1 回 — 木の消しはループの外の task)。答え = 退けたか(root が
-   もう無ければ False)。"
+   もう無ければ False)。root の下に mount で置いた木は、退ける前に外す命令で外す(木の file を消しの rmtree で 1 つずつ消さない・
+   外す頼みは脇の名の path を断る)。外せない mount が在る root は退けずに残す(読み専用の木の rmtree は落ちる — 次の掃除で選び直す)。"
   (<- root str (env-root settings key))
+  (<- left tuple (unmounted-under settings.mount-table settings.tree-unmount root))
+  (when left
+    (<- (slog TREE-UNMOUNTED-LOG :key key :left (.join "; " left)))
+    (return False))
   (<- roots str (roots-dir settings))
   (<- moved (RenamePath root (.format "{}/.{}{}{}" roots (cut key (len ENV-KEY-PREFIX) None) SWEPT-MARK now-ms)))
   (not (isinstance moved FileFailed)))

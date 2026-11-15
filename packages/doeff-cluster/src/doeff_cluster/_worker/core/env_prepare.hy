@@ -243,6 +243,21 @@
   best)
 
 
+(defk mounts-under [text root]
+  {:pre [(: text str) (: root str)] :post [(: % tuple)]}
+  "mountinfo の中身から、root の下(root そのものは除く)の mount 点を深い順に返すため — root を退ける・消す前に、中に mount で
+   置いた木を外す命令で外す(木の file を rmtree で 1 つずつ消さない・読み専用の mount の中の rmtree は落ちる)。形の崩れた行は読まない。"
+  (val prefix (+ (.rstrip root "/") "/"))
+  (var found #())
+  (for [line (.splitlines text)]
+    (val fields (.split line " "))
+    (when (and (in "-" fields) (>= (len fields) 5))
+      (<- point str (mount-unescaped (get fields 4)))
+      (when (and (.startswith point prefix) (not-in point found))
+        (:= found (+ found #(point))))))
+  (tuple (sorted found :key (fn [p] (- (len p))))))
+
+
 (defk timing-line [stages volume startup]
   {:pre [(: stages tuple) (: volume (| VolumeKind None)) (: startup (| float None))] :post [(: % str)]}
   "準備の計時の 1 行(準備の記録 — env_tool の log へ出る・#3676): 起こしてから最初の処理ステージまでの秒・disk の種類・処理ステージごとの

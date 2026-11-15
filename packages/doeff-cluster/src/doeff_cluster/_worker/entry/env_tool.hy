@@ -4,6 +4,7 @@
 ;;;
 ;;;   hy -m doeff_cluster._worker.entry.env_tool --request <要求の JSON> --result <答えの JSON> --state <state dir>
 ;;;      --uv-cache <uv の cache の dir> --repo-keys <鍵の表の JSON> --code-prepare <worker の code_prepare.hy> [--uv uv] [--progress <印の file>]
+;;;      [--tree-mount <木を mount で置く命令の雛形>] [--tree-unmount <外す命令の雛形>]
 (require doeff-hy.macros [defk deff val <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
 (import argparse)
@@ -61,12 +62,16 @@
   (.add-argument parser "--uv" :default "uv")
   (.add-argument parser "--progress" :default "" :help "処理ステージの進みの印の file(worker が停滞を見分ける)")
   (.add-argument parser "--memory" :default "" :help "worker が組みの間の層の読みを置く file(memory.peak の無い kernel の組みの山)")
+  (.add-argument parser "--tree-mount" :default ""
+                 :help "repo の木を読み専用の mount で置く命令の雛形({commit} と {dir} を埋める・空 = 置かない)")
+  (.add-argument parser "--tree-unmount" :default "" :help "mount で置いた木を外す命令の雛形({dir} を埋める・空 = 外さない)")
   (setv args (.parse-args parser))
   ;; 渡された file は本物の file の答え手(os-file-handler)の下で読む。
   (setv keys (if args.repo-keys (run (with-handlers [os-file-handler] (json-file args.repo-keys))) {}))
   (setv settings {"runtime-env.state" args.state "runtime-env.shared" args.shared "runtime-env.uv-cache" args.uv-cache "runtime-env.repo-keys" keys
                   "runtime-env.code-prepare" args.code-prepare "runtime-env.uv" args.uv
-                  "runtime-env.progress" args.progress "runtime-env.notes" "/dev/stderr"})
+                  "runtime-env.progress" args.progress "runtime-env.notes" "/dev/stderr"
+                  "runtime-env.tree-mount" args.tree-mount "runtime-env.tree-unmount" args.tree-unmount})
   ;; 要求の JSON を書いた刻を準備の起こしの刻として要求に添える(印の startupSeconds — #3676)。worker が層の読みを置く file も添える。
   (setv request (replace (run (request-of-json (run (with-handlers [os-file-handler] (json-file args.request)))))
                          :launched-ms (run (with-handlers [os-file-handler] (requested-ms args.request)))

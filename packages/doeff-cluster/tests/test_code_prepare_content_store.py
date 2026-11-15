@@ -296,7 +296,8 @@ def _materialize(mirror: Path, commit: str, dest: Path, source: TreeSource | Non
     """worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation)で、MaterializeTree を 1 回出して木を置く。"""
     settings = {"runtime-env.state": str(tmp / "state"), "runtime-env.shared": str(tmp / "state"),
                 "runtime-env.uv-cache": str(tmp / "uv-cache"), "runtime-env.repo-keys": {}, "runtime-env.code-prepare": "",
-                "runtime-env.uv": "uv", "runtime-env.progress": "", "runtime-env.notes": "/dev/null"}
+                "runtime-env.uv": "uv", "runtime-env.progress": "", "runtime-env.notes": "/dev/null",
+                "runtime-env.tree-mount": "", "runtime-env.tree-unmount": ""}
 
     @do
     def placed() -> object:

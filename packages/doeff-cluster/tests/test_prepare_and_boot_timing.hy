@@ -156,7 +156,7 @@
   {:pre [(: files MemoryFiles) (: path str)] :post [(: % (| VolumeKind None))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "worker の準備の process と同じ翻訳 env-translation の下で、置き場 path の disk の種類を 1 回読むため(file は memory の置き場 files)。"
   (val settings {"runtime-env.state" "/w/state" "runtime-env.shared" "/w/state" "runtime-env.uv-cache" "/w/uv" "runtime-env.repo-keys" {}
-                 "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" "" "runtime-env.notes" "/dev/null"})
+                 "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" "" "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (<- volume (| VolumeKind None) (with-handlers [(state) (reader settings) (memory-file-handler files) env-translation] (ReadVolume path)))
   volume)
 

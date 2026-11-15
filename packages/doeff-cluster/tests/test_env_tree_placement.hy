@@ -91,7 +91,7 @@
   "worker の準備の process と同じ並び(本物の答え手 + 翻訳 env-translation)で、MaterializeTree を 1 回出して木を置くため。"
   (val settings {"runtime-env.state" (str (/ tmp "state")) "runtime-env.shared" (str (/ tmp "state")) "runtime-env.uv-cache" (str (/ tmp "uv-cache"))
                  "runtime-env.repo-keys" {} "runtime-env.code-prepare" "" "runtime-env.uv" "uv" "runtime-env.progress" ""
-                 "runtime-env.notes" "/dev/null"})
+                 "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (<- placed TreePlaced
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                      (materialized mirror commit dest source)))
@@ -335,7 +335,7 @@
   (val progress (/ tmp-path "mark.progress"))
   (val settings {"runtime-env.state" (str (/ tmp-path "state")) "runtime-env.shared" (str (/ tmp-path "state"))
                  "runtime-env.uv-cache" (str (/ tmp-path "uv-cache")) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
-                 "runtime-env.uv" "uv" "runtime-env.progress" (str progress) "runtime-env.notes" "/dev/null"})
+                 "runtime-env.uv" "uv" "runtime-env.progress" (str progress) "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (<- placed TreePlaced
       (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                      (materialized mirror v1 (/ tmp-path "root" "app") None)))
@@ -353,7 +353,7 @@
   (val progress (/ tmp-path "mark.progress"))
   (val settings {"runtime-env.state" (str (/ tmp-path "state")) "runtime-env.shared" (str (/ tmp-path "state"))
                  "runtime-env.uv-cache" (str (/ tmp-path "uv-cache")) "runtime-env.repo-keys" {} "runtime-env.code-prepare" ""
-                 "runtime-env.uv" "uv" "runtime-env.progress" (str progress) "runtime-env.notes" "/dev/null"})
+                 "runtime-env.uv" "uv" "runtime-env.progress" (str progress) "runtime-env.notes" "/dev/null" "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (val src (/ tmp-path "root-1" "app"))
   (<- (place mirror v1 src None tmp-path))
   ;; 同じ commit を写すと置き直す path が無く、git archive も tar も起きない — 触れるのは写した後・置く前の区切りだけ。

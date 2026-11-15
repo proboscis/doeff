@@ -193,7 +193,7 @@
   (val settings {"runtime-env.state" (str (/ tmp-path "gen" "b" "state")) "runtime-env.shared" (str (/ tmp-path "shared"))
                  "runtime-env.uv-cache" (str (/ tmp-path "shared" "uv-cache")) "runtime-env.repo-keys" {}
                  "runtime-env.code-prepare" PREPARE-TOOL "runtime-env.uv" "true" "runtime-env.progress" ""
-                 "runtime-env.notes" (str (/ tmp-path "notes"))})
+                 "runtime-env.notes" (str (/ tmp-path "notes")) "runtime-env.tree-mount" "" "runtime-env.tree-unmount" ""})
   (<- answer (with-handlers [(state) (sync-time-handler) (reader settings) subprocess-handler os-file-handler env-translation]
                             (prepared-once request)))
   (assert (isinstance answer EnvReady) answer)

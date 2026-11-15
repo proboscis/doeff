@@ -83,17 +83,20 @@
       #("nice" "-n" "10")))
 
 
-(defk prepare-argv [hy-command tool request result state shared uv-cache repo-keys code-prepare uv progress platform memory]
+(defk prepare-argv [hy-command tool request result state shared uv-cache repo-keys code-prepare uv progress platform memory
+                    [tree-mount ""] [tree-unmount ""]]
   {:pre [(: hy-command str) (: tool str) (: request str) (: result str) (: state str) (: shared str) (: uv-cache str) (: repo-keys str)
-         (: code-prepare str) (: uv str) (: progress str) (: platform str) (: memory str)]
+         (: code-prepare str) (: uv str) (: progress str) (: platform str) (: memory str) (: tree-mount str) (: tree-unmount str)]
    :post [(: % tuple)]}
   "準備の process の起こし方(優先度を下げる — 走っている手番と service の CPU を奪わない・lowered-priority-argv)を組むため。
    state = 世代ごとの state の dir・shared = 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)・platform = この worker の
-   platform・memory = worker が組みの間の層の読みを置く file(準備の process が組みの山に読む — env_store の sample-layers)。"
+   platform・memory = worker が組みの間の層の読みを置く file(準備の process が組みの山に読む — env_store の sample-layers)・
+   tree-mount と tree-unmount = repo の木を読み専用の mount で置く・外す命令の雛形(空 = 置かない — env_translation の頭の註)。"
   (<- lowered tuple (lowered-priority-argv platform))
   #(#* lowered hy-command "-m" tool "--request" request "--result" result "--state" state "--shared" shared "--uv-cache" uv-cache
     "--repo-keys" repo-keys
-    "--code-prepare" code-prepare "--uv" uv "--progress" progress "--memory" memory))
+    "--code-prepare" code-prepare "--uv" uv "--progress" progress "--tree-mount" tree-mount "--tree-unmount" tree-unmount
+    "--memory" memory))
 
 
 (defk answer-of-text [text]

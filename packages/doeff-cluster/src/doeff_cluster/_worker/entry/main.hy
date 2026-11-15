@@ -1,7 +1,8 @@
 ;;; doeff worker の composition root。coordinator から job と task を受け、子 process として管理する。
 ;;;
 ;;;   hy -m doeff_cluster._worker.entry.main --coordinator URL --name NAME [--provides a,b] [--exclusive a] --repo REPO --state-dir DIR
-;;;     [--room-file FILE] [--prepare-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES [--root-link-dirs DIRS] --code-store DIR --uv-cache DIR
+;;;     [--room-file FILE] [--prepare-file FILE] [--memory-mib N] --env-roots-cap BYTES --env-min-free BYTES [--root-link-dirs DIRS]
+;;;     [--tree-mount TEMPLATE] [--tree-unmount TEMPLATE] --code-store DIR --uv-cache DIR
 ;;;
 ;;; --provides = この worker が提供する能力の名(`,` で並べる)・--exclusive = 専用の能力(provides の一部 — このどれかを要る job / task
 ;;; だけを受ける)。置き場所の名ではなく能力を名乗る(ADR-DOE-CLUSTER-001 R4b)。旧い --labels は受け付けない。
@@ -683,6 +684,12 @@
   ;; 掃除が消さない root の、worker の外の使い手の置き場(値は deploy/boot.sh の WORKER_ROOT_LINK_DIRS)。
   (.add-argument parser "--root-link-dirs" :default ""
                  :help "下に置いた symlink の先の root を掃除が消さない dir(`,` で並べる — 機体の配備が置く設定の dir の木など・空 = 読まない)")
+  ;; repo の木を読み専用の mount で置く・外す命令の雛形(値は deploy/boot.sh の WORKER_TREE_MOUNT・WORKER_TREE_UNMOUNT — 空 = 今までの
+  ;; 写しか展開で置く)。
+  (.add-argument parser "--tree-mount" :default ""
+                 :help "root の repo の木を読み専用の mount で置く命令の雛形(語の中の {commit} と {dir} を埋める・断ったら写しか展開で置く・空 = 置かない)")
+  (.add-argument parser "--tree-unmount" :default ""
+                 :help "mount で置いた木を外す命令の雛形({dir} を埋める — root を退ける・消す前に撃つ・空 = 外さない)")
   ;; bytecode の保存先の dir(#3858 — 値は deploy/boot.sh の DOEFF_HY_CODE_STORE の 1 か所・焼く道具は同じ値を環境変数で読む)。
   (.add-argument parser "--code-store" :required True
                  :help "source の中身で引く bytecode の保存先の dir(掃除が 7 日使われない entry を消す・`off` = 保存先を使わない)")
@@ -796,6 +803,8 @@
                           :min-free-bytes args.env-min-free
                           ;; 下の symlink の先の root を掃除が消さない dir(worker の外の使い手 — env_store の root-users)。
                           :link-dirs (tuple (gfor d (.split args.root-link-dirs ",") :if d d))
+                          ;; repo の木を読み専用の mount で置く・外す命令の雛形(空 = 置かない)。
+                          :tree-mount args.tree-mount :tree-unmount args.tree-unmount
                           ;; bytecode の保存先の dir(掃除が 7 日使われない entry を消す — `off` は保存先を使わない設定)。
                           :code-store (if (= args.code-store "off") None args.code-store)
                           ;; 世代をまたいで分け合う dir(Python・wheel・mirror と錠 — AL-D2)。
