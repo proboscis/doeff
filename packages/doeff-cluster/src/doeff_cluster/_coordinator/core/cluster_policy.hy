@@ -1794,6 +1794,31 @@
                :rerun-note note :detail note :preempted-by "" :borrowed False :reclaimed False)))
 
 
+;; 要りの越えの止め(2026-11-17): worker の見張りは、機体の MemAvailable が上に載る系の残す線を割った回に、要り(置いた時に固定した申告)を
+;; 越えた task を越えの大きい順に止める(worker/core/eviction_rules の over-need-tasks)。要りは同じ形の近い回の山から見込む数なので、山の
+;; 揺れる仕事では要りを越える回が必ず出る — 越えの止めは設計の内の出来事で、場所の譲りと同じく task の約束(走らせ直し・場所を譲る名乗り)の
+;; 内に置く。以前は止まり始めでない世代の子の消失として lost にし、走らせ直しを名乗る日次の回が止め 1 回でその夜の結末を失った
+;; (11-14・11-16 — t51905: 使い 7305・要り 7269 MiB / t56213: 使い 9170・要り 9038 MiB)。
+;; 次の試行は、止められた試行の山(行の山と、worker が名乗った止めた時の使いの大きい方)を行の山に持ち越す。前の試行の行は消えるので、
+;; 形の山(task_table の近い回)に入るのは持ち越した次の試行の行の山で、置く時の申告は同じ形に終わりまで走った行が在れば
+;; ⌈山 × 形の余裕⌉ + PEAK-STEP-MIB(measured_room.learned-need)— 同じ要りで止めと置き直しを繰り返さない。
+;; 止めは担い手の消失と同じ上限(losses・RERUN-LIMIT)に数える: 上限は「task 自身が memory を使い尽くす時に機体を止め続けない」ための
+;; 歯止めで、要りの越えの止めはその形そのもの。
+(defn #^ TaskRecord over-need-detached [#^ TaskRecord task #^ int now #^ int stop-mib #^ str detail]
+  ;; cannot be a defk: 純粋な defn の absorb-detached-report が呼ぶ(gone-detached と同じ)
+  "純粋: worker の見張りが要りの越えで止めた切り離した task の次の行(節の頭の註)。stop-mib = worker が名乗った止めた時の使い・detail =
+   worker の状態の行の訳。走らせ直しと場所の譲りを名乗る task は gone-detached の道(上限に数える)で次の試行へ戻し、山を持ち越す。
+   名乗らない task は今までどおり lost。"
+  (if (not (and task.rerun task.preemptible))
+      (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
+      (do
+        (setv after (gone-detached task now (.format "worker {} の見張りが要りの越えで止めた(止めた時の使い {} MiB・{})"
+                                                     task.worker stop-mib detail)))
+        (if (= after.phase "queued")
+            (replace after :peak-mib (max stop-mib (or task.peak-mib 0)))
+            after))))
+
+
 (defn #^ str waiting-detail [#^ TaskRecord task #^ str text]
   "純粋: 待っている task の detail(待つ訳の文 text)。走らせ直した試行は、前の試行が退きか消失か(rerun-note)を頭に残す — 積み直した拍に
    置き先が無くても、読み手が「入れ替えに当たった」と「上限に近い」を見分けられるように。"
@@ -2335,7 +2360,9 @@
 (defn #^ TaskRecord absorb-detached-report [#^ TaskRecord task #^ StatusRow status #^ int now #^ bool [stopping False]]
   "切り離した task の終わりの報告 → 終わりの phase。結果を書かずに終わった子 process は lost(結果が無い = 消失)。stopping = この報告は止まり
    始めた世代の物(機体の停止は worker と子へ同時に止めの合図を送るので、worker が止める前に子が結果なしで終わった報告が来る — 担い手が消えた
-   道の 1 つ。gone-detached)。止まり始めでない世代の子の消失(memory の見張りや OS に止められた子)は走らせ直さない — task 自身が訳かもしれない。"
+   道の 1 つ。gone-detached)。見張りが要りの越えで止めた子(報告の over-need-stop-MiB)は over-need-detached(走らせ直しと場所の譲りを名乗る
+   task は次の試行へ)。ほかの止まり始めでない世代の子の消失(memory の見張りのほかの止めや OS に止められた子)は走らせ直さない — task 自身が
+   訳かもしれない。"
   (setv phase status.phase detail status.detail)
   (cond
     (and (= phase "finished") (is-not status.result None))
@@ -2343,6 +2370,8 @@
     (and (= phase "finished") stopping)
       (gone-detached task now (.format "止まり始めた担い手の子 process が結果を書かずに終わった({})" detail)
                      (.format "worker {} の世代 {} が止まり始めを名乗った" task.worker task.boot))
+    (and (= phase "finished") (is-not status.over-need-stop-MiB None))
+      (over-need-detached task now status.over-need-stop-MiB detail)
     (= phase "finished")
       (end-detached task "lost" now (.format "子 process が結果を書かずに終わった({})" detail))
     (= phase "code-failed") (end-detached task "code-failed" now detail)

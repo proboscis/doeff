@@ -180,4 +180,6 @@
    #** (if (is s.failure None) {} {"failureKind" s.failure.kind.value "retryable" s.failure.retryable})
    ;; 入口の検めの姿(検めが通っていない間だけ — 2026-09-27): 状態・今の検めの経過の秒・回数・直前の失敗の理由。
    #** (if (is s.probe None) {} {"probe" {"state" s.probe.state "elapsedSeconds" s.probe.elapsed-seconds
-                                          "attempts" s.probe.attempts "lastFailure" s.probe.last-failure}})})
+                                          "attempts" s.probe.attempts "lastFailure" s.probe.last-failure}})
+   ;; 見張りが要りの越えで止めた task の終わり(その時だけ): 止めた時の使い(MiB)。coordinator は走らせ直しを名乗る task を次の試行へ戻す。
+   #** (if (is s.over-need-stop-mib None) {} {"overNeedStopMiB" s.over-need-stop-mib})})

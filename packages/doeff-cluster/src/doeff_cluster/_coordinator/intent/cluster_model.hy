@@ -1311,7 +1311,8 @@
   (setv #^ bool rerun False)
   (setv #^ int attempt 1)
   ;; --- 予定した退きを走らせ直しの上限に数えない(2026-11-05)---
-  ;; losses = 予定した退きの外で担い手が消えた試行の数(走らせ直しの上限 RERUN-LIMIT に数えた回数 — cluster_policy.gone-detached)。
+  ;; losses = 予定した退きの外で担い手が消えた試行と、worker の見張りが要りの越えで止めた試行の数(走らせ直しの上限 RERUN-LIMIT に数えた
+  ;; 回数 — cluster_policy.gone-detached・over-need-detached)。
   ;; 予定した退き(止まり始めた世代の報告で消えた試行・drain の掛かった世代の lease 切れ)は worker の側の操作なので数えない。attempt は
   ;; 試行ごとに増える(行の id の番号)ので、数えた回数は別の欄で持つ。
   ;; retiring = 担い手の世代に drain が掛かったまま、その世代が退いた印(訳の 1 句 — 空 = 印なし)。世代つきの drain は新しい世代の

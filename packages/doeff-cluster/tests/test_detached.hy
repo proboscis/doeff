@@ -1090,6 +1090,115 @@
   (assert (in "結果を書かずに" lost.detail) lost.detail))
 
 
+;; --- 見張りが要りの越えで止めた試行の走らせ直し(2026-11-17)---------------------------------------------------
+;; 要りは同じ形の近い回の山から見込む数なので、要りを越えて見張りに止められる回は必ず出る(設計の内の止め)。走らせ直しと場所の譲りを名乗る
+;; task は、場所を譲らせた時と同じく次の試行へ戻り、止められた試行の山で次の要りを数える。以前は lost で、日次の回が止め 1 回でその夜の結末を
+;; 失った(2026-11-14・11-16)。
+
+(val PREEMPTIBLE-BODY (| RERUN-BODY {"preemptible" True}))
+(val OVER-NEED-DETAIL "last=exited — 要りを越えて伸びた task を見張りが止めた(使い 3000 MiB・要り 1024 MiB — 機体の MemAvailable が上に載る系の残す線を 200 MiB 割った)")
+
+
+(defk over-need-stopped [state id now [mib 3000]]
+  {:pre [(: state ClusterState) (: id str) (: now int) (: mib int)] :post [(: % ClusterState)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "worker w の世代 b1 が、task id の子を見張りが要りの越え(止めた時の使い mib)で止めた終わりを報告した後の状態を求めるため。"
+  (get (! (beat state "w" now :statuses [{"name" (+ "task/" id) "phase" "finished" "detail" OVER-NEED-DETAIL "overNeedStopMiB" mib}])) 0))
+
+
+(defk placed-with [key body [now 0] [shape None]]
+  {:pre [(: key str) (: body dict) (: now int) (: shape (| str None))] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "本文 body を足した task を worker w の世代 b1 に置いて走らせた状態を作るため(shape = 仕事の形): 返り値 #(状態 task の id)。"
+  (val joined (! (beat (ClusterState :machine-compartments ROOMS) "w" now)))
+  (val put (! (put-detached (get joined 0) key now :lease 10.0 :extra (| body (if shape {"shape" shape} {})))))
+  (val id (get (get put 2) "task"))
+  (val running (! (beat (get put 0) "w" (+ now 1000) :statuses [{"name" (+ "task/" id) "phase" "running" "detail" ""}])))
+  #((get running 0) id))
+
+
+(deftest test-a-preemptible-task-the-watch-stopped-over-its-need-goes-back-to-the-queue-with-the-stopped-peak
+  (val placed (! (placed-with "job-over" PREEMPTIBLE-BODY)))
+  (val first-id (get placed 1))
+  (val stopped (! (over-need-stopped (get placed 0) first-id 2000)))
+  (val row (! (row-of-key stopped "job-over")))
+  ;; 次の試行の待ちの行へ戻り(id が替わる)、止めは走らせ直しの上限に数え、止められた試行の山を持ち越す。
+  (assert (= #(row.phase row.attempt row.losses row.peak-mib row.worker) #("queued" 2 1 3000 None)) row)
+  (assert (= row.id (.format "{}-r2" first-id)) row)
+  (assert (is (.row stopped.tasks first-id) None) "前の試行の行は残さない")
+  (assert (in "要りの越えで止めた" row.detail) row.detail)
+  (assert (in "1/3 回" row.detail) row.detail)
+  ;; 連絡のある worker へ次の試行が置かれ、返事に新しい id が載る。
+  (val heard (! (beat stopped "w" 3000)))
+  (val placed-row (! (row-of-key (get heard 0) "job-over")))
+  (assert (= #(placed-row.phase placed-row.attempt placed-row.id) #("assigned" 2 row.id)) placed-row)
+  (assert (= (lfor o (get (get heard 2) "tasks") (get o "id")) [row.id]) (get heard 2)))
+
+
+(deftest test-the-next-attempt-after-an-over-need-stop-claims-the-stopped-peak-times-the-shape-margin
+  ;; 同じ形に終わりまで走った回(山 1000 MiB)が在る形の task が、要り越えで 3000 MiB の時に止められた。次の試行の申告は
+  ;; ⌈止められた山 × 形の余裕⌉ + PEAK-STEP-MIB(measured_room.learned-need)— 同じ要りで止めと置き直しを繰り返さない。
+  (import math [ceil])
+  (import doeff_cluster._coordinator.core.measured_room [SHAPE-PEAK-MARGIN PEAK-STEP-MIB])
+  (val shape "daily-run")
+  ;; 1 本目: 同じ形で終わりまで走り、worker が山 1000 MiB を名乗った。
+  (val first (! (placed-with "job-shape-1" {} :shape shape)))
+  (val first-id (get first 1))
+  (val ended (get (! (call (get first 0) "POST" "/heartbeat" 2000
+                           {"name" "w" "provides" ["net"] "versions" V "boot" "b1"
+                            "measured" (| (get ROOM-JSONS 10) {"taskPeakMiB" {first-id 1000}})
+                            "statuses" [{"name" (+ "task/" first-id) "phase" "finished" "result" "R" "detail" ""}]})) 0))
+  (val done (.row ended.tasks first-id))
+  (assert (= #(done.phase done.peak-mib) #("finished" 1000)) done)
+  ;; 2 本目: 走らせ直しと場所の譲りを名乗り、要りを越えて止められた。
+  (val put (! (put-detached ended "job-shape-2" 3000 :lease 10.0 :extra (| PREEMPTIBLE-BODY {"shape" shape}))))
+  (val second-id (get (get put 2) "task"))
+  (val running (get (! (beat (get put 0) "w" 4000 :statuses [{"name" (+ "task/" second-id) "phase" "running" "detail" ""}])) 0))
+  (val stopped (! (over-need-stopped running second-id 5000 :mib 3000)))
+  (val waiting (! (row-of-key stopped "job-shape-2")))
+  ;; 次の試行は同じ heartbeat の置きで置かれうる(連絡のあった worker — heard-since-rerun)。
+  (assert (= #(waiting.attempt waiting.peak-mib) #(2 3000)) waiting)
+  (assert (in waiting.phase #{"queued" "assigned"}) waiting)
+  (import doeff_cluster._coordinator.core.task_claims [claims-noted])
+  (val heard (get (! (beat stopped "w" 6000)) 0))
+  (val next-row (! (row-of-key heard "job-shape-2")))
+  (assert (= next-row.phase "assigned") next-row)
+  ;; 申告は 1 歩の前後の差で書く(本番の coordinator-step が保存の直前に呼ぶ 1 点 — 走っていた 1 本目の試行の前から数える)。
+  (val noted (! (claims-noted running heard)))
+  (val claim (.row noted.claims next-row.id))
+  (assert (= claim.memory-mib (+ (ceil (* 3000 SHAPE-PEAK-MARGIN)) PEAK-STEP-MIB)) claim))
+
+
+(deftest test-over-need-stops-count-toward-the-rerun-limit-and-end-lost-past-it
+  ;; 同じ task が止められ続けたら、上限 RERUN-LIMIT 回の走らせ直しの後は今どおり lost(訳に上限を書く)。
+  (var state (get (! (placed-with "job-greedy" PREEMPTIBLE-BODY)) 0))
+  (var now 2000)
+  (for [attempt (range 1 (+ RERUN-LIMIT 1))]
+    (val row (! (row-of-key state "job-greedy")))
+    (:= state (! (over-need-stopped state row.id now)))
+    (val after (! (row-of-key state "job-greedy")))
+    (assert (= #(after.attempt after.losses) #((+ attempt 1) attempt)) after)
+    (assert (in after.phase #{"queued" "assigned"}) after)
+    (:= now (+ now 1000))
+    (:= state (! (running-on state "job-greedy" "b1" now)))
+    (:= now (+ now 1000)))
+  (val last (! (row-of-key state "job-greedy")))
+  (:= state (! (over-need-stopped state last.id now)))
+  (val ended (! (row-of-key state "job-greedy")))
+  (assert (= ended.phase "lost") ended)
+  (assert (in "上限" ended.detail) ended.detail)
+  (assert (in "要りの越えで止めた" ended.detail) ended.detail))
+
+
+(deftest test-a-task-without-the-rerun-and-preemptible-names-stopped-over-its-need-is-still-lost
+  ;; 対照: 走らせ直しを名乗らない task と、走らせ直しだけを名乗り場所の譲りを名乗らない task は、要りの越えの止めの後も今どおり lost。
+  (for [#(key body) #(#("job-plain" {}) #("job-rerun-only" RERUN-BODY))]
+    (val placed (! (placed-with key body)))
+    (val stopped (! (over-need-stopped (get placed 0) (get placed 1) 2000)))
+    (val row (! (row-of-key stopped key)))
+    (assert (= #(row.phase row.attempt row.id) #("lost" 1 (get placed 1))) row)
+    (assert (in "結果を書かずに" row.detail) row.detail)
+    (assert (in "要りを越えて伸びた task を見張りが止めた" row.detail) row.detail)))
+
+
 (deftest test-a-task-that-keeps-losing-its-worker-ends-lost-at-the-rerun-limit
   ;; task 自身が担い手を落としている時に機体を落とし続けない: 上限の回数の後は lost で、訳を書く。
   (var state (get (! (placed-rerun "job-poison")) 0))
