@@ -156,6 +156,17 @@ class Next(Generic[S, _A_co]):
     state: S
     effects: tuple[StepEffect[_A_co], ...] = ()
 
+    if not TYPE_CHECKING:
+        # The runtime half of ``_A_co``'s default: the runtime TypeVar has none (Python < 3.13), so a bare
+        # ``Next[S]`` written outside an annotation (a module-level alias, ``cast``) is completed to
+        # ``Next[S, object]`` here, as type checkers read it.
+        def __class_getitem__(cls, params: object) -> object:
+            if not isinstance(params, tuple):
+                params = (params, object)
+            elif len(params) == 1:
+                params = (*params, object)
+            return super().__class_getitem__(params)
+
 
 @dataclass(frozen=True)
 class Answered:
