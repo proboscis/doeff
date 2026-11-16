@@ -12,11 +12,14 @@
 //!   files is also counted) -- comparing per file would also stop moves and splits that do not increase warnings. The baseline is the HEAD version itself, so
 //!   after a commit that reduced them, the next commit's baseline naturally goes down (no baseline file to keep, nothing to forget to lower).
 //!
-//! The hook applies only rules decided from one file to staged paths, also for a declaration change (config, any architecture fragment, or registry). Rules that need the
-//! whole repo, and the hits a changed declaration makes in untouched files, remain the responsibility of the merge gate (`--split-rules` promotes a declaration change to the
-//! whole-repo comparison with `split_for_change`) and repo-wide verification. Measuring the whole repo on both trees in the hook cost about 7 CPU minutes and 2.9 GB per
-//! child in agora-controllers, and its commits on a shared machine waited 46-57 minutes for memory (2026-11-15); a whole-repo comparison in the hook was already moved
-//! out once for the same reason (1.5-1.7 GB and 45-100 s per commit, 2026-10-11).
+//! The hook applies the rules decided from one file to the staged paths. A declaration change (config, any architecture fragment, or registry) adds a whole-repo
+//! comparison of only the rules that read what changed (promotion_of): the HEAD and tip declarations are read as the linter reads them and compared item by item
+//! (project::declaration_items -- a comment-only change promotes no rule), and each rule names the items it reads (ProjectRule::reads_declarations). Rules the config
+//! newly enables are promoted too, with no HEAD side (every hit of theirs is new). The promoted rules are measured over the whole repo on both trees under the same
+//! limit (timeout_s), and an answer is kept per (git tree id, linter build, rules, what the run reads besides the tree) under the HEAD tree's place (`answers/`) and read
+//! instead of measuring again -- the stage of a commit is the HEAD of the next one. Measuring every rule over the whole repo on both trees for any declaration change
+//! cost about 7 CPU minutes and 2.9 GB per child in agora-controllers (2026-11-15); the rules a declaration item promotes cost 3-64 CPU seconds there per run
+//! (2026-11-16). The merge gate (`--split-rules`, split_for_change) still compares every rule over the whole repo for a declaration change.
 //!
 //! Criticals of rules with no known list (DOEFF206-209, 211) stop in the second item above if they are in a staged path even when the same key is in HEAD. Those hits are written as
 //! "existing hit in a changed file (also on main ...)" rather than "not on HEAD", with one line of guidance on how to fix added
@@ -83,13 +86,6 @@ pub fn split_rules(enabled: &[String]) -> RuleSplit {
 pub fn retired_whole_repo_rules_note(section: Option<&CommitHookSection>) -> Option<String> {
     section.filter(|s| !s.whole_repo_rules.is_empty()).map(|_| {
         "settings: whole_repo_rules is a retired key and is not read — which rules need a whole-repo comparison is declared by the linter rules themselves (`doeff-linter --list-rules`). Remove the key".to_string()
-    })
-}
-
-/// Pure: the notice for when the retired config key declaration_timeout_s is left in place (not read -- the hook no longer measures the whole repo for a declaration change).
-pub fn retired_declaration_timeout_note(section: Option<&CommitHookSection>) -> Option<String> {
-    section.filter(|s| s.declaration_timeout_s.is_some()).map(|_| {
-        "settings: declaration_timeout_s is a retired key and is not read — a declaration change is measured on the staged paths like any commit (timeout_s), and the merge gate compares the whole repo. Remove the key".to_string()
     })
 }
 
@@ -337,7 +333,7 @@ impl CommitHookOptions {
     pub fn new(root: PathBuf, config: Option<(&Config, PathBuf)>, cli_enable: &[String], cli_disable: &[String], cli_timeout: Option<u64>, linter: PathBuf) -> Self {
         let section = config.as_ref().and_then(|(c, _)| c.commit_hook.as_ref());
         let enabled = effective_rules(config.as_ref().map(|(c, _)| *c), cli_enable, cli_disable);
-        for note in [retired_whole_repo_rules_note(section), retired_declaration_timeout_note(section)].into_iter().flatten() {
+        if let Some(note) = retired_whole_repo_rules_note(section) {
             eprintln!("{}{}", PREFIX, note);
         }
         let world_catalogs = config
@@ -656,6 +652,10 @@ pub const TREE_RECORD: &str = "tree.sha";
 pub const TREE_LOCK: &str = "lock";
 /// The record, inside the repo's dir, of the absolute path of the repo's git common dir.
 pub const REPO_RECORD: &str = "repo.path";
+/// The dir, inside the repo's dir, of the whole-repo answers (answer_key).
+pub const ANSWERS_DIR: &str = "answers";
+/// How many whole-repo answers are kept per repo (the oldest are removed when one is stored).
+pub const ANSWERS_KEPT: usize = 32;
 /// The upper limit of waiting when another run at the same time is using the tree.
 pub const LOCK_WAIT: Duration = Duration::from_secs(30);
 /// If more paths than this need rewriting, write everything out instead of advancing by diff (just before git's argument length limit).
@@ -681,6 +681,8 @@ pub enum TreeUpdate {
 pub struct HeadTree {
     pub path: PathBuf,
     pub update: TreeUpdate,
+    /// Where the whole-repo answers of this repo are kept (`<name representing the repo>/answers` -- None for a temporary tree, whose path is not stable).
+    pub answers: Option<PathBuf>,
     _lock: Option<std::fs::File>,
 }
 
@@ -795,7 +797,7 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
         let path = scratch.join("head-tree");
         std::fs::create_dir_all(&path).map_err(|e| format!("cannot create {}: {}", path.display(), e))?;
         write_whole_tree(root, &head, overlay, &path)?;
-        return Ok(Some(HeadTree { path, update: TreeUpdate::Temporary, _lock: None }));
+        return Ok(Some(HeadTree { path, update: TreeUpdate::Temporary, answers: None, _lock: None }));
     };
     let recorded = common.to_string_lossy();
     if std::fs::read_to_string(repo_dir.join(REPO_RECORD)).ok().as_deref().map(str::trim) != Some(recorded.as_ref()) {
@@ -812,7 +814,7 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
         },
         None => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
     };
-    Ok(Some(HeadTree { path: tree, update, _lock: Some(lock) }))
+    Ok(Some(HeadTree { path: tree, update, answers: Some(repo_dir.join(ANSWERS_DIR)), _lock: Some(lock) }))
 }
 
 /// Deletes the tree, writes out all of HEAD again, and places the record.
@@ -1019,6 +1021,12 @@ struct Blocking {
     grown_warnings: Vec<String>,
     /// Among the staged Hy files, those outside the range the linter walks -- only names that they were not measured, and does not stop.
     out_of_scope: Vec<String>,
+    /// The errors of the whole-repo comparison of a declaration change that stop (stopping_errors -- every one in a staged path, and elsewhere those HEAD does not have).
+    declared: Vec<String>,
+    /// The rules whose major warnings over the whole repo grew in the whole-repo comparison of a declaration change.
+    grown_whole: Vec<String>,
+    /// Lines that name what was measured for a declaration change (the promoted rules, a reused answer) -- they do not stop.
+    notes: Vec<String>,
 }
 
 /// Pure: the `out_of_scope` of the child linter's report (editor-json) -- among the named Hy files, those outside the range the linter walks (spec section 1
@@ -1109,15 +1117,20 @@ pub fn assess(options: &CommitHookOptions) -> Assessment {
         Ok(Judged { blocking, measurements }) => {
             let code = u8::from(
                 !(blocking.staged.is_empty()
+                    && blocking.declared.is_empty()
                     && blocking.fresh_critical.is_empty()
-                    && blocking.grown_warnings.is_empty()),
+                    && blocking.grown_warnings.is_empty()
+                    && blocking.grown_whole.is_empty()),
             );
             let lines = blocking
-                .staged
+                .notes
                 .iter()
-                .map(|line| format!("violation in staged file: {}", line))
+                .cloned()
+                .chain(blocking.staged.iter().map(|line| format!("violation in staged file: {}", line)))
+                .chain(blocking.declared.iter().map(|line| format!("violation in the repo after the declaration change: {}", line)))
                 .chain(blocking.fresh_critical.not_on_head.iter().map(|ident| format!("not on HEAD critical: {}", ident)))
                 .chain(blocking.grown_warnings.iter().map(|line| format!("major warnings increased over the HEAD version (count over the set of staged files): {}", line)))
+                .chain(blocking.grown_whole.iter().map(|line| format!("major warnings increased over the HEAD version (count over the whole repo, after the declaration change): {}", line)))
                 .chain(already_on_head_lines(&blocking))
                 .chain(blocking.out_of_scope.iter().map(|path| format!("out of scope (outside the range the linter walks -- the layer rules did not measure this file): {}", path)))
                 .collect();
@@ -1157,17 +1170,259 @@ fn already_on_head_lines(blocking: &Blocking) -> Vec<String> {
     hits.into_iter().chain(guide).collect()
 }
 
+/// The rules a declaration change compares over the whole repo (promoted -- declaration_items::promoted), those of them whose HEAD side is not measured (newly -- the
+/// HEAD config does not enable them), and the lines naming the choice.
+#[derive(Debug, Default)]
+struct Promotion {
+    promoted: Vec<String>,
+    newly: Vec<String>,
+    notes: Vec<String>,
+}
+
+/// Reads the declarations of the HEAD tree and of the tip as the linter reads them and chooses the rules to compare over the whole repo. A declaration that cannot be
+/// read on either side counts as a change of where files sit (every rule -- the child linter then names the reading error).
+fn promotion_of(options: &CommitHookOptions, tree: &Path) -> Promotion {
+    use crate::project::declaration_items::{changes, newly_enabled, promoted, Change, Decl, DeclarationView};
+    let head_config = options.config.as_ref().map(|config| match config.strip_prefix(&options.root) {
+        Ok(rel) => tree.join(rel),
+        Err(_) => config.clone(),
+    });
+    let head = DeclarationView::load(tree, head_config.as_deref());
+    let tip = DeclarationView::load(&options.root, options.config.as_deref());
+    let changed = match (&head, &tip) {
+        (Ok(head), Ok(tip)) => changes(head, tip),
+        _ => [Change::Item(Decl::Population)].into_iter().collect(),
+    };
+    let head_enabled = effective_rules(head.as_ref().ok().and_then(|view| view.config.as_ref()), &options.cli_enable, &options.cli_disable);
+    let promoted = promoted(&options.enabled, &head_enabled, &changed);
+    let newly = newly_enabled(&promoted, &head_enabled);
+    let note = if promoted.is_empty() {
+        "declaration change: no rule reads what changed (comments, order, or prose only) — measuring the staged paths only".to_string()
+    } else {
+        let named: Vec<String> = changed
+            .iter()
+            .map(|change| match change {
+                Change::Item(item) => format!("{:?}", item),
+                Change::Rule(rule) => rule.clone(),
+            })
+            .collect();
+        format!(
+            "declaration change: comparing the whole repo for {} rule(s) that read what changed ({}) — {}{}",
+            promoted.len(),
+            if named.is_empty() { "rules newly enabled".to_string() } else { named.join(", ") },
+            promoted.join(","),
+            if newly.is_empty() { String::new() } else { format!(" (newly enabled, every hit is new: {})", newly.join(",")) }
+        )
+    };
+    Promotion { promoted, newly, notes: vec![note] }
+}
+
+/// Pure: the key of a whole-repo answer -- the measured tree (its git tree id), the linter (its build), the rules, and what the run reads besides the tree (the tip
+/// declarations laid on the HEAD tree, the catalogs and dirs outside the root, the config's place). The same key answers the same, so it is not measured again: the HEAD
+/// version of the next commit is the tree this commit stages.
+pub fn answer_key(tree_id: &str, linter: &str, rules: &[String], overlay: &[(String, String)], outside: &[String]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut rules: Vec<&String> = rules.iter().collect();
+    rules.sort();
+    let mut hasher = Sha256::new();
+    for part in std::iter::once(tree_id.to_string())
+        .chain(std::iter::once(linter.to_string()))
+        .chain(rules.iter().map(|r| format!("rule {}", r)))
+        .chain(overlay.iter().map(|(path, digest)| format!("overlay {} {}", path, digest)))
+        .chain(outside.iter().map(|o| format!("outside {}", o)))
+    {
+        hasher.update(part.as_bytes());
+        hasher.update([0u8]);
+    }
+    hasher.finalize().iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// The build of the child linter (`--version`); a hand build (`+dirty`, `unknown`) adds the binary's size and mtime. None = cannot tell (answers are not kept).
+fn linter_identity(linter: &Path) -> Option<String> {
+    let output = Command::new(linter).arg("--version").stdin(Stdio::null()).output().ok().filter(|o| o.status.success())?;
+    let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !version.contains("dirty") && !version.contains("unknown") {
+        return Some(version);
+    }
+    let meta = std::fs::metadata(linter.canonicalize().ok()?).ok()?;
+    let mtime = meta.modified().ok()?.duration_since(UNIX_EPOCH).ok()?.as_nanos();
+    Some(format!("{} {} {}", version, meta.len(), mtime))
+}
+
+/// What the runs read besides the tree (catalogs, dirs outside the root, the config's place) -- part of the answer key.
+fn outside_of(options: &CommitHookOptions) -> Vec<String> {
+    let rel = options.config.as_ref().map(|c| c.strip_prefix(&options.root).map(|r| r.to_string_lossy().into_owned()).unwrap_or_else(|_| c.to_string_lossy().into_owned()));
+    rel.into_iter()
+        .map(|r| format!("config {}", r))
+        .chain(options.world_catalogs.iter().map(|c| format!("catalog {}", c.display())))
+        .chain(options.import_roots.iter().map(|d| format!("import-root {}", d.display())))
+        .collect()
+}
+
+/// Reads a kept answer (None if absent or unreadable). Its paths are under the HEAD tree's path.
+fn read_answer(answers: &Path, key: &str) -> Option<Value> {
+    std::fs::read(answers.join(format!("{}.json", key))).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok())
+}
+
+/// Keeps an answer (paths under the HEAD tree's path) -- placed by rename, and the oldest beyond ANSWERS_KEPT removed. A failure to keep only loses the reuse.
+fn keep_answer(answers: &Path, key: &str, report: &Value) {
+    if std::fs::create_dir_all(answers).is_err() {
+        return;
+    }
+    let partial = answers.join(format!("{}.partial-{}", key, std::process::id()));
+    if std::fs::write(&partial, report.to_string()).is_err() || std::fs::rename(&partial, answers.join(format!("{}.json", key))).is_err() {
+        let _ = std::fs::remove_file(&partial);
+        return;
+    }
+    let Ok(entries) = std::fs::read_dir(answers) else { return };
+    let mut kept: Vec<(SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    kept.sort();
+    let surplus = kept.len().saturating_sub(ANSWERS_KEPT);
+    for (_, path) in kept.into_iter().take(surplus) {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
+/// The git tree id of the stage when the working tree is exactly the stage (no unstaged change, no untracked file -- the whole-repo run reads the working tree), else None.
+fn clean_stage_tree(root: &Path) -> Option<String> {
+    let untracked = git(root, &["ls-files", "-z", "--others", "--exclude-standard"]).ok()?;
+    let unstaged = git(root, &["diff", "--name-only", "-z"]).ok()?;
+    if !untracked.is_empty() || !unstaged.is_empty() {
+        return None;
+    }
+    git(root, &["write-tree"]).ok().map(|out| String::from_utf8_lossy(&out).trim().to_string())
+}
+
+/// The whole-repo comparison of a declaration change: the promoted rules on the HEAD tree (without the newly enabled ones) and on the tip, each from a kept answer when
+/// there is one. Both reports come back with paths under the tip's root.
+struct Whole {
+    head: Value,
+    tip: Value,
+    notes: Vec<String>,
+}
+
+fn measure_whole(options: &CommitHookOptions, held: &HeadTree, promotion: &Promotion) -> Result<Whole, Stop> {
+    let root = &options.root;
+    let tree = held.path.as_path();
+    let tree_text = tree.to_string_lossy().into_owned();
+    let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone()).to_string_lossy().into_owned();
+    let identity = held.answers.as_ref().and_then(|_| linter_identity(&options.linter));
+    let outside = outside_of(options);
+    let mut notes = Vec::new();
+    let head_rules: Vec<String> = promotion.promoted.iter().filter(|r| !promotion.newly.contains(r)).cloned().collect();
+    let head = if head_rules.is_empty() {
+        empty_report()
+    } else {
+        let overlay: Vec<(String, String)> = options
+            .overlay
+            .iter()
+            .map(|rel| {
+                use sha2::{Digest, Sha256};
+                let digest = std::fs::read(root.join(rel)).map(|b| Sha256::digest(&b).iter().map(|x| format!("{:02x}", x)).collect::<String>()).unwrap_or_default();
+                (rel.clone(), digest)
+            })
+            .collect();
+        let head_tree_id = git(root, &["rev-parse", "HEAD^{tree}"]).ok().map(|out| String::from_utf8_lossy(&out).trim().to_string());
+        let key = match (&held.answers, &identity, head_tree_id) {
+            (Some(_), Some(identity), Some(tree_id)) => Some(answer_key(&tree_id, identity, &head_rules, &overlay, &outside)),
+            _ => None,
+        };
+        let kept = held.answers.as_deref().zip(key.as_deref()).and_then(|(answers, key)| read_answer(answers, key));
+        let mut report = match kept {
+            Some(report) => {
+                notes.push(format!("reused the kept whole-repo answer of the HEAD version for {}", head_rules.join(",")));
+                report
+            }
+            None => {
+                let report = measured(
+                    run_linter(&options.linter, tree, &lint_args(options, Some(tree), &head_rules, &[], &[".".to_string()]), options.timeout),
+                    "the HEAD version of the whole repo",
+                )?;
+                if let (Some(answers), Some(key)) = (&held.answers, &key) {
+                    keep_answer(answers, key, &report);
+                }
+                report
+            }
+        };
+        rebase_paths(&mut report, &tree_text, &tip_root);
+        report
+    };
+    let stage_tree = held.answers.as_ref().and(identity.as_ref()).and_then(|_| clean_stage_tree(root));
+    let key = match (&identity, &stage_tree) {
+        (Some(identity), Some(tree_id)) => Some(answer_key(tree_id, identity, &promotion.promoted, &[], &outside)),
+        _ => None,
+    };
+    let kept = held.answers.as_deref().zip(key.as_deref()).and_then(|(answers, key)| read_answer(answers, key));
+    let tip = match kept {
+        Some(mut report) => {
+            notes.push(format!("reused the kept whole-repo answer of the staged tree for {}", promotion.promoted.join(",")));
+            rebase_paths(&mut report, &tree_text, &tip_root);
+            report
+        }
+        None => {
+            let report = measured(
+                run_linter(&options.linter, root, &lint_args(options, None, &promotion.promoted, &[], &[".".to_string()]), options.timeout),
+                "the whole repo after the declaration change",
+            )?;
+            if let (Some(answers), Some(key)) = (&held.answers, &key) {
+                let mut stored = report.clone();
+                rebase_paths(&mut stored, &tip_root, &tree_text);
+                keep_answer(answers, key, &stored);
+            }
+            report
+        }
+    };
+    Ok(Whole { head, tip, notes })
+}
+
+/// Pure: the identifiers of the criticals that stop in the whole-repo comparison -- those not in the HEAD version (baseline::new_criticals, a move counted as the same
+/// hit), and, in a staged path, every critical of a rule with no known list (the same as the staged run's new_critical -- baseline::blocks_regardless_of_baseline).
+pub fn whole_criticals(head: &Value, tip: &Value, staged: &[String]) -> Result<Vec<String>, String> {
+    let fresh = crate::baseline::new_criticals(&crate::baseline::baseline_identities(head)?, &crate::baseline::baseline_identities(tip)?);
+    let unlisted: Vec<Value> = violations(tip)
+        .filter(|v| {
+            let level = v["level"].as_str().and_then(crate::project::rule::RuleLevel::parse);
+            level.is_some_and(|level| crate::baseline::blocks_regardless_of_baseline(v["rule"].as_str().unwrap_or(""), level))
+                && staged.iter().any(|p| p == relative_to_root(tip, v["path"].as_str().unwrap_or("")))
+        })
+        .cloned()
+        .collect();
+    let unlisted = crate::baseline::baseline_identities(&serde_json::json!({ "violations": unlisted }))?;
+    Ok(fresh.into_iter().chain(unlisted).collect::<BTreeSet<String>>().into_iter().collect())
+}
+
+/// Pure: one measurement made of two runs of the same tree with disjoint rules (the staged paths and the whole repo) -- paths, violations, and judged rules joined.
+fn joined(target: Side, paths: Vec<String>, first: Value, second: Option<(Vec<String>, Value)>) -> Measurement {
+    let mut measurement = Measurement::of(target, paths, first);
+    if let Some((paths, report)) = second {
+        let other = Measurement::of(target, paths, report);
+        measurement.paths.extend(other.paths);
+        measurement.violations.extend(other.violations);
+        for rule in other.judged_rules {
+            if !measurement.judged_rules.contains(&rule) {
+                measurement.judged_rules.push(rule);
+            }
+        }
+    }
+    measurement
+}
+
 fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
     let root = &options.root;
     let staged = staged_paths(root).map_err(Stop::Failed)?;
     if staged.is_empty() {
         return Ok(Judged::unmeasured());
     }
-    // Only staged paths with rules decided from one file, also for a declaration change: the hits a declaration makes in untouched files are the merge gate's
-    // (--split-rules promotes the change to the whole-repo comparison) -- see the module comment for the cost that moved them out of the hook.
-    let quick = split_rules(&options.enabled).quick;
+    // Rules decided from one file on the staged paths. A declaration change adds the whole-repo comparison of the rules that read what changed (promotion_of) --
+    // the merge gate compares every rule over the whole repo for it.
+    let declaration_changed = touches_declaration(&staged, &options.declarations);
+    let quick_all = split_rules(&options.enabled).quick;
     let paths = linted_paths(&staged, |p| root.join(p).exists());
-    if quick.is_empty() || paths.is_empty() {
+    if !declaration_changed && (quick_all.is_empty() || paths.is_empty()) {
         return Ok(Judged::unmeasured());
     }
     let timeout = options.timeout;
@@ -1191,44 +1446,74 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
         eprintln!("{}{} — measuring the HEAD tree with the current declarations ({}) (one time only)", PREFIX, BASELINE_TRAILER, options.overlay.join(", "));
     }
     let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+    let promotion = match (declaration_changed, tree) {
+        (true, Some(t)) => promotion_of(options, t),
+        _ => Promotion::default(),
+    };
+    blocking.notes = promotion.notes.clone();
+    let quick: Vec<String> = quick_all.into_iter().filter(|r| !promotion.promoted.contains(r)).collect();
 
     // Fire the HEAD version (only paths that exist in HEAD) with the same rules, and re-point it to the tip's root paths to make the baseline. The HEAD version of files deleted by the stage (including the old
     // side of a rename) is also fired -- so that the count of major warnings is compared including moved and deleted files.
-    let removed = removed_paths(root).map_err(Stop::Failed)?;
-    let head_paths: Vec<String> = tree
-        .map(|t| {
-            paths
-                .iter()
-                .chain(linted_paths(&removed, |p| t.join(p).is_file()).iter())
-                .filter(|p| t.join(p).is_file())
-                .cloned()
-                .collect::<BTreeSet<String>>()
-                .into_iter()
-                .collect()
-        })
-        .unwrap_or_default();
-    let base = match tree {
-        Some(t) if !head_paths.is_empty() => {
-            let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), timeout), "the HEAD version")?;
-            rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
-            report
-        }
-        _ => empty_report(),
+    let (head_paths, base, tip, paths) = if quick.is_empty() || paths.is_empty() {
+        (Vec::new(), empty_report(), empty_report(), Vec::new())
+    } else {
+        let removed = removed_paths(root).map_err(Stop::Failed)?;
+        let head_paths: Vec<String> = tree
+            .map(|t| {
+                paths
+                    .iter()
+                    .chain(linted_paths(&removed, |p| t.join(p).is_file()).iter())
+                    .filter(|p| t.join(p).is_file())
+                    .cloned()
+                    .collect::<BTreeSet<String>>()
+                    .into_iter()
+                    .collect()
+            })
+            .unwrap_or_default();
+        let base = match tree {
+            Some(t) if !head_paths.is_empty() => {
+                let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), timeout), "the HEAD version")?;
+                rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
+                report
+            }
+            _ => empty_report(),
+        };
+        let baseline = scratch.path.join("baseline.json");
+        std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("cannot write {}: {}", baseline.display(), e)))?;
+        let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
+        let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), timeout), "the staged files")?;
+        blocking.staged = stopping_errors(&tip, &base, &staged);
+        // Read the identifiers of the HEAD version with the same spelling the child linter uses to read the baseline file (baseline::baseline_identities), and split the hits that stop.
+        let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;
+        blocking.fresh_critical =
+            split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
+        blocking.grown_warnings = grown_major_warnings(&base, &tip);
+        blocking.out_of_scope = out_of_scope_of(&tip);
+        (head_paths, base, tip, paths)
     };
-    let baseline = scratch.path.join("baseline.json");
-    std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("cannot write {}: {}", baseline.display(), e)))?;
-    let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
-    let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), timeout), "the staged files")?;
-    blocking.staged = stopping_errors(&tip, &base, &staged);
-    // Read the identifiers of the HEAD version with the same spelling the child linter uses to read the baseline file (baseline::baseline_identities), and split the hits that stop.
-    let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;
-    blocking.fresh_critical =
-        split_by_head(&head_criticals, tip["new_critical"].as_array().into_iter().flatten().filter_map(|v| v.as_str().map(str::to_string)));
-    blocking.grown_warnings = grown_major_warnings(&base, &tip);
-    blocking.out_of_scope = out_of_scope_of(&tip);
-    let measurements = vec![Measurement::of(Side::Head, head_paths, base), Measurement::of(Side::Tip, paths, tip)];
+
+    // The rules a declaration change promoted, over the whole repo on both trees (measure_whole -- a kept answer is read instead of measuring again).
+    let whole = match (&held, promotion.promoted.is_empty()) {
+        (Some(held), false) => Some(measure_whole(options, held, &promotion)?),
+        _ => None,
+    };
+    if let Some(whole) = &whole {
+        blocking.notes.extend(whole.notes.iter().cloned());
+        blocking.declared = stopping_errors(&whole.tip, &whole.head, &staged);
+        let head_criticals =
+            crate::baseline::baseline_identities(&whole.head).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;
+        let fresh = whole_criticals(&whole.head, &whole.tip, &staged).map_err(|reason| Stop::Failed(format!("cannot read the whole-repo reports: {}", reason)))?;
+        let split = split_by_head(&head_criticals, fresh);
+        blocking.fresh_critical.not_on_head.extend(split.not_on_head);
+        blocking.fresh_critical.already_on_head.extend(split.already_on_head);
+        blocking.grown_whole = grown_major_warnings(&whole.head, &whole.tip);
+    }
+    let second = |head: bool| whole.as_ref().map(|w| (vec![".".to_string()], if head { w.head.clone() } else { w.tip.clone() }));
+    let measurements = vec![joined(Side::Head, head_paths, base, second(true)), joined(Side::Tip, paths, tip, second(false))];
     Ok(Judged { blocking, measurements })
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -1294,7 +1579,7 @@ mod tests {
 
     #[test]
     fn commit_hook_names_a_retired_hand_list() {
-        let kept = CommitHookSection { whole_repo_rules: ids(&["DOEFF163"]), timeout_s: None, declaration_timeout_s: None };
+        let kept = CommitHookSection { whole_repo_rules: ids(&["DOEFF163"]), timeout_s: None };
         assert!(retired_whole_repo_rules_note(Some(&kept)).is_some_and(|line| line.contains("retired")));
         assert_eq!(retired_whole_repo_rules_note(Some(&CommitHookSection::default())), None);
         assert_eq!(retired_whole_repo_rules_note(None), None);
@@ -1439,24 +1724,38 @@ mod tests {
 
     #[test]
     fn commit_hook_timeout_prefers_cli_then_config_then_default() {
-        let section = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7), declaration_timeout_s: None };
+        let section = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7) };
         assert_eq!(resolve_timeout(Some(&section), Some(3)), Some(Duration::from_secs(3)));
         assert_eq!(resolve_timeout(Some(&section), None), Some(Duration::from_secs(7)));
         assert_eq!(resolve_timeout(None, None), Some(Duration::from_secs(DEFAULT_TIMEOUT_S)));
         // 0 seconds means no limit (whether by argument or config).
         assert_eq!(resolve_timeout(Some(&section), Some(0)), None);
-        assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0), declaration_timeout_s: None }), None), None);
+        assert_eq!(resolve_timeout(Some(&CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(0) }), None), None);
     }
 
-    /// The retired key declaration_timeout_s is named in one line and does not change the limit (the hook's only limit is timeout_s).
+    /// The key of a whole-repo answer changes with the tree, the linter build, the rule set, the declarations laid on the tree, and what is read outside it, and not with
+    /// the order the rules are named in.
     #[test]
-    fn commit_hook_declaration_timeout_is_retired() {
-        let usual = CommitHookSection { whole_repo_rules: Vec::new(), timeout_s: Some(7), declaration_timeout_s: None };
-        assert_eq!(retired_declaration_timeout_note(Some(&usual)), None);
-        assert_eq!(retired_declaration_timeout_note(None), None);
-        let kept = CommitHookSection { declaration_timeout_s: Some(900), ..usual };
-        assert!(retired_declaration_timeout_note(Some(&kept)).is_some_and(|line| line.contains("retired")));
-        assert_eq!(resolve_timeout(Some(&kept), None), Some(Duration::from_secs(7)));
+    fn answer_key_names_everything_the_answer_depends_on() {
+        let rules = vec!["DOEFF102".to_string(), "DOEFF101".to_string()];
+        let key = answer_key("t1", "0.1 (doeff abc)", &rules, &[], &[]);
+        assert_eq!(key, answer_key("t1", "0.1 (doeff abc)", &["DOEFF101".to_string(), "DOEFF102".to_string()], &[], &[]));
+        assert_ne!(key, answer_key("t2", "0.1 (doeff abc)", &rules, &[], &[]));
+        assert_ne!(key, answer_key("t1", "0.1 (doeff abd)", &rules, &[], &[]));
+        assert_ne!(key, answer_key("t1", "0.1 (doeff abc)", &rules[..1], &[], &[]));
+        assert_ne!(key, answer_key("t1", "0.1 (doeff abc)", &rules, &[("architecture.hy".to_string(), "d".to_string())], &[]));
+        assert_ne!(key, answer_key("t1", "0.1 (doeff abc)", &rules, &[], &["catalog /x".to_string()]));
+    }
+
+    /// Failure case: the whole-repo comparison stops on a critical HEAD does not have (also when it sits in an untouched file), not on one HEAD has in an untouched file,
+    /// and, in a staged path, on every critical of a rule with no known list (DOEFF208 — as the staged run does).
+    #[test]
+    fn whole_criticals_are_the_new_ones_and_the_unlisted_ones_in_staged_paths() {
+        let hit = |rel: &str, rule: &str| json!({"rule": rule, "level": "critical", "severity": "error", "path": format!("/r/{}", rel), "key": format!("{}::{}::x", rel, rule), "message": "m"});
+        let head = json!({"root": "/r", "violations": [hit("a.hy", "DOEFF102"), hit("w.hy", "DOEFF208")]});
+        let tip = json!({"root": "/r", "violations": [hit("a.hy", "DOEFF102"), hit("b.hy", "DOEFF102"), hit("w.hy", "DOEFF208")]});
+        assert_eq!(whole_criticals(&head, &tip, &[]).unwrap(), vec!["b.hy::DOEFF102::x".to_string()]);
+        assert_eq!(whole_criticals(&head, &tip, &["w.hy".to_string()]).unwrap(), vec!["b.hy::DOEFF102::x".to_string(), "w.hy::DOEFF208::x".to_string()]);
     }
 
     fn error_at(root: &str, rel: &str, line: u64, rule: &str) -> Value {
