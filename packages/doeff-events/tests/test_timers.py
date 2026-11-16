@@ -29,9 +29,11 @@ from doeff_events import (
     ArmedTimers,
     ArmTimer,
     DisarmTimer,
+    EventBus,
     TimerFired,
     WaitForEvent,
     event_handler,
+    subscribed_event_handler,
     timer_handler,
 )
 from doeff_time import GetTime, async_time_handler, sim_time_handler, sync_time_handler
@@ -44,8 +46,10 @@ T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _on_events(program: Any) -> Any:
-    """The program under the timer handler, inside the in-memory event handler."""
-    return event_handler()(timer_handler()(program))
+    """The program under the timer handler, inside a subscriber queue that keeps a TimerFired published before the
+    program waits (the in-memory ``event_handler()`` drops it): on a wall clock the program can reach its wait after
+    a deadline that was near."""
+    return subscribed_event_handler(EventBus(), "main", (TimerFired,))(timer_handler()(program))
 
 
 def run_on_sim(program: Any) -> Any:
@@ -268,7 +272,9 @@ def earlier_armed_after_later():
 
     The later deadline is far (not 80 ms) so that on a loaded machine the wall clocks' wake delay stays inside the gap:
     with 80 ms the sync clock woke for "earlier" 80 ms or more after ``now`` and the check went red (2026-11-06). The
-    run ends when the program answers, so the far deadline costs no wall time."""
+    clocks run on a queue that keeps a fire before the wait: a program held past the 30 ms before ``WaitForEvent`` got
+    "earlier" dropped and "later" at 5 s on the in-memory event handler (2026-11-16). The run ends when the program
+    answers, so the far deadline costs no wall time."""
     now = yield GetTime()
     yield ArmTimer("later", now + LATER)
     yield ArmTimer("earlier", now + timedelta(milliseconds=30))
