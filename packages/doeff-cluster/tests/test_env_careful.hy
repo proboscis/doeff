@@ -23,6 +23,7 @@
 (import doeff_cluster [env-key])
 (import doeff_cluster [current-platform])
 (import doeff_cluster [ENV-MARKER])
+(import doeff_cluster._shared.intent.env_marker_model [ROOT-PYCACHE])
 (import doeff_cluster._worker.protocol.env_store [env-root])
 (import doeff_cluster._worker.protocol.process_host [HostSettings job-work-dir])
 (import doeff_core_effects [EnvEntry StartProcess])
@@ -80,7 +81,11 @@
   (assert (= (get marker "venv") ".venv") marker)
   (assert (= (get marker "interpreter") (os.path.realpath (/ (Path view-1.path) ".venv" "bin" "python")))
           "bytecode を作った interpreter は root の venv の物")
-  (assert (list (.glob (/ (Path view-1.path) "app") "__pycache__/appjobs.*.pyc")) "root の中に bytecode を作った")
+  ;; root の .pyc は木の外の root の置き場(ROOT-PYCACHE — 木の dir の絶対 path を置き場の下に写した dir)に在り、木の中には無い
+  ;; (ADR-DOE-BUILD-002 R3d)。
+  (val app-tree (/ (Path view-1.path) "app"))
+  (assert (list (.glob (/ (Path view-1.path) ROOT-PYCACHE (.lstrip (str app-tree) "/")) "appjobs.*.pyc")) "root の置き場に bytecode を作った")
+  (assert (not (list (.glob app-tree "__pycache__/appjobs.*.pyc"))) "root の木の中に bytecode を書かない")
   ;; 2 project の commit だけ変えて再送(同じ lock・同じ native)
   (<- downloads-1 int (downloads rig))
   (<- builds-1 int (count-log rig "build "))

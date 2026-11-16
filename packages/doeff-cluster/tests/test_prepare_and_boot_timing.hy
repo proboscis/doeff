@@ -42,7 +42,7 @@
 (val PLATFORM "linux-x86_64")
 (val NOW-MS 1759600000000)          ; 模擬の時計の初めの刻(epoch ミリ秒)
 (val LAUNCH-LEAD-MS 2500)           ; 準備の process を起こしてから準備の Program が始まるまで(模擬)
-(val STAGE-NAMES ["disk" "mirror" "tree" "lock" "venv" "native" "sync" "wheels" "roots" "bytecode" "probe"])
+(val STAGE-NAMES ["disk" "mirror" "tree" "lock" "venv" "native" "sync" "wheels" "share" "roots" "bytecode" "probe"])
 
 
 ;; --- 1 準備の印の計時 -------------------------------------------------------------------------
