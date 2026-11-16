@@ -107,6 +107,9 @@ impl Repo {
             .current_dir(&self.crate_dir)
             .args(["build", "--quiet", "--offline"])
             .env("CARGO_TARGET_DIR", &target)
+            // The machine running this test may keep Cargo's intermediates elsewhere (`CARGO_BUILD_BUILD_DIR`, e.g. the
+            // daily verification's /cargo-build); pin them to the target dir so the output of build.rs is where it is read below.
+            .env("CARGO_BUILD_BUILD_DIR", &target)
             .env("GIT_DIR", &foreign_git)
             .env("GIT_WORK_TREE", foreign.dir.path())
             .env("GIT_INDEX_FILE", foreign_git.join("index"))
