@@ -119,11 +119,14 @@
 
 (defrecord MemoryKill
   "見張りが止めた単位の属する job の根 1 つの印: job = job(process)の名・pid = 根の pid・at-ms = 止めた刻(epoch ms — 印を残す間を数える)・
-   reason = 止めた訳の文(状態の報告がその job の終わりの訳に載せる — 頭の註の止めた印)。"
+   reason = 止めた訳の文(状態の報告がその job の終わりの訳に載せる — 頭の註の止めた印)・over-need-mib = 要りの越えの止め(over-need-stopped)
+   の時だけ、止めた時の task の使い(MiB — 状態の報告が coordinator へ運び、走らせ直しを名乗る task の次の試行の要りの材料になる)。ほかの
+   止めは None。"
   (#^ str job)
   (#^ int pid)
   (#^ int at-ms)
-  (setv #^ str reason ""))
+  (setv #^ str reason "")
+  (setv #^ (| int None) over-need-mib None))
 
 
 (defrecord JobPeak
@@ -457,7 +460,8 @@
         (val reason (.format "要りを越えて伸びた task を見張りが止めた(使い {} MiB・要り {} MiB — 機体の MemAvailable が上に載る系の残す線を {} MiB 割った)"
                              (// task.use-bytes MIB) (// task.need-bytes MIB) (// (- keep-room) MIB)))
         (setv cell.last-kill-ms now-ms
-              cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms :reason reason)))
+              cell.kills (+ cell.kills #((MemoryKill :job root.name :pid root.pid :at-ms now-ms :reason reason
+                                                     :over-need-mib (// task.use-bytes MIB))))
               cell.window-killed (| cell.window-killed #{job})))
       (<- (slog OVER-NEED-KILL-LOG :level "warning" :job job :pid root.pid :use-mib (// task.use-bytes MIB) :need-mib (// task.need-bytes MIB)
                 :keep-room-mib (// keep-room MIB) :processes (len unit.members) :sent sent))))

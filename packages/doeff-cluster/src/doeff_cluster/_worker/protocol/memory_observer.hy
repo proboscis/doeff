@@ -12,7 +12,7 @@
 (import doeff_cluster._worker.protocol.observations [ObserveMemoryTight ObserveMemoryKills ObserveMemoryStops ObserveJobsRoom ObserveUrgentJobsRoom
   ObserveCompartments])
 (import doeff_cluster._worker.protocol.eviction_line [jobs-oom-count])
-(import doeff_cluster._worker.intent.worker_model [MemoryStops])
+(import doeff_cluster._worker.intent.worker_model [MemoryStops OverNeedStop])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
 (import doeff_cluster._worker.core.memory_rules [MemoryLevel])
 
@@ -28,6 +28,7 @@
     (val eviction cell.eviction)
     (<- count (| int None) (jobs-oom-count eviction))
     (resume (MemoryStops :kills (tuple (gfor k cell.kills :if k.reason #(k.job k.pid k.reason)))
+                         :over-needs (tuple (gfor k cell.kills :if (is-not k.over-need-mib None) (OverNeedStop :job k.job :pid k.pid :mib k.over-need-mib)))
                          :oom-at-ms eviction.oom-at-ms
                          :oom-unstamped (and (is-not count None) (is-not eviction.oom-count None) (> count eviction.oom-count))
                          :jobs-limit-bytes eviction.jobs-limit)))

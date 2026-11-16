@@ -151,7 +151,9 @@
    worker を忘れるとその刻も消える・刻は worker の node の時計・cluster_policy.known-exits-after と worker-report)・instance = process の世代・spec-hash・
    placement = 割り当ての世代・retired-from = 入れ替えで退いた process の元の名・failure-kind / retryable = 実行環境の準備の失敗
    (env-failed の行だけ)・probe = 入口の検めの姿・result = 終わった task の詰めた結果・task = 切り離した task の写し(引き取りが
-   読む — 形の検めは cluster_policy.adopted-task)。worker の載せない欄は None(黙って既定の値へ倒さない)。"
+   読む — 形の検めは cluster_policy.adopted-task)・over-need-stop-MiB = 機体の memory の見張りが要りの越えで止めた task の終わりの、止めた時の
+   使い(MiB — 要りの越えの止めでなければ載らない。cluster_policy.absorb-detached-report が走らせ直しを名乗る task を次の試行へ戻す)。
+   worker の載せない欄は None(黙って既定の値へ倒さない)。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ str name "")
   (setv #^ (| str None) phase None)
@@ -171,7 +173,8 @@
   (setv #^ (| bool None) retryable None)
   (setv #^ (| ProbeRow None) probe None)
   (setv #^ (| str None) result None)
-  (setv #^ (| dict None) task None))
+  (setv #^ (| dict None) task None)
+  (setv #^ (| int None) over-need-stop-MiB None))
 
 
 (defwire EnvsReport

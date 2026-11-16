@@ -346,6 +346,9 @@
   (val marks (tuple (gfor k seen.cell.kills #(k.job k.pid))))
   (assert (= marks #(#("task/b" 30))) marks)
   (assert (in "要りを越えて伸びた task を見張りが止めた" (. (get seen.cell.kills 0) reason)) seen.cell.kills)
+  ;; 要りの越えの止めの印は止めた時の使いを持つ(coordinator が走らせ直す次の試行の山の材料 — 要り 1 GiB より大きい)。
+  (val stopped-mib (. (get seen.cell.kills 0) over-need-mib))
+  (assert (and (is-not stopped-mib None) (> stopped-mib (// GIB MIB)) (<= stopped-mib (// (* 6 GIB) MIB))) seen.cell.kills)
   ;; MemAvailable は線を見張りの 1 回の伸び(5 秒で 0.5 GiB)より大きく割らない。
   (assert (>= seen.lowest (- KEEP-LINE GIB)) (/ seen.lowest GIB))
   (assert (>= seen.lowest-limit-over-use 0) (/ seen.lowest-limit-over-use GIB)))
@@ -445,3 +448,38 @@
   (<- by-earlier tuple (reaped-detail earlier))
   (assert (= by-self #(None "last=exited")) by-self)
   (assert (and (is (get by-earlier 0) None) (not-in " — " (get by-earlier 1))) by-earlier))
+
+
+(import doeff_cluster._worker.intent.worker_model [OverNeedStop])
+(import doeff_cluster._worker.protocol.heartbeat [status-row])
+
+
+(defk reported-row [world]
+  {:pre [(: world WorldView)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "task の process(pid 70)が終わった観測 world を回収し、状態の報告の行の JSON(heartbeat の statuses の 1 行)を求めるため。"
+  (<- reaped tuple (plan 20000 #(TASK) world {} POLICY))
+  (<- records dict (records-after 20000 {} reaped POLICY))
+  (<- reported tuple (statuses 20000 #(TASK) (WorldView #(READY) #()) records POLICY))
+  (<- row dict (status-row (get reported 0)))
+  row)
+
+
+(deftest test-the-use-at-an-over-need-stop-reaches-the-status-row-field
+  ;; 失敗ケース(2026-11-14・11-16 の日次の回): 要りの越えの止めは状態の行の文(detail)でしか coordinator へ届かず、coordinator は止めをほかの
+  ;; 子の消失と見分けられなかった(走らせ直しを名乗る task も lost)。止めた時の使いを状態の行の欄 overNeedStopMiB で運ぶ。ほかの止めと自分の
+  ;; 終わりは載せない。
+  (val ended (ProcessView "task/t1" TASK 1 70 1000 :exit-code 137))
+  (val reason "要りを越えて伸びた task を見張りが止めた(使い 3000 MiB・要り 1024 MiB)")
+  (<- over dict (reported-row (WorldView #(READY) #(ended) :memory-killed (frozenset #(#("task/t1" 70)))
+                                         :memory-stops (MemoryStops :kills #(#("task/t1" 70 reason))
+                                                                    :over-needs #((OverNeedStop :job "task/t1" :pid 70 :mib 3000))))))
+  (assert (= #((get over "phase") (.get over "overNeedStopMiB")) #("finished" 3000)) over)
+  ;; 同じ名の別の pid の印(前の process)は読まない。
+  (<- other-pid dict (reported-row (WorldView #(READY) #(ended) :memory-stops (MemoryStops :over-needs #((OverNeedStop :job "task/t1" :pid 69 :mib 3000))))))
+  (assert (not-in "overNeedStopMiB" other-pid) other-pid)
+  ;; 尽きかけの止め(要りの越えでない見張りの止め)と自分の終わりは欄を載せない。
+  (<- victim dict (reported-row (WorldView #(READY) #(ended) :memory-killed (frozenset #(#("task/t1" 70)))
+                                           :memory-stops (MemoryStops :kills #(#("task/t1" 70 "機体の memory の尽きかけで見張りが止めた"))))))
+  (assert (not-in "overNeedStopMiB" victim) victim)
+  (<- clean dict (reported-row (WorldView #(READY) #((ProcessView "task/t1" TASK 1 70 1000 :exit-code 0)))))
+  (assert (not-in "overNeedStopMiB" clean) clean))

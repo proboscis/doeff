@@ -157,12 +157,21 @@
   (setv #^ (| ProgramUnfetched None) failure None))
 
 
+(defrecord OverNeedStop
+  "見張りが要りの越えで止めた job の根 1 つ(MemoryStops.over-needs): job = process の名・pid = 根の pid・mib = 止めた時の task の使い(MiB)。"
+  (#^ str job)
+  (#^ int pid)
+  (#^ int mib))
+
+
 (defrecord MemoryStops
   "機体の memory の訳で job の process が止められた記録(WorldView.memory-stops — 状態の報告の訳に載せる): kills = 見張りが止めた job の根と
    止めた訳(#(process の名 根の pid 訳の文) の tuple — worker/protocol/memory_watch の MemoryKill)・oom-at-ms = jobs の層の memory.events の
    oom_kill が増えたのを読んだ刻(epoch ms の tuple — 古い順・見張りの印を残す間の物)・oom-unstamped = 見張りの最後の回の後に oom_kill が
-   増えた(まだ刻が無い — 今の拍に起きた増えとして読む)・jobs-limit-bytes = 最後に jobs の層に掛けた memory.max(None = 掛けていない)。"
+   増えた(まだ刻が無い — 今の拍に起きた増えとして読む)・jobs-limit-bytes = 最後に jobs の層に掛けた memory.max(None = 掛けていない)・
+   over-needs = kills のうち要りの越えで止めた物と、止めた時の使い(OverNeedStop の tuple — MemoryKill.over-need-mib)。"
   (setv #^ (get tuple #(tuple ...)) kills #())
+  (setv #^ (get tuple #(OverNeedStop ...)) over-needs #())
   (setv #^ (get tuple #(int ...)) oom-at-ms #())
   (setv #^ bool oom-unstamped False)
   (setv #^ (| int None) jobs-limit-bytes None))
@@ -385,7 +394,10 @@
   (setv #^ (| int None) memory-tight-since-ms None)
   ;; 最後に回収した終わりを機体の memory の訳で止めた訳(ReapJob.stop-reason — None = memory の訳の止めではない)。状態の報告の訳に載せる
   ;; (task の終わりは coordinator の lost の訳になる)。
-  (setv #^ (| str None) last-stop-reason None))
+  (setv #^ (| str None) last-stop-reason None)
+  ;; 最後に回収した終わりを見張りが要りの越えで止めていれば、止めた時の使い(MiB — ReapJob.over-need-mib・None = 要りの越えの止めではない)。
+  ;; task の状態の報告が coordinator へ運ぶ(走らせ直しを名乗る task は次の試行へ戻る — coordinator の cluster_policy.over-need-detached)。
+  (setv #^ (| int None) last-over-need-mib None))
 
 
 (defclass [(dataclass :frozen True)] WorkerPolicy []
@@ -507,7 +519,10 @@
   ;; ENV-FAILED の行だけ: 準備の失敗の kind と一時か(coordinator が置き直すか・答えの型を決める)。
   (setv #^ (| EnvFailure None) failure None)
   ;; 宣言の spec の入口の検めが通っていない間(走っている・待っている・失敗した)だけ: その姿(入れ替えの途中で旧が動いている行も含む)。
-  (setv #^ (| ProbeStatus None) probe None))
+  (setv #^ (| ProbeStatus None) probe None)
+  ;; 終わった task の行だけ: 見張りが要りの越えで止めた終わりなら、止めた時の使い(MiB — JobRecord.last-over-need-mib)。coordinator は
+  ;; 文の detail を読まず、この欄で要りの越えの止めを知る(走らせ直しを名乗る task を次の試行へ戻す)。
+  (setv #^ (| int None) over-need-stop-mib None))
 
 
 ;; --- 宣言の読み取り -------------------------------------------------------------
@@ -663,13 +678,15 @@
 (defclass [(dataclass :frozen True)] ReapJob [EffectBase]
   "終了を観測した process を観測の表から外す。memory-killed-spec = 機体の memory の見張りがこの process の木の単位を止めていれば、その
    process の spec の指紋(spec-hash — 記憶の数え record-after が読む)・止めていなければ None。stop-reason = 機体の memory の訳でこの process
-   が止められた訳(見張りの止めか jobs の層の kernel の OOM kill — policy の stop-reason-of・None = memory の訳ではない)。"
+   が止められた訳(見張りの止めか jobs の層の kernel の OOM kill — policy の stop-reason-of・None = memory の訳ではない)。over-need-mib = 見張りが
+   要りの越えでこの process の木を止めていれば、止めた時の使い(MiB — MemoryStops.over-needs)・ほかは None。"
   (#^ str name)
   (#^ int pid)
   (#^ Outcome outcome)
   (#^ int exit-code)
   (setv #^ (| str None) memory-killed-spec None)
-  (setv #^ (| str None) stop-reason None))
+  (setv #^ (| str None) stop-reason None)
+  (setv #^ (| int None) over-need-mib None))
 
 
 (defclass [(dataclass :frozen True)] RetireJob [EffectBase]

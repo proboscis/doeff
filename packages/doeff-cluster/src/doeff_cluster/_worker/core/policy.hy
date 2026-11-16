@@ -552,7 +552,11 @@
              ;; 機体の memory の見張りがこの process の木を止めていれば、その spec の指紋(記憶が続けて止められた回数を数える)。
              (if (in #(name process.pid) world.memory-killed) (spec-hash process.spec) None)
              ;; 機体の memory の訳で止められた訳(状態の報告の訳に載せる — task の終わりは coordinator の lost の訳)。
-             :stop-reason stop-reason))
+             :stop-reason stop-reason
+             ;; 見張りが要りの越えで止めた時の使い(状態の報告の欄に載せる — coordinator が走らせ直すかを決める)。
+             :over-need-mib (next (gfor stop world.memory-stops.over-needs
+                                        :if (and (= stop.job name) (= stop.pid process.pid)) stop.mib)
+                                  None)))
          ;; 終わった process の lease は、期限を待たずに返す(次の担い手がすぐ取れる)。
          ;; 担い手の名は子が名乗った job の名(起こした spec の名 — 退いた process も元の名)と世代の名。
          (if process.instance #((ReleaseLeases process.spec.name process.instance)) #()))
@@ -839,7 +843,7 @@
               worked (and (is-not ran-ms None) (>= ran-ms policy.memory-kill-reset-ms))
               stable (if killed worked (run (ran-stably? now record policy))))
         (replace record :last-exit-ms now :last-outcome action.outcome :last-exit-code action.exit-code
-                 :stopping None :last-stop-reason action.stop-reason
+                 :stopping None :last-stop-reason action.stop-reason :last-over-need-mib action.over-need-mib
                  :unexpected-exits (cond (not exited) 0 stable 1 True (+ record.unexpected-exits 1))
                  :failures (cond (or (not exited) (and (= action.exit-code 0) (not killed))) 0 stable 1 True (+ record.failures 1))
                  :memory-kills (cond (not killed) (if worked 0 record.memory-kills)
@@ -1160,7 +1164,9 @@
                      lapsed (memory-tight-failure policy)
                      True None)
       ;; 宣言の spec の入口の検めの姿(走っている・待っている・失敗した間 — 入れ替えで旧が動いている行も)。
-      :probe probing))
+      :probe probing
+      ;; 見張りが要りの越えで止めた task の終わり(動いている process の無い task の行だけ — 止めた時の使い)。
+      :over-need-stop-mib (if (and (is process None) (is-not want None) want.once) record.last-over-need-mib None)))
 
 (defk statuses [now desired world records policy]
   {:pre [(: now int) (: desired (get tuple #(JobSpec ...))) (: world WorldView) (: records (get dict #(str JobRecord))) (: policy WorkerPolicy)]
