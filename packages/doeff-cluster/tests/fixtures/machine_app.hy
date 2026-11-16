@@ -20,6 +20,7 @@
 (import doeff_cluster [ReportReady])
 (import doeff_cluster [WriteShared])
 (import doeff_cluster [AwaitRetirement])
+(import doeff_cluster [pipe-retirement-notices])
 (import doeff_cluster [Retired HandoffAbandoned])
 
 ;; 版の入れ替えの検(tests/test_worker_version_swap.hy)の盤の行の頭と、worker が子へ渡す版の環境変数の名
@@ -31,8 +32,10 @@
 (defk machine-foundation [body]
   {:pre [(: body DoExpr)] :post [(: % "body の答え")] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "本番の形の土台: scheduler・構造化ログ・HTTP・session の置き場・環境変数の読み・宿の読み・実時計の外側に、coordinator に話す組を並べる
-   (準備の報告を本物の coordinator へ送るため)。"
-  (<- answer (scheduled (with-handlers [await-handler slog-handler (http-production-handler) (state) (os-environ-reader) host-reader (async-time-handler)]
+   (準備の報告を本物の coordinator へ送るため)。退く知らせ(AwaitRetirement)の本番の答え手 pipe-retirement-notices も並べる(状態の
+   handler と scheduler の内側 — 入口 job_entry は handler を足さず、土台が並べる)。"
+  (<- answer (scheduled (with-handlers [await-handler slog-handler (http-production-handler) (state) (os-environ-reader) host-reader (async-time-handler)
+                                        pipe-retirement-notices]
                           (with-cluster-handlers body))))
   answer)
 
