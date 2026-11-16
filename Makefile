@@ -78,10 +78,11 @@ pre-commit-install:
 # semgrep-rules in .pre-commit-config.yaml, run by the uv.lock version of pre-commit). Machines that use the pre-commit
 # framework get the same checks from make pre-commit-install (the semgrep items and enforcement-ledger in
 # .pre-commit-config.yaml) — this one is a plain git hook that needs no venv. It goes into the hooks dir shared by
-# all worktrees (git rev-parse --git-path hooks), so one install covers every worktree.
+# all worktrees (git rev-parse --git-path hooks), so one install covers every worktree. What goes there is an entry that
+# runs the committing tree's scripts/git-hooks/pre-commit (scripts/git-hooks/install.sh), so a later change to that file
+# needs no second install.
 hooks-install:
-	cp scripts/git-hooks/pre-commit "$$(git rev-parse --git-path hooks)/pre-commit"
-	chmod +x "$$(git rev-parse --git-path hooks)/pre-commit"
+	sh scripts/git-hooks/install.sh
 
 # ADR-DOE-ENFORCE-001 R9: the enforcement ledger (docs/adr/enforcement-ledger.json) is generated — do not edit it by hand; rebuild it with this.
 # Items that dropped out of the ledger (a law, test or rule removed from the tree) are reported by name; confirm the removal was intended before staging.

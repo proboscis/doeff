@@ -2,9 +2,9 @@
 # doeff's plain commit hook -- applies to the staged snapshot (1) the semgrep rules,
 # (2) the baseline comparison of doeff-linter findings, and
 # (3) the authoring-time reconciliation of the enforcement ledger (ADR-DOE-ENFORCE-001 R7).
-# Installed by make hooks-install (the tracked original is this file). The agora worker Pod also installs the same copy
-# (agora deploy/agent-worker/worker-prepare.sh). On a machine where the pre-commit framework is set up (make pre-commit-install) the
-# .pre-commit-config.yaml entries fire the same 3 and this file is not installed.
+# make hooks-install (scripts/git-hooks/install.sh) installs an entry that runs this file from the committing tree; the agora
+# worker Pod installs the same entry (agora deploy/agent-worker/worker-prepare.sh). On a machine where the pre-commit framework is
+# set up (make pre-commit-install) the .pre-commit-config.yaml entries fire the same 3 and this file is not installed.
 #
 # Why authoring time: the landing window is mechanics only (mode is focus), and
 # direct pushes do not even pass through the window -- on any route a commit always passes through the authoring machine's git, so
@@ -28,9 +28,9 @@ fi
 TOP="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$TOP" ] || exit 0
 
-# (0) The installed hook is a copy taken once (make hooks-install, or the agora worker Pod at its start), so a check added to
+# (0) Hooks dirs installed before scripts/git-hooks/install.sh hold a copy of this file taken once, so a check added to
 # this file later did not reach the machines until the copy was taken again: the internal-leftovers entry (3c) landed on
-# 2026-11-14 while the Pods kept the copy of 11-13, and the daily leftovers stage stayed red. The copy hands the commit to
+# 2026-11-14 while the Pods kept the copy of 11-13, and the daily leftovers stage stayed red. Such a copy hands the commit to
 # the committing tree's own original when the two differ, so every commit passes the checks of the tree it commits to.
 # Trees without the original keep the checks of the copy below; DOEFF_PRE_COMMIT_FROM_TREE stops a second hand-over.
 TREE_HOOK="$TOP/scripts/git-hooks/pre-commit"
