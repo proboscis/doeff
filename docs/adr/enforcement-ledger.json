@@ -306,6 +306,7 @@
     "ADR-DOE-CLUSTER-004 the-coordinator-and-the-reader-share-one-spelling",
     "ADR-DOE-CLUSTER-004 the-copy-is-private-and-its-values-stay-out-of-the-log",
     "ADR-DOE-CLUSTER-005 a-held-cli-compartment-lends-and-takes-back",
+    "ADR-DOE-CLUSTER-005 a-task-reads-the-claim-it-is-compared-against",
     "ADR-DOE-CLUSTER-005 every-wait-reason-has-a-destination",
     "ADR-DOE-CLUSTER-005 one-budget-has-one-declaration",
     "ADR-DOE-CLUSTER-005 placement-reads-claims-not-measurements",

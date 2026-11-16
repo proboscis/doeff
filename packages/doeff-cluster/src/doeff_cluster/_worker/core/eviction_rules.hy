@@ -587,6 +587,15 @@
   (tuple (gfor #(task freed) (zip ordered (accumulate (gfor t ordered t.use-bytes) :initial 0)) :if (< freed shortfall) task)))
 
 
+(defk declared-need-mib [row]
+  {:pre [(: row (get dict #(str object)))] :post [(: % (| int None))] :tags {:context "worker" :role "judgment"}}
+  "heartbeat の返事の task の行 1 つから、置いた時に名乗った要り(MiB — 欄 memoryMiB・0 以上の整数・真偽は数えない)を読むため。
+   見張りの要り(task-needs-of)と task の子へ渡す要り(worker/protocol/declared の task-spec)が同じ読みを使う — 見張りが比べる数と
+   task が読む数が分かれない。無い・形の違う行は None(要りを名乗らない task)。"
+  (val mib (.get row "memoryMiB"))
+  (if (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0)) mib None))
+
+
 (defk task-needs-of [rows]
   {:pre [(: rows tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "heartbeat の返事の task の行(置き先が worker に置いた task — JSON の dict の tuple)から、置いた task の要り(TaskNeed の tuple)を
@@ -594,16 +603,17 @@
    名乗らない task と読む(declared が偽 — 置き先が空きを待たせずに置く task は memoryMiB を運ばない)。欄 priority
    (整数 — 真偽は数えない)が在ればその優先、無い・形の違う行は 0。欄 borrowed が真の行は借りの task(頭の註の区画の持つ clis の層の
    貸し)。id の無い行は読まない。"
-  (tuple (gfor row rows
-               :if (and (isinstance row dict) (isinstance (.get row "id") str))
-               :setv mib (.get row "memoryMiB")
-               :setv declared (and (isinstance mib int) (not (isinstance mib bool)) (>= mib 0))
-               :setv priority (.get row "priority")
-               (TaskNeed :id (get row "id")
-                         :bytes (if declared (* mib MIB) UNDECLARED-NEED-BYTES)
-                         :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)
-                         :declared declared
-                         :borrowed (is (.get row "borrowed") True)))))
+  (var needs #())
+  (for [row rows]
+    (when (and (isinstance row dict) (isinstance (.get row "id") str))
+      (<- mib (| int None) (declared-need-mib row))
+      (val priority (.get row "priority"))
+      (:= needs (+ needs #((TaskNeed :id (get row "id")
+                                     :bytes (if (is mib None) UNDECLARED-NEED-BYTES (* mib MIB))
+                                     :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)
+                                     :declared (is-not mib None)
+                                     :borrowed (is (.get row "borrowed") True)))))))
+  needs)
 
 
 (defk urgent-jobs [needs]

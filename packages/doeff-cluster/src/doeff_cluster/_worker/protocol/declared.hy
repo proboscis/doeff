@@ -14,6 +14,7 @@
 (import doeff_cluster._shared.core.native_wheel [current-platform])
 (import doeff_cluster._shared.intent.job_model [JobSpec] doeff_cluster._shared.intent.runtime_env_model [RuntimeEnv])
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
+(import doeff_cluster._worker.core.eviction_rules [declared-need-mib])
 
 
 (defrecord EnvPlacement
@@ -148,8 +149,10 @@
    service の job と同じく置き場のキー program(sha)で持ち、worker の coordinator への口が /programs/<sha> から cache へ取り、
    子 process の言い換え(worker/protocol/process_host)が `--program <cache の file>` を足す(入口は `task --result <file> --program <file>` — 版は file の中の versions)。
    file の中の versions は task の行の versions で、cache の file は版ごとに分かれる(launch.spec-program-file・#3762)。
-   実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
+   実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。
+   行の要り memoryMiB(見張りが比べる数 — declared-need-mib)を memory-mib に写し、子へ環境変数で渡す(run_context_rules の TASK-MEMORY-MIB-VAR)。"
   (val id (get task "id"))
+  (<- need (| int None) (declared-need-mib task))
   (val priority (.get task "priority"))
   (val task-name (.get task "name"))
   (<- placed EnvPlacement (env-placement (.get task "runtimeEnv") (get task "revision")))
@@ -166,7 +169,9 @@
            ;; 置き方の優先(整数 — 真偽は数えない。無い・形の違う行は 0 — eviction_rules の task-needs-of と同じ読み)。
            :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)
            ;; task の名(task の終わりの行に写す — worker/core/task_record)。文字でない・無い行は None。
-           :task-name (if (isinstance task-name str) task-name None)))
+           :task-name (if (isinstance task-name str) task-name None)
+           ;; 置いた時に固定した要り(MiB — 見張りの task-needs-of と同じ読み。名乗らない行は None で、子へ名を置かない)。
+           :memory-mib need))
 
 
 (defk task-specs [tasks task-dir]

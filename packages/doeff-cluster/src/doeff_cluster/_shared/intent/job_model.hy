@@ -136,6 +136,12 @@
   ;; coordinator から消えた後に何の task だったかを読めないので、worker が task の終わりの行(worker/core/task_record)に写す。None = 常駐の
   ;; job・欄の無い行。比べない欄(process の形に入らない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ (| str None) task-name (field :default None :compare False))
+  ;; task の要り(MiB — task だけ・heartbeat の返事の task の行の memoryMiB。coordinator が置いた時に固定した申告で、worker の memory の見張りが
+  ;; task の使いと比べる数 — ADR-DOE-CLUSTER-005 R4・worker/core/eviction_rules の task-needs-of と同じ読み)。worker は子の文脈の環境変数
+  ;; DOEFF_WORKER_TASK_MEMORY_MIB(_shared/core/run_context_rules)で task に渡し、task は中で並べる本数をこの数の内に縛れる。None = 要りを
+  ;; 名乗らない task(declared が偽 — 名を置かない)・常駐の job。比べない欄(値だけが変わっても process を起こし直さない・指紋 spec-hash に
+  ;; 入らない — 子は起こした時の値を持つ)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ (| int None) memory-mib (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))
