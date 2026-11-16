@@ -34,6 +34,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
+from typing import Protocol
 
 import pytest
 from doeff_core_effects import EnvEntry, EnvMode, RunProcess, subprocess_handler
@@ -160,9 +161,6 @@ def _make_model(
         shutil.copy2(REPO_ROOT / rel, root / rel)
     (root / "tests").mkdir()
     (root / "tests" / "test_ok.py").write_text("def test_ok():\n    pass\n", encoding="utf-8")
-    (root / "tests" / "test_slow.py").write_text(
-        "import time\n\n\ndef test_slow():\n    time.sleep(60)\n", encoding="utf-8"
-    )
     for rel, text in extra:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text, encoding="utf-8")
@@ -296,20 +294,31 @@ def test_the_stub_check_is_not_selected_without_its_table_row(tmp_path: Path) ->
     assert "\nred: 0" in summary, summary
 
 
-def test_a_set_over_the_budget_is_named_unmeasured_not_red(tmp_path: Path) -> None:
-    """A set over the limit (8 seconds here): finished tests are "ran", unfinished tests are named "unmeasured", and rc is 0."""
-    model = _make_model(
-        tmp_path, (Row(prefix="", tests=("tests/test_ok.py", "tests/test_slow.py")),)
+def test_a_set_over_the_budget_is_named_unmeasured_not_red(
+    runner: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A set over the limit (8 seconds here): finished tests are "ran", unfinished tests are named "unmeasured", and rc is 0.
+    On the virtual clock: test_ok finishes at 2 seconds and test_slow is still in its body when the budget control cuts the child at 8 seconds."""
+    child = ScriptedChild(
+        runner,
+        (
+            (1.0, CONFIGURING),
+            (1.0, SESSION_STARTED),
+            (2.0, _collected(OK_ID, SLOW_ID)),
+            *_passed(2.0, OK_ID),
+            (2.0, _report(SLOW_ID, "setup")),
+        ),
     )
-    (model.root / "README").write_text("changed\n", encoding="utf-8")
-    output = _run(model, "--budget", "8")
-    summary = _summary(output)
-    assert output.returncode == 0, output.text[-3000:]
-    assert "tests/test_ok.py — 1 test(s)" in summary, summary
-    assert "unmeasured: 1" in summary, summary
-    assert "tests/test_slow.py — cut off at the 8s budget" in summary, summary
-    assert "\nred: 0" in summary, summary
-    counts = _counts(output)
+    run = _run_on_virtual_clock(
+        runner, ((".", ("tests/test_ok.py", "tests/test_slow.py")),), 8.0, (child,), capsys
+    )
+    assert run.rc == 0, run.output
+    assert child.stopped_at == 8.0, child.stopped_at
+    assert "tests/test_ok.py — 1 test(s)" in run.summary, run.summary
+    assert "unmeasured: 1" in run.summary, run.summary
+    assert "tests/test_slow.py — cut off at the 8s budget — stopped at 0/1 tests" in run.summary, run.summary
+    assert "\nred: 0" in run.summary, run.summary
+    counts = run.counts
     assert " selected=2 ran=1 red=0 unmeasured=1 unmeasured_reverse=0 rc=0 " in counts, counts
     assert counts.endswith(" budget=8"), counts
 
@@ -663,26 +672,248 @@ def test_tests_of_two_packages_with_their_own_conftest_both_run(tmp_path: Path) 
     ), summary
 
 
-def test_a_batch_left_without_budget_is_named_unmeasured(tmp_path: Path) -> None:
-    """The total limit is shared among bundles: when the first contract-set bundle (repo root) uses up the limit (6 seconds here), the later package
-    bundles do not start pytest and name their tests "unmeasured because their turn never came" (not red, rc 0)."""
-    model = _make_model(
-        tmp_path,
-        (Row(prefix="", tests=("tests/test_slow.py",)),),
-        extra=_package_tests("doeff-alpha"),
+# ---------------------------------------------------------------------------
+# The budget control on a virtual clock -- no real uv or pytest, so how fast the machine starts them is not a premise
+# ---------------------------------------------------------------------------
+
+#: One step of a stand-in child: at second `at` (from its start) it writes one outcome line (the plugin's JSON), or exits with that returncode.
+Step = tuple[float, dict[str, object] | int]
+
+CONFIGURING: dict[str, object] = {"kind": "configuring"}
+SESSION_STARTED: dict[str, object] = {"kind": "session_started"}
+OK_ID = "tests/test_ok.py::test_ok"
+SLOW_ID = "tests/test_slow.py::test_slow"
+ALPHA_ID = f"{ALPHA}::test_owner"
+
+
+def _collected(*nodeids: str) -> dict[str, object]:
+    return {"kind": "collected", "nodeids": list(nodeids)}
+
+
+def _report(nodeid: str, when: str) -> dict[str, object]:
+    return {"kind": "report", "nodeid": nodeid, "when": when, "outcome": "passed"}
+
+
+def _passed(at: float, nodeid: str) -> tuple[Step, ...]:
+    """The three stages of one green test, all at second `at`."""
+    return tuple((at, _report(nodeid, when)) for when in ("setup", "call", "teardown"))
+
+
+class ScriptedChild:
+    """A pytest child on a virtual clock for the entry point's budget control (`supervise`): the steps arrive in order at their seconds, a wait that ends
+    before the next step moves the clock by the wait, and nothing really sleeps. When the budget control stops it, the steps not yet sent are dropped and
+    it ends at that second. The seconds are whole or half seconds (binary floats hold them exactly, so the budget arithmetic is exact)."""
+
+    def __init__(self, runner: ModuleType, steps: tuple[Step, ...]) -> None:
+        self._runner = runner
+        self._mut_now = 0.0
+        self._mut_pending: tuple[tuple[float, object], ...] = tuple(
+            signal for at, step in steps for signal in self._signals(at, step)
+        )
+        self.mut_stopped_at: float | None = None
+
+    def _signals(self, at: float, step: dict[str, object] | int) -> tuple[tuple[float, object], ...]:
+        match step:
+            case int() as returncode:
+                return ((at, self._runner.Exited(returncode=returncode)), (at, self._runner.PipeClosed()))
+            case dict() as payload:
+                return ((at, self._runner.Received(line=json.dumps(payload) + "\n", at=at)),)
+
+    @property
+    def spawned(self) -> float:
+        return 0.0
+
+    def now(self) -> float:
+        return self._mut_now
+
+    def next_signal(self, timeout: float | None) -> object:
+        if not self._mut_pending:
+            assert timeout is not None, "the budget control waits without a limit on a child that has nothing left to send"
+            self._mut_now += timeout
+            return None
+        at, signal = self._mut_pending[0]
+        if timeout is not None and at > self._mut_now + timeout:
+            self._mut_now += timeout
+            return None
+        self._mut_now = max(self._mut_now, at)
+        self._mut_pending = self._mut_pending[1:]
+        return signal
+
+    def stop(self) -> None:
+        self.mut_stopped_at = self._mut_now
+        self._mut_pending = self._signals(self._mut_now, -15)
+
+    @property
+    def stopped_at(self) -> float | None:
+        return self.mut_stopped_at
+
+
+@dataclass(frozen=True)
+class VirtualRun:
+    """What `run_selected` returned and printed on the virtual clock (rc, output, the counts-only line), and the tests of each pytest it started (in order)."""
+
+    rc: int
+    output: str
+    counts: str
+    started: tuple[tuple[str, ...], ...]
+
+    @property
+    def summary(self) -> str:
+        marker = "== Changed-tests summary"
+        assert marker in self.output, self.output
+        return self.output[self.output.index(marker) :]
+
+
+class _Arg(Protocol):
+    arg: str
+
+
+def _run_on_virtual_clock(
+    runner: ModuleType,
+    batches: tuple[tuple[str, tuple[str, ...]], ...],
+    budget: float,
+    children: tuple[ScriptedChild, ...],
+    capsys: pytest.CaptureFixture[str],
+) -> VirtualRun:
+    """Run the entry point's bundle runner (`run_selected` -> run_batches -> supervise -> ChildClock -> classify) with the stand-in start that hands out
+    `children` in order -- the only stand-ins are the child process and its clock."""
+    started: list[tuple[str, ...]] = []
+
+    def start(targets: tuple[_Arg, ...]) -> ScriptedChild:
+        started.append(tuple(t.arg for t in targets))
+        assert len(started) <= len(children), f"started a pytest no child was scripted for: {started}"
+        return children[len(started) - 1]
+
+    finished = runner.run_selected(
+        tuple(
+            runner.Batch(
+                session=session,
+                targets=tuple(
+                    runner.Target(arg=arg, origin=runner.Origin.CONTRACT, why="test") for arg in args
+                ),
+            )
+            for session, args in batches
+        ),
+        budget,
+        start,
+        runner.Affected(tests=(), hubs=(), unreadable=()),
     )
-    _touch_test(model, ALPHA)
-    output = _run(model, "--budget", "6")
-    summary = _summary(output)
-    assert output.returncode == 0, output.text[-3000:]
-    assert "unmeasured: 2" in summary, summary
-    assert "tests/test_slow.py — cut off at the 6s budget" in summary, summary
-    assert f"{ALPHA} — did not get a turn within the 6s budget" in summary, summary
-    assert "pytest processes: 1/2 ran" in summary, summary
+    return VirtualRun(
+        rc=finished.rc,
+        output=capsys.readouterr().out,
+        counts=runner.counts_line(runner.counts_of(finished, budget, budget)),
+        started=tuple(started),
+    )
 
 
-#: Stand-in seconds for waiting while the slot is occupied -- longer than the limit (8 seconds), so an entry point that counts the wait against the limit always cuts off before collecting bundles.
-SLOT_WAIT_SECONDS = 10
+def test_a_batch_left_without_budget_is_named_unmeasured(
+    runner: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The total limit is shared among bundles: when the first contract-set bundle (repo root) uses up the limit (6 seconds here), the later package
+    bundles do not start pytest and name their tests "unmeasured because their turn never came" (not red, rc 0).
+    On the virtual clock the first child starts up in 3 seconds (counted), collects test_slow and is still in its body when it is cut at 6 seconds;
+    a second child is scripted green, so an entry point that started it anyway (or gave each bundle the whole limit) shows it ran."""
+    slow = ScriptedChild(
+        runner,
+        (
+            (3.0, CONFIGURING),
+            (3.0, SESSION_STARTED),
+            (4.0, _collected(SLOW_ID)),
+            (4.0, _report(SLOW_ID, "setup")),
+        ),
+    )
+    alpha = ScriptedChild(
+        runner,
+        ((0.5, CONFIGURING), (0.5, SESSION_STARTED), (1.0, _collected(ALPHA_ID)), *_passed(1.0, ALPHA_ID), (1.5, 0)),
+    )
+    run = _run_on_virtual_clock(
+        runner,
+        ((".", ("tests/test_slow.py",)), ("packages/doeff-alpha/tests", (ALPHA,))),
+        6.0,
+        (slow, alpha),
+        capsys,
+    )
+    assert run.started == (("tests/test_slow.py",),), run.output
+    assert slow.stopped_at == 6.0, slow.stopped_at
+    assert run.rc == 0, run.output
+    assert "unmeasured: 2" in run.summary, run.summary
+    assert "tests/test_slow.py — cut off at the 6s budget" in run.summary, run.summary
+    assert f"{ALPHA} — did not get a turn within the 6s budget" in run.summary, run.summary
+    assert "pytest processes: 1/2 ran" in run.summary, run.summary
+
+
+def test_a_start_up_slower_than_the_budget_is_counted_and_cut(
+    runner: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The shape of the daily run of 2026-11-14 (load on the machine): uv, python and the plugin take longer than the limit (8 seconds here) to reach
+    configure. That span is counted (only the configure span is not), so the child is cut at 8 seconds before collecting -- "did not finish collecting",
+    and 0 seconds of configure are named on the wait line. This is the budget control working, not a count of the configure wait."""
+    child = ScriptedChild(
+        runner,
+        (
+            (9.0, CONFIGURING),
+            (19.0, SESSION_STARTED),
+            (20.0, _collected(OK_ID)),
+            *_passed(20.0, OK_ID),
+            (20.5, 0),
+        ),
+    )
+    run = _run_on_virtual_clock(runner, ((".", ("tests/test_ok.py",)),), 8.0, (child,), capsys)
+    assert child.stopped_at == 8.0, child.stopped_at
+    assert "tests/test_ok.py — did not finish collecting within the 8s budget" in run.summary, run.summary
+    assert "(includes waiting for the machine's test slot): total 0.0s (session . 0.0s)" in run.summary, run.summary
+    assert " selected=1 ran=0 red=0 unmeasured=1 " in run.counts
+
+
+#: Seconds the stand-in child spends in configure (waiting for the machine's test slot) -- longer than the limit (8 seconds), so an entry point that counts
+#: the wait against the limit always cuts the child before it collects.
+SLOT_WAIT_SECONDS = 10.0
+
+
+def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(
+    runner: ModuleType, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Failure case (the shape where a 19-second slot wait under load 70 cut off the root bundle): the root conftest's pytest_configure waits 10 seconds
+    for the slot, longer than the limit (8 seconds here). An entry point that counted the wait against the limit cut off before collecting bundles and
+    made the tests unmeasured. The entry point does not count the configure interval, so the bundle runs to the end with the remainder of the limit after
+    the wait and goes green, the uncounted seconds appear on a line separate from the elapsed time, and the next bundle receives the limit minus only the
+    counted seconds. On the virtual clock: configure at 1 second, the session starts at 11, test_ok ends and the child exits at 12.5 (2.5 seconds counted)."""
+    root = ScriptedChild(
+        runner,
+        (
+            (1.0, CONFIGURING),
+            (1.0 + SLOT_WAIT_SECONDS, SESSION_STARTED),
+            (11.5, _collected(OK_ID)),
+            *_passed(12.0, OK_ID),
+            (12.5, 0),
+        ),
+    )
+    alpha = ScriptedChild(
+        runner,
+        ((0.5, CONFIGURING), (0.5, SESSION_STARTED), (1.0, _collected(ALPHA_ID)), *_passed(1.0, ALPHA_ID), (1.5, 0)),
+    )
+    run = _run_on_virtual_clock(
+        runner,
+        ((".", ("tests/test_ok.py",)), ("packages/doeff-alpha/tests", (ALPHA,))),
+        8.0,
+        (root, alpha),
+        capsys,
+    )
+    assert root.stopped_at is None, root.stopped_at
+    assert run.rc == 0, run.output
+    assert "tests/test_ok.py — 1 test(s)" in run.summary, run.summary
+    assert "unmeasured: 0" in run.summary, run.summary
+    assert "== pytest process 2/2: session packages/doeff-alpha/tests (1 test(s), 5.5s left) ==" in run.output, run.output
+    assert "(elapsed 4.0s / budget 8s)" in run.summary, run.summary
+    assert (
+        "Configure time not counted against the budget (includes waiting for the machine's test slot): total 10.0s"
+        " (session . 10.0s, session packages/doeff-alpha/tests 0.0s)"
+    ) in run.summary, run.summary
+    assert " selected=2 ran=2 red=0 unmeasured=0 unmeasured_reverse=0 rc=0 " in run.counts
+
+
+#: Seconds the real root conftest waits in pytest_configure (the stand-in for the slot wait) in the joined check with real uv and pytest.
+REAL_SLOT_WAIT_SECONDS = 3
 
 
 def _slot_wait_conftest(seconds: int) -> str:
@@ -691,25 +922,20 @@ def _slot_wait_conftest(seconds: int) -> str:
     return f"import time\n\n\ndef pytest_configure(config):\n    time.sleep({seconds})\n"
 
 
-def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path: Path) -> None:
-    """Failure case (the shape where a 19-second slot wait under load 70 cut off the root bundle): the slot is occupied and the root
-    conftest's pytest_configure waits 10 seconds, longer than the limit (8 seconds here). An entry point that counted the wait against the limit cut off before collecting bundles and
-    made the tests unmeasured. The entry point does not count the configure interval, so the bundle runs to the end with the remainder of the limit after the wait and goes green, and the uncounted seconds appear
-    on a line separate from the elapsed time."""
+def test_the_beats_of_a_real_pytest_bracket_the_configure_wait(tmp_path: Path) -> None:
+    """Joined check with real uv and pytest under the default limit (60 seconds -- no short start-up is assumed): the plugin's configure and session beats
+    reach the budget control through the pipe on both sides of the root conftest's pytest_configure, so its 3-second wait is named as uncounted
+    configure time and the bundle goes green. (How the beats are counted is held by the virtual-clock checks above.)"""
     model = _make_model(
         tmp_path,
         (REPO_ROW,),
-        extra=(("conftest.py", _slot_wait_conftest(SLOT_WAIT_SECONDS)),),
+        extra=(("conftest.py", _slot_wait_conftest(REAL_SLOT_WAIT_SECONDS)),),
     )
     (model.root / "README").write_text("changed\n", encoding="utf-8")
-    output = _run(model, "--budget", "8")
+    output = _run(model)
     summary = _summary(output)
     assert output.returncode == 0, output.text[-3000:]
     assert "tests/test_ok.py — 1 test(s)" in summary, summary
-    assert "unmeasured: 0" in summary, summary
-    counted = re.search(r"elapsed ([0-9.]+)s / budget 8s", summary)
-    assert counted is not None, summary
-    assert float(counted.group(1)) < 8, summary
     waited = re.search(
         re.escape("Configure time not counted against the budget (includes waiting for the machine's test slot): total ")
         + r"([0-9.]+)"
@@ -717,7 +943,7 @@ def test_the_wait_for_a_machine_check_slot_is_not_counted_in_the_budget(tmp_path
         summary,
     )
     assert waited is not None, summary
-    assert float(waited.group(1)) >= SLOT_WAIT_SECONDS, summary
+    assert float(waited.group(1)) >= REAL_SLOT_WAIT_SECONDS, summary
     counts = _counts(output)
     assert " selected=1 ran=1 red=0 unmeasured=0 unmeasured_reverse=0 rc=0 " in counts, counts
 
