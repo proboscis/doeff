@@ -90,7 +90,9 @@ def test_files_stops_a_named_file_with_a_tracker_id(
 ) -> None:
     (tmp_path / "staged.py").write_text("# moved here (ki-0123456789ab)\n", encoding="utf-8")
 
-    status = leftovers.main([str(tmp_path), "--fail-on", "1,2,4", "--files", "staged.py"])
+    status = leftovers.main(
+        [str(tmp_path), "--jobs", "1", "--fail-on", "1,2,4", "--files", "staged.py"]
+    )
 
     captured = capsys.readouterr()
     assert status == 1
@@ -100,9 +102,14 @@ def test_files_stops_a_named_file_with_a_tracker_id(
 
 
 def test_files_stops_a_dated_decision_mark(tmp_path: Path) -> None:
-    (tmp_path / "staged.md").write_text("Kept on purpose (decision 2026-10-02).\n", encoding="utf-8")
+    (tmp_path / "staged.md").write_text(
+        "Kept on purpose (decision 2026-10-02).\n", encoding="utf-8"
+    )
 
-    assert leftovers.main([str(tmp_path), "--fail-on", "1,2,4", "--files", "staged.md"]) == 1
+    assert (
+        leftovers.main([str(tmp_path), "--jobs", "1", "--fail-on", "1,2,4", "--files", "staged.md"])
+        == 1
+    )
 
 
 def test_files_passes_a_file_without_hits(
@@ -110,7 +117,10 @@ def test_files_passes_a_file_without_hits(
 ) -> None:
     (tmp_path / "staged.py").write_text("value = 1\n", encoding="utf-8")
 
-    assert leftovers.main([str(tmp_path), "--fail-on", "1,2,4", "--files", "staged.py"]) == 0
+    assert (
+        leftovers.main([str(tmp_path), "--jobs", "1", "--fail-on", "1,2,4", "--files", "staged.py"])
+        == 0
+    )
     assert capsys.readouterr() == ("", "")
 
 
@@ -120,14 +130,20 @@ def test_files_passes_a_kept_hit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
         leftovers, "KEEP", (leftovers.Keep("staged.py", "2", "ki- (card)", "a test fake"),)
     )
 
-    assert leftovers.main([str(tmp_path), "--fail-on", "2", "--files", "staged.py"]) == 0
+    assert (
+        leftovers.main([str(tmp_path), "--jobs", "1", "--fail-on", "2", "--files", "staged.py"])
+        == 0
+    )
 
 
 def test_files_does_not_read_the_rest_of_the_tree(tmp_path: Path) -> None:
     (tmp_path / "other.md").write_text("see ki-0123456789ab\n", encoding="utf-8")
     (tmp_path / "staged.py").write_text("value = 1\n", encoding="utf-8")
 
-    assert leftovers.main([str(tmp_path), "--fail-on", "2", "--files", "staged.py"]) == 0
+    assert (
+        leftovers.main([str(tmp_path), "--jobs", "1", "--fail-on", "2", "--files", "staged.py"])
+        == 0
+    )
 
 
 def test_commit_hooks_run_the_check_on_the_staged_files() -> None:

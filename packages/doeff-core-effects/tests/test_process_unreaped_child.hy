@@ -1,4 +1,4 @@
-;;; A RunProcess timeout whose child SIGKILL does not end (card ki-0596f60ccd12): a child in uninterruptible sleep (D state) on a mount that does not answer stays until the mount
+;;; A RunProcess timeout whose child SIGKILL does not end: a child in uninterruptible sleep (D state) on a mount that does not answer stays until the mount
 ;;; comes back, even after SIGKILL - a 20-second git rev-parse answered its timeout after 29 minutes, because the wait after SIGKILL had no limit. subprocess-handler (os_process.hy)
 ;;; now waits for the end after SIGKILL only stop-grace seconds, hands the child to a thread that reaps it whenever it ends, and gives the timeout answer.
 ;;;

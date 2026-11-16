@@ -21,7 +21,7 @@
 ;;; If the child already finished before the cancellation, nothing is sent and nothing is counted. For a child whose SIGKILL the OS refused (EPERM - e.g. a machine where AppArmor denies
 ;;; signals inside a container), it does not wait for the end, does not count it as stopped, and names it in one warning line (the child keeps running). The wait of subprocess-handler (not run on a thread) is not left by cancellation (it waits for the child to finish).
 ;;; After SIGKILL (on a timeout of RunProcess, and when stopping for cancellation), the end of the child is awaited only for stop-grace seconds (reaped-within): a child that SIGKILL does not end
-;;; (uninterruptible sleep - D state - on a mount that does not answer; the 20-second git rev-parse that answered after 29 minutes, card ki-0596f60ccd12) is handed to a daemon thread that reaps it
+;;; (uninterruptible sleep - D state - on a mount that does not answer; the 20-second git rev-parse that answered after 29 minutes) is handed to a daemon thread that reaps it
 ;;; whenever it ends, named in one warning line, and the answer (the timeout answer, KILLED) is given without waiting for it.
 ;;; StartProcess, PollProcess, StopProcess, SignalProcess (#2461) and WriteProcessInput (#3672) keep the started children in one per-process table,
 ;;; STARTED-CHILDREN. Starting, polling, sending a signal and writing a short line to the held stdin do not wait, so both responders answer on the spot. Stopping waits only during the grace period, so in offloaded-subprocess-handler
