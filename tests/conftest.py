@@ -5,9 +5,12 @@ import os
 import subprocess
 import threading
 import warnings
-from collections import defaultdict, deque
+from collections import deque
 from contextlib import suppress
 from dataclasses import dataclass, field
+from itertools import groupby
+from operator import attrgetter
+from pathlib import Path
 from typing import Any, Literal, Protocol, TypeVar
 
 import pytest
@@ -87,32 +90,71 @@ class _ProcessTable:
     rss_kib: dict[int, int]
 
 
-def _read_process_table() -> _ProcessTable:
-    """Read the ps table once, so the memory watcher can count the size of the process tree."""
+@dataclass(frozen=True)
+class _ProcessRow:
+    """One process of the table: its pid, its parent's pid, and its resident size (KiB)."""
+
+    pid: int
+    ppid: int
+    rss_kib: int
+
+
+_PROC = Path("/proc")
+_PAGE_KIB = os.sysconf("SC_PAGE_SIZE") // 1024
+
+
+def _proc_row(entry: Path) -> _ProcessRow | None:
+    """One process read from /proc/<pid>/stat (ppid is its 4th field, rss in pages its 24th), or None if it ended meanwhile."""
+    try:
+        stat = (entry / "stat").read_text()
+    except OSError:
+        return None
+    fields = stat.rsplit(")", 1)[1].split()
+    return _ProcessRow(pid=int(entry.name), ppid=int(fields[1]), rss_kib=int(fields[21]) * _PAGE_KIB)
+
+
+def _proc_rows() -> list[_ProcessRow]:
+    """Every process, read from /proc in this thread."""
+    rows = (_proc_row(entry) for entry in _PROC.iterdir() if entry.name.isdigit())
+    return [row for row in rows if row is not None]
+
+
+def _ps_row(line: str) -> _ProcessRow | None:
+    """One line of `ps -axo pid=,ppid=,rss=`, or None if it is not three numbers."""
+    parts = line.split()
+    if len(parts) != 3 or not all(part.isdigit() for part in parts):
+        return None
+    return _ProcessRow(pid=int(parts[0]), ppid=int(parts[1]), rss_kib=int(parts[2]))
+
+
+def _ps_rows() -> list[_ProcessRow]:
+    """Every process, read with ps (where there is no /proc)."""
     result = subprocess.run(
         ["ps", "-axo", "pid=,ppid=,rss="],
         check=True,
         capture_output=True,
         text=True,
     )
-    children_by_parent: dict[int, list[int]] = defaultdict(list)
-    rss_kib: dict[int, int] = {}
-    for line in result.stdout.splitlines():
-        stripped = line.strip()
-        if not stripped:
-            continue
-        parts = stripped.split()
-        if len(parts) != 3:
-            continue
-        try:
-            pid = int(parts[0])
-            ppid = int(parts[1])
-            rss = int(parts[2])
-        except ValueError:
-            continue
-        children_by_parent[ppid].append(pid)
-        rss_kib[pid] = rss
-    return _ProcessTable(children_by_parent=children_by_parent, rss_kib=rss_kib)
+    rows = (_ps_row(line) for line in result.stdout.splitlines())
+    return [row for row in rows if row is not None]
+
+
+def _read_process_table() -> _ProcessTable:
+    """Read the process table once, so the memory watcher can count the size of the process tree.
+
+    Where there is /proc it is read in this thread without starting a process. The watcher runs beside every test, and a child it
+    forked holds a copy of every descriptor the test has open at that moment until the child execs: a file the test was writing then
+    cannot be run (ETXTBSY -- the daily of 2026-11-14 failed test_two_builds_at_once_each_get_their_own_wheel this way, the
+    watcher's `ps` being the only process this session forked off the main thread, once a second)."""
+    rows = _proc_rows() if (_PROC / "self" / "stat").exists() else _ps_rows()
+    by_parent = sorted(rows, key=attrgetter("ppid"))
+    return _ProcessTable(
+        children_by_parent={
+            ppid: [row.pid for row in children]
+            for ppid, children in groupby(by_parent, key=attrgetter("ppid"))
+        },
+        rss_kib={row.pid: row.rss_kib for row in rows},
+    )
 
 
 def _collect_process_tree(root_pid: int, children_by_parent: dict[int, list[int]]) -> set[int]:
