@@ -1,6 +1,6 @@
 //! Tests for `doeff-linter --commit-hook`: make a temporary git repo, commit a clean baseline, stage changes, and
 //! look at the hook's exit code and stderr lines. Source-only commits apply single-file rules to staged paths;
-//! declaration changes apply all enabled rules across the repo, including findings on untouched files.
+//! declaration changes add a whole-repo comparison of the rules that read what changed, including findings on untouched files.
 
 use serde_json::Value;
 use std::path::Path;
@@ -486,27 +486,28 @@ fn the_hook_lints_only_the_staged_paths_with_the_rules_judged_from_one_file() {
     }
 }
 
-/// Failure case (2026-11-15): a declaration change measured the whole repo on both trees in the hook (about 7 CPU minutes and 2.9 GB per child in agora-controllers;
-/// commits waited 46-57 minutes for memory on a shared machine). The hook measures only the staged paths for a declaration change too: an architecture edit and a layer
-/// ban whose hits are in untouched sources pass the hook (the merge gate's `--split-rules` promotes them to the whole-repo comparison -- declaration_changed is true there),
-/// and the layer ban still stops once the commit stages the file it hits.
+/// Failure case (2026-11-15/16): a declaration change measured every rule over the whole repo on both trees in the hook (about 7 CPU minutes and 2.9 GB per child in
+/// agora-controllers), then only the staged paths (a layer ban whose hit sat in an untouched file passed). The hook now compares over the whole repo only the rules
+/// that read what changed: a source-only change measures the staged paths; dropping a service's :invariants promotes DOEFF163 and its new hit stops; forbidding json
+/// in core promotes DOEFF102 alone, and the existing import in an untouched core file stops the commit that makes it a hit.
 #[test]
-fn declaration_changes_measure_only_the_staged_paths() {
+fn declaration_changes_compare_the_rules_that_read_what_changed() {
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "app/queue/lease_invariants.hy", &format!("(defk fenced-writes-renamed [writes]\n  {}\n  \"Fencing clause.\"\n  #())\n", JUDGED));
     git(root, &["add", "app/queue/lease_invariants.hy"]);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 0, "{}", stderr);
-    assert!(!stderr.contains("whole-repo"), "{}", stderr);
+    assert!(!stderr.contains("declaration change"), "{}", stderr);
 
     let dir = baseline_repo();
     let root = dir.path();
     write(root, "architecture.hy", &ARCHITECTURE.replace(" :invariants [\"app.queue.lease_invariants:fenced-writes\"]", ""));
     git(root, &["add", "architecture.hy"]);
     let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
-    assert!(!stderr.contains("lease_invariants"), "measured an untouched file: {}", stderr);
+    assert_eq!(code, 1, "{}", stderr);
+    assert!(stderr.contains("comparing the whole repo for 1 rule(s) that read what changed (ServiceInvariants) — DOEFF163"), "{}", stderr);
+    assert!(stderr.contains("DOEFF163"), "{}", stderr);
 
     let dir = baseline_repo();
     let root = dir.path();
@@ -517,18 +518,65 @@ fn declaration_changes_measure_only_the_staged_paths() {
     let forbidding = ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])");
     write(root, "architecture.hy", &forbidding);
     git(root, &["add", "architecture.hy"]);
-    let (code, stderr) = hook(root, &[]);
-    assert_eq!(code, 0, "{}", stderr);
-    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #(1))\n", JUDGED));
-    git(root, &["add", "app/queue/core/rule.hy"]);
+    let side = tempfile::TempDir::new().unwrap();
+    let (linter, log) = recording_linter(side.path());
+    let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 60));
+    assert_eq!(got.code, 1, "{:?}", got);
+    assert!(got.lines.iter().any(|l| l.contains("app/queue/core/rule.hy") && l.contains("DOEFF102")), "{:?}", got);
+    let whole: Vec<(String, Vec<String>)> = recorded_runs(&log).into_iter().filter(|(_, paths)| paths == &vec![".".to_string()]).collect();
+    assert_eq!(whole.len(), 2, "the HEAD tree and the tip, once each: {:?}", whole);
+    assert!(whole.iter().all(|(enable, _)| enable == "DOEFF102"), "a rule that does not read the layer's forbidden modules was promoted: {:?}", whole);
+}
+
+/// The kept answers: a second hook run of the same stage reads both whole-repo answers (the HEAD version and the clean staged tree) instead of measuring them again,
+/// and stops the same way.
+#[test]
+fn a_declaration_change_reads_the_kept_whole_repo_answers() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
+    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "baseline of core that imports json"]);
+    write(root, "architecture.hy", &ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])"));
+    git(root, &["add", "architecture.hy"]);
+    let side = tempfile::TempDir::new().unwrap();
+    let (linter, log) = recording_linter(side.path());
+    let options = options_with(root, &linter, &side.path().join("cache"), 60);
+    let first = doeff_linter::commit_hook::assess(&options);
+    assert_eq!(first.code, 1, "{:?}", first);
+    let measured = recorded_runs(&log).into_iter().filter(|(_, paths)| paths == &vec![".".to_string()]).count();
+    assert_eq!(measured, 2, "{:?}", recorded_runs(&log));
+    let second = doeff_linter::commit_hook::assess(&options);
+    assert_eq!(second.code, 1, "{:?}", second);
+    assert_eq!(recorded_runs(&log).into_iter().filter(|(_, paths)| paths == &vec![".".to_string()]).count(), measured, "measured the whole repo again");
+    assert!(second.lines.iter().any(|l| l.contains("reused the kept whole-repo answer of the HEAD version")), "{:?}", second);
+    assert!(second.lines.iter().any(|l| l.contains("reused the kept whole-repo answer of the staged tree")), "{:?}", second);
+    let violations = |a: &doeff_linter::commit_hook::Assessment| a.lines.iter().filter(|l| !l.contains("reused")).cloned().collect::<Vec<_>>();
+    assert_eq!(violations(&first), violations(&second));
+}
+
+/// Failure case: a rule the config newly enables is compared over the whole repo with no HEAD side, so its existing hit in an untouched file stops the commit (as
+/// the merge gate does; the Lint-Baseline trailer is the way to start a rule ringing).
+#[test]
+fn a_newly_enabled_rule_stops_on_its_existing_hits() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "architecture.hy", &ARCHITECTURE.replace("(layer core :roles [judgment] :imports [core])", "(layer core :roles [judgment] :imports [core] :forbid-modules [json])"));
+    write(root, "app/queue/core/rule.hy", &format!("(val MODULE-TAGS {{:context \"queue\" :role \"judgment\"}})\n(import json)\n(defk parse [text]\n  {}\n  #())\n", JUDGED));
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "core imports json and the layer forbids it, with DOEFF102 off"]);
+    write(root, "pyproject.toml", &PYPROJECT.replace("enable = [\"DOEFF163\", \"DOEFF016\"]", "enable = [\"DOEFF163\", \"DOEFF016\", \"DOEFF102\"]"));
+    git(root, &["add", "pyproject.toml"]);
     let (code, stderr) = hook(root, &[]);
     assert_eq!(code, 1, "{}", stderr);
-    assert!(stderr.contains("app/queue/core/rule.hy"), "{}", stderr);
+    assert!(stderr.contains("newly enabled, every hit is new: DOEFF102"), "{}", stderr);
+    assert!(stderr.contains("app/queue/core/rule.hy") && stderr.contains("DOEFF102"), "{}", stderr);
 }
 
 /// Failure case (2026-11-13): when a declaration change measured the whole repo, an error outside the registry that main already has in a file the commit does not touch
 /// (DOEFF016 here; DOEFF004 and DOEFF119 in agora-controllers) stopped every declaration change, even a comment-only one. It passes; the same error still stops once the
-/// commit touches its file (declaration_changes_measure_only_the_staged_paths).
+/// commit touches its file (the commit hook measures the staged file).
 #[test]
 fn a_declaration_change_does_not_stop_on_errors_main_already_has_in_untouched_files() {
     let dir = baseline_repo();
