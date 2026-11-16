@@ -594,8 +594,9 @@
 
 
 (defrecord PinRecord
-  "他の世代の固定の file 1 つの読み: path = file・state = その世代の状態の dir・keys = 固定のキー・alive = 状態の dir が在るか(無ければ
-   その世代は終わり、起動の script が dir を消した — 固定に数えず、掃除の残りの片づけが file を消す)。"
+  "他の世代の固定の file 1 つの読み: path = file・state = その世代の状態の dir・keys = 固定のキー・alive = 状態の dir が在り、分け合う
+   dir そのものでないか(無ければその世代は終わり、起動の script が dir を消した — 固定に数えず、掃除の残りの片づけが file を消す。
+   分け合う dir を状態の dir と書いた file は、世代ごとの状態の dir の前の置き方の世代の物で、その dir は消えないので終わりを示せない)。"
   (#^ str path)
   (#^ str state)
   (#^ (get frozenset str) keys)
@@ -655,7 +656,11 @@
             (val state (get read 0))
             (val keys (get read 1))
             (<- seen (StatPath state))
-            (val alive (and (not (isinstance seen FileFailed)) (!= seen.kind PathKind.MISSING)))
+            ;; 状態の dir を分け合う dir そのもの(世代ごとの状態の dir を持つ前の置き方)と書いた file は、終わった世代の物として読む — その
+            ;; dir は世代が終わっても消えないので、在るかで読むと固定が残り続ける(2026-11-16 に k3s の 4 台で 10-26 の file が root 2 本・
+            ;; 1.21 GB を守り続け、掃除の候補が 0 本になって先の組みの断りの手前に在った)。
+            (val shared-place (.rstrip (or settings.shared settings.state) "/"))
+            (val alive (and (not (isinstance seen FileFailed)) (!= seen.kind PathKind.MISSING) (!= (.rstrip state "/") shared-place)))
             (:= records (+ records #((PinRecord :path path :state state :keys keys :alive alive)))))))))
   records)
 

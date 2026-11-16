@@ -7,7 +7,8 @@
 (import dataclasses [dataclass])  ; defrecord の展開が使う
 (import json)
 (import re)
-(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
+(import doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind LocalPath RemoteRepo RepoLocation])
+(import doeff_cluster._shared.core.runtime_env_rules [url-location])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits])
 
 (val ANSWER-HEAD-CHARS 200)   ; 形の読めない答えの file の中身を失敗の理由に載せる長さ
@@ -177,9 +178,15 @@
 
 (defk declared-project [declared]
   {:pre [(: declared dict)] :post [(: % str)]}
-  "宣言の JSON(runtimeEnv の形)から、同じ project の組の名(project の repo の url と path)を返すため(完成マーカーの宣言と、先の組みの
-   頼みの宣言 — #3748 の見積もりが同じ project の root を引く — が同じ綴りで読む)。"
+  "宣言の JSON(runtimeEnv の形)から、同じ project の組の名(project の repo の url の正体と path)を返すため(完成マーカーの宣言と、先の
+   組みの頼みの宣言 — #3748 の見積もりが同じ project の root を引く — が同じ綴りで読む)。url は綴りでなく正体(url-location — https・
+   git@host:・ssh:// は同じ)で名にする: 綴りで名にすると、宣言の url の綴りが替わった前の root が別の project の「新しい 2 つ」として
+   消えずに残った(2026-11-16 に k3s の 4 台で https の綴りの root 2 本・1.57 GB)。"
   (val project (get declared "project"))
-  (.format "{}:{}" (next (gfor r (get declared "repos") :if (= (get r "name") (get project "repo")) (get r "url")) "")
-           (get project "path")))
+  (<- location RepoLocation
+      (url-location (next (gfor r (get declared "repos") :if (= (get r "name") (get project "repo")) (get r "url")) "")))
+  (val named (match location
+               (LocalPath :path path) path
+               (RemoteRepo :host host :owner owner :name name) (.join "/" (gfor part #(host owner name) :if part part))))
+  (.format "{}:{}" named (get project "path")))
 

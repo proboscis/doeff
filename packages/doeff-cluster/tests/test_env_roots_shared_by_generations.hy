@@ -226,3 +226,21 @@
   (assert (= (lfor l after-lines #(l.pinned l.candidates l.chosen)) [#(0 1 1)]) after-lines)
   (assert (not (.exists old)) "終わった世代の固定は数えない")
   (assert (= (lfor p (.iterdir (/ tmp-path "shared" PINS-DIR)) p.name) []) "終わった世代の固定の file は片づける"))
+
+
+(deftest test-the-sweep-reads-a-pin-naming-the-shared-dir-as-an-ended-generation [tmp-path]
+  ;; 世代ごとの状態の dir を持つ前の置き方の世代は、状態の dir を分け合う dir そのものと書いた固定の file を残した。分け合う dir は世代が
+  ;; 終わっても消えないので、在るかで読むと固定が残り続ける(2026-11-16 に k3s の 4 台で 10-26 の file が root 2 本を守り続けた)。
+  ;; 世代 b の掃除はその固定を数えずに古い root を消し、file も片づける。直す前は固定 1・候補 0 で古い root が残って赤。
+  (<- newer EnvSettings (generation tmp-path "b"))
+  (<- old Path (shared-root tmp-path OLD-NAME True 2))
+  (<- (shared-root tmp-path MID-NAME True 1))
+  (<- (shared-root tmp-path NEW-NAME True 0))
+  (val pins (/ tmp-path "shared" PINS-DIR))
+  (.mkdir pins :parents True)
+  (.write-text (/ pins "c3d00e0128c0d9ca.json")
+               (json.dumps {"state" (+ (str (/ tmp-path "shared")) "/") "keys" [(+ "env-" OLD-NAME)]}))
+  (<- lines tuple (on-envs newer (sweep-once (frozenset))))
+  (assert (= (lfor l lines #(l.pinned l.candidates l.chosen)) [#(0 1 1)]) lines)
+  (assert (not (.exists old)) "前の置き方の世代の固定は数えない")
+  (assert (= (lfor p (.iterdir pins) p.name) []) "前の置き方の世代の固定の file は片づける"))

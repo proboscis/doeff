@@ -123,7 +123,13 @@
 (deftest test-project-and-argv
   (val declared {"project" {"lockSha256" "L" "python" "3.12" "repo" "r" "path" "p"} "repos" [{"name" "r" "url" "git@x:r"}]})
   (<- project str (root-project {"env" declared}))
-  (assert (= project "git@x:r:p") project)
+  (assert (= project "x/r:p") project)
+  ;; 同じ repo の url の綴り違い(https・scp の形・ssh://)は同じ project — 綴りが替わる前の root も同じ組の古い root として消せる。
+  (val spelled-as (fn [url] {"env" {"project" {"repo" "r" "path" "."} "repos" [{"name" "r" "url" url}]}}))
+  (<- https str (root-project (spelled-as "https://github.com/o/r.git")))
+  (<- scp str (root-project (spelled-as "git@github.com:o/r.git")))
+  (<- ssh str (root-project (spelled-as "ssh://git@github.com/o/r")))
+  (assert (= #(https scp ssh) #("github.com/o/r:." "github.com/o/r:." "github.com/o/r:.")) #(https scp ssh))
   (<- argv tuple (prepare-argv "/hy" "tool" "/q" "/r" "/s" "/shared" "/uc" "/keys" "/cp" "uv" "/p" "linux-x86_64" "/m"))
   ;; Linux の準備は SCHED_IDLE と nice 10 で起きる(service より必ず後)。
   (assert (= (cut argv 0 9) #("chrt" "--idle" "0" "nice" "-n" "10" "/hy" "-m" "tool")) argv)
