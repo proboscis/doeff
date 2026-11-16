@@ -33,7 +33,9 @@
 ;;; job ごとの子(jobs の層の下 — 機体の書きを job の名で読むため): task(JobSpec.once)は jobs の層の下の job の名の子
 ;;; (job-subgroup-name)に置き、名の無い子(shim の外の git・uv・待ちの子・入口の検め)は共有の子 SHARED-CGROUP に置く。cgroup v2 は子に
 ;;; controller を掛けた cgroup に process を置けないので、jobs の層そのものには process を置かない — 層に process が残っていない時だけ、層の
-;;; 子へ io を掛ける(親が io を渡す時だけ — 子ごとの io.stat が読めるようになる)。memory.max・cpu の値と PSI は層 jobs のまま(子を含めて数える)。
+;;; 子へ io と memory を掛ける(親が渡す controller だけ — 子ごとの io.stat と memory.peak が読めるようになる。cpu.stat の usage_usec は
+;;; controller なしで在る)。memory.max・cpu の値と PSI は層 jobs のまま(子を含めて数える — 子に memory の値を書かない)。
+;;; task の終わりを回収する時に、宿が子の cpu.stat と memory.peak を読んで task の終わりの行を足す(worker/core/task_record)。
 ;;; 終わった job の子は、次の task を置く前の掃き(SWEEP-SCRIPT — 宿 worker/protocol/process_host)が io.stat を読んでから rmdir で消す。
 ;;;
 ;;; 準備ごとの子(準備の層の下 — 準備 1 つを process の木 1 つに束ねるため): 実行環境の準備の 1 本ずつを、準備の層の下の自分の子
@@ -60,13 +62,15 @@
 (val SUBGROUP-NAME-MAX 120)
 ;; 掃きの sh の script: $0 = jobs の層の dir・"$@" = 消さない子の名(走っている job)。_ で始まる子と残す名を除いた子ごとに、io.stat を
 ;; 読んでから rmdir し(process の居る子は rmdir が断るので残る)、消せた子を「<名>\t<io.stat の行を ; で繋いだ物>」の 1 行で出す。最後に、
-;; 層に io が渡されていて子へまだ掛けていなければ掛けを試す(層に process が残っている間は kernel が断る — 次の掃きで試し直す)。
+;; 層に渡されていて子へまだ掛けていない io と memory を、1 回の書きでまとめて掛けを試す(層に process が残っている間は kernel が断る —
+;; 次の掃きで試し直す)。
 (val SWEEP-SCRIPT
   (+ "for d in \"$0\"/*/; do n=${d%/}; n=${n##*/}; case $n in _*|'*') continue ;; esac; "
      "k=; for x in \"$@\"; do [ \"$x\" = \"$n\" ] && k=1; done; [ -z \"$k\" ] || continue; "
      "s=$(tr '\\n' ';' <\"$0/$n/io.stat\" 2>/dev/null); rmdir \"$0/$n\" 2>/dev/null && printf '%s\\t%s\\n' \"$n\" \"$s\"; done; "
-     "if grep -qw io \"$0/cgroup.controllers\" 2>/dev/null && ! grep -qw io \"$0/cgroup.subtree_control\" 2>/dev/null; then "
-     "echo +io >\"$0/cgroup.subtree_control\" 2>/dev/null; fi; exit 0"))
+     "a=; for c in io memory; do "
+     "if grep -qw $c \"$0/cgroup.controllers\" 2>/dev/null && ! grep -qw $c \"$0/cgroup.subtree_control\" 2>/dev/null; then a=\"$a +$c\"; fi; "
+     "done; [ -z \"$a\" ] || echo $a >\"$0/cgroup.subtree_control\" 2>/dev/null; exit 0"))
 ;; 準備の子を止めて消す sh の関数の定義(GROUP-SCRIPT と CLOSE-SCRIPT が頭に置く — $1 = 子の dir): 子が無ければ何もしない。在れば
 ;; cgroup.kill で子孫を全部止め、cgroup.events が populated 0 になるまで(5 秒まで)読んでから rmdir する。ポーリングの訳: 子孫の退きの
 ;; 知らせは inotify の cgroup.events の変更だけで、SIGKILL の後の退きは ms で済む。消せなければ 0 以外。

@@ -151,6 +151,7 @@
    実行環境の task(runtimeEnv を持つ)は、env のキー(この worker の platform で計算)を root の置き場の鍵にする(env-placement)。"
   (val id (get task "id"))
   (val priority (.get task "priority"))
+  (val task-name (.get task "name"))
   (<- placed EnvPlacement (env-placement (.get task "runtimeEnv") (get task "revision")))
   (JobSpec (+ "task/" id) JOB-ENTRY
            #("task" "--result" (str (/ task-dir f"{id}.result")))
@@ -163,7 +164,9 @@
            ;; 子の環境変数(service の job と同じ欄・同じ路 — 子 process の言い換えが宣言の env-vars の上に重ねる)。
            :environ (environ-pairs (.get task "environ" {}))
            ;; 置き方の優先(整数 — 真偽は数えない。無い・形の違う行は 0 — eviction_rules の task-needs-of と同じ読み)。
-           :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)))
+           :priority (if (and (isinstance priority int) (not (isinstance priority bool))) priority 0)
+           ;; task の名(task の終わりの行に写す — worker/core/task_record)。文字でない・無い行は None。
+           :task-name (if (isinstance task-name str) task-name None)))
 
 
 (defk task-specs [tasks task-dir]

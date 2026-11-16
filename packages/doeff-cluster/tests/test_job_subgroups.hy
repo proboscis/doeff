@@ -6,6 +6,7 @@
 (require doeff-hy.macros [deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses)
+(import json)
 (import os)
 (import pathlib [Path])
 (import doeff [with-handlers])
@@ -105,16 +106,21 @@
   (assert (.is-dir (/ layer SHARED-CGROUP)) "共有の子は消さない")
   (<- groups tuple (swept-groups swept.stdout))
   (assert (= groups #(#("task_t0" #(#("259:0" 10 20) #("8:16" 1024 4096))))) groups)
-  (assert (= (.strip (.read-text (/ layer "cgroup.subtree_control"))) "+io")))
+  (assert (= (.strip (.read-text (/ layer "cgroup.subtree_control"))) "+io +memory") "io と memory を 1 回の書きで掛ける"))
 
 
 (deftest test-io-is-tried-only-when-the-parent-passes-it-and-a-refusal-is-retried-later [#^ Path tmp-path]
-  ;; 親が io を渡さない機体では掛けない。kernel が断る時(層に process が残る — 前の世代の子)は掃きを失敗にせず、次の掃きが試し直す。
+  ;; 親が渡さない controller は掛けない(io を渡さない機体では memory だけ)。掛けてある controller は書き直さない。kernel が断る時(層に
+  ;; process が残る — 前の世代の子)は掃きを失敗にせず、次の掃きが試し直す。
   (val layer (jobs-layer tmp-path "cpu memory"))
   (<- argv tuple (sweep-argv (str (/ layer "cgroup.procs")) #()))
   (<- plain ProcessOutcome (with-handlers [subprocess-handler] (RunProcess :argv argv)))
   (assert (= plain.exit-code 0) plain)
-  (assert (= (.read-text (/ layer "cgroup.subtree_control")) "") "io を渡さない親の下では掛けない")
+  (assert (= (.strip (.read-text (/ layer "cgroup.subtree_control"))) "+memory") "io を渡さない親の下では io を掛けない")
+  (.write-text (/ layer "cgroup.subtree_control") "memory")
+  (<- again ProcessOutcome (with-handlers [subprocess-handler] (RunProcess :argv argv)))
+  (assert (= again.exit-code 0) again)
+  (assert (= (.read-text (/ layer "cgroup.subtree_control")) "memory") "掛けてある controller は書き直さない")
   ;; 断る kernel の代わり: subtree_control を書けない物(dir)にする。
   (.write-text (/ layer "cgroup.controllers") "cpu io memory")
   (.unlink (/ layer "cgroup.subtree_control"))
@@ -133,20 +139,32 @@
 
 (deftest test-a-task-runs-in-its-own-child-and-the-finished-one-is-logged [#^ Path tmp-path capfd monkeypatch]
   ;; 本物の process-host と shim: task は jobs/<job の名>/ へ移ってから走り、層そのものには何も書かない。前に終わった job の子は消され、
-  ;; その読み書きの byte が記録に 1 行残る(機体の disk への書きを job の名で数える読みの元)。
+  ;; その読み書きの byte が記録に 1 行残る(機体の disk への書きを job の名で数える読みの元)。回収の時に task の子の CPU 秒と memory の山を
+  ;; 読み、task の名つきの終わりの行を日の file に足す(kernel の代わりに job 自身が子の cpu.stat と memory.peak を書く)。
   (val layer (jobs-layer tmp-path "cpu io memory"))
   (monkeypatch.setenv "PATH" (+ (str (/ tmp-path "bin")) ":" (get os.environ "PATH")))
   (group-dir layer "task_t0" "")
   (setv tree (/ tmp-path "tree"))
   (.mkdir tree)
-  (.write-text (/ tree "probe_entry.py") "print('ran')\n")
+  (.write-text (/ tree "probe_entry.py")
+               (.format (+ "import pathlib\ng = pathlib.Path({!r})\n(g / 'cpu.stat').write_text('usage_usec 2500000\\n')\n"
+                           "(g / 'memory.peak').write_text('1610612736\\n')\nprint('ran')\n")
+                        (str (/ layer "task_t1"))))
   (<- base HostSettings (host-settings tmp-path))
-  (val settings (dataclasses.replace base :job-procs (str (/ layer "cgroup.procs"))))
-  (setv ended (! (run-on-host settings (job-ended (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True) (str tree) 30))))
+  (val records (/ tmp-path "records"))
+  (val settings (dataclasses.replace base :job-procs (str (/ layer "cgroup.procs")) :task-record-dir (str records)))
+  (setv ended (! (run-on-host settings (job-ended (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True :task-name "probe one")
+                                                  (str tree) 30))))
   (assert (= (.strip (.read-text (/ layer "task_t1" "cgroup.procs"))) (str ended.pid)) "shim は job の名の子へ移る")
   (assert (= (.read-text (/ layer "cgroup.procs")) "") "層そのものには置かない")
   (assert (not (.exists (/ layer "task_t0"))) "終わった job の子は消す")
-  (assert (= (.strip (.read-text (/ layer "cgroup.subtree_control"))) "+io"))
+  (assert (= (.strip (.read-text (/ layer "cgroup.subtree_control"))) "+io +memory"))
+  (setv days (list (.iterdir records)))
+  (assert (= (len days) 1) days)
+  (setv row (json.loads (.read-text (get days 0))))
+  (assert (= #((get row "job") (get row "task") (get row "exitCode") (get row "cpuSeconds") (get row "memoryPeakMib"))
+             #("task/t1" "probe one" ended.exit-code 2.5 1536))
+          row)
   (setv err (. (capfd.readouterr) err))
   (assert (in "job の cgroup の読み書き" err) err)
   (assert (in "task_t0" err) err)

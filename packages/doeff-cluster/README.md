@@ -577,6 +577,11 @@ handoff の process を終わりまで回してから退くので、版上げで
 | ConfigMap `worker-version`(上に載る系の宣言 — `<宣言>/workers/worker-version.env`) | `/etc/worker-version`(`WORKER_VERSION_FILE` = `/etc/worker-version/<worker の名>`) | worker の名ごとの doeff の版(40 字の commit)。起動の args と preStop が自分の行を `WORKER_DOEFF_COMMIT` に入れて起動の script へ渡し、keeper が file の替わりで同じ container の中の worker の process を入れ替える(Pod を作り直さない) | Pod が起きない |
 | Namespace `agent-worker` | — | 宣言しない(この宣言から外れた時に prune が Namespace ごと Secret を消すため) | 当てられない |
 
+task の終わりの行: 機体の配備が env `DOEFF_WORKER_TASK_RECORD_DIR` に dir を渡すと、worker は task 1 本を回収するごとに、その dir の
+UTC の日の file `<YYYYMMDD>.log` へ JSON の 1 行(job の名・task の名・試みの番号・起こした刻と回収した刻・終了 code・task の子の cgroup の
+CPU 秒と memory の山)を足し、日の file を初めて作る時に 45 日より前の日の file を消します(`_worker/core/task_record.hy`)。命令の引数・
+cwd・環境変数は書きません。env が無ければ書きません。
+
 worker の ServiceAccount `doeff-worker` は ClusterRole `cluster-admin` に結びます(`<宣言>/workers/worker-cluster-admin.yaml`・
 1 人で使う cluster なので絞らない)— job の子は kubectl で cluster を扱え、上に載る系は job のための権限を与えなくてよい。
 

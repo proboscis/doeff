@@ -98,6 +98,8 @@
 (val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
 ;; 常駐の job の CPU の取り分の名と重み(空白で並べた「<名>=<重み>」— 無ければ services の層を分けない・worker/core/job_cgroup の「取り分」)。
 (val SERVICE-SHARES-VAR "DOEFF_WORKER_SERVICE_SHARES")
+;; task の終わりの行(task 1 本ごとの CPU 秒と memory の山)を足す dir(無い・空なら書かない・worker/core/task_record)。
+(val TASK-RECORD-DIR-VAR "DOEFF_WORKER_TASK_RECORD_DIR")
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
@@ -742,7 +744,7 @@
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR SERVICE-SHARES-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
                                                      PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR RETIRED-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR
-                                                     CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR commit-var)
+                                                     CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR TASK-RECORD-DIR-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
@@ -792,7 +794,9 @@
                            :extra-env (tuple (gfor k (sorted host-env) (EnvEntry :name k :value (get host-env k)))) :layout layout
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs
-                           :service-layer service-layer :service-shares service-shares)
+                           :service-layer service-layer :service-shares service-shares
+                           ;; task の終わりの行の dir(機体の配備が渡した時だけ)。
+                           :task-record-dir (or (.get machine-env TASK-RECORD-DIR-VAR) None))
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv
                            ;; service だけが分かれる root の待ちの子を置く cgroup(版の切り替えの道を task の層の CPU の枠に置かない)。

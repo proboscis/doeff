@@ -132,6 +132,10 @@
   ;; (worker/core/policy の ready-tree-step — 起こした後に尽きかければ見張りが低い物から止める)。0 = 平常(欄の無い行・常駐の job)。
   ;; 比べない欄(値だけが変わっても process を起こし直さない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
   (setv #^ int priority (field :default 0 :compare False))
+  ;; task の名(task だけ — heartbeat の返事の task の行の name・出し手が付けた名をそのまま)。job の名 name は task/<id> で、task の行が
+  ;; coordinator から消えた後に何の task だったかを読めないので、worker が task の終わりの行(worker/core/task_record)に写す。None = 常駐の
+  ;; job・欄の無い行。比べない欄(process の形に入らない・指紋 spec-hash に入らない)。位置の引数で作る呼び手を崩さないよう最後に置く。
+  (setv #^ (| str None) task-name (field :default None :compare False))
 
   (defn #^ None __post-init__ [self]
     (when (or (not self.name) (not self.entry) (not self.revision))

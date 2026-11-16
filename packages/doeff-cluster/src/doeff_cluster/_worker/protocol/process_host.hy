@@ -25,7 +25,7 @@
 (import pathlib [Path])
 (import posixpath)
 (import doeff_core_effects [slog])
-(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText]
+(import doeff_core_effects [AppendText FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
 (import doeff_time [WaitWithin])
@@ -48,6 +48,8 @@
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
 (import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
+(import doeff_cluster._worker.core.task_record [TaskUsage cpu-seconds-of day-file-name expired-day-files peak-mib-of task-record-line])
+(import doeff_cluster._worker.intent.worker_model [Outcome])
 
 
 (defrecord HostSettings
@@ -84,7 +86,9 @@
   ;; service-layer = services の層の dir・service-shares = #(名 重み) の並び。None・空 = 分けない(service-procs が層そのもの)。分ける時の
   ;; service-procs は層の共有の子。
   (setv #^ (| str None) service-layer None)
-  (setv #^ (get tuple #((get tuple #(str int)) ...)) service-shares #()))
+  (setv #^ (get tuple #((get tuple #(str int)) ...)) service-shares #())
+  ;; task の終わりの行を足す dir(worker/core/task_record・入口 main が DOEFF_WORKER_TASK_RECORD_DIR から 1 度だけ決める)。None = 書かない。
+  (setv #^ (| str None) task-record-dir None))
 
 
 (defrecord ForkedFrom
@@ -108,10 +112,12 @@
 
 (defrecord Started
   "StartJob で起こした子: view = 観測・fork = 待ちの子から分けた子の印(入れ物 shim で起こした子は None)・stop = 止めの合図の記録
-   (None = まだ止めていない — #3713)。"
+   (None = まだ止めていない — #3713)・group = task を置いた job の名の子の cgroup の dir(回収の時に CPU 秒と memory の山を読む —
+   worker/core/task_record。None = 子に置いていない)。"
   (#^ ProcessView view)
   (#^ (| ForkedFrom None) fork)
-  (setv #^ (| StopAsked None) stop None))
+  (setv #^ (| StopAsked None) stop None)
+  (setv #^ (| str None) group None))
 
 
 ;; 止めの計時の行(#3713)の段: TERM / KILL = 止めの合図を送った刻・REAPED = 終わった子を回収した刻。
@@ -135,6 +141,8 @@
 (val JOB-CGROUP-IO-LOG "worker: job の cgroup の読み書き")
 ;; 掃きを走らせられなかった行の名(名 + 欄 detail)。task はそのまま起こす(消し残しは次の掃きが拾う)。
 (val JOB-CGROUP-SWEEP-FAILED-LOG "worker: job の cgroup の掃きが走らない")
+;; task の終わりの行を書けなかった時の行の名(worker/core/task_record — 名 + 欄 job・path・detail)。回収はそのまま進む。
+(val TASK-RECORD-FAILED-LOG "worker: task の終わりの行を書けない")
 ;; 掃きの秒の上限(sh の rmdir と cat だけ — 越えたら諦めて次の掃きに回す)。
 (val SWEEP-TIMEOUT-SECONDS 10.0)
 ;; services の層の取り分を整えた時の行の名(worker/core/job_cgroup の「取り分」— 欄 state = on〔cpu を掛けて重みを書いた〕・deferred〔層に
@@ -416,6 +424,51 @@
   procs)
 
 
+(defk task-group-usage [group]
+  {:pre [(: group (| str None))] :post [(: % TaskUsage)] :tags {:context "worker" :role "protocol"}}
+  "task を置いた job の名の子 group(None = 子に置いていない)の CPU 秒と memory の山を読むため(worker/core/task_record — 読めない値は
+   None)。"
+  (when (is group None)
+    (return (TaskUsage :cpu-seconds None :peak-mib None)))
+  (<- stat (| str FileFailed) (ReadText (posixpath.join group "cpu.stat")))
+  (<- peak (| str FileFailed) (ReadText (posixpath.join group "memory.peak")))
+  (var cpu None)
+  (var mib None)
+  (when (not (isinstance stat FileFailed))
+    (:= cpu (! (cpu-seconds-of stat))))
+  (when (not (isinstance peak FileFailed))
+    (:= mib (! (peak-mib-of peak))))
+  (TaskUsage :cpu-seconds cpu :peak-mib mib))
+
+
+(defk recorded-task-end [settings started outcome exit-code stop-reason]
+  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: exit-code int) (: stop-reason (| str None))] :post [(: % None)]
+   :tags {:context "worker" :role "protocol"}}
+  "回収する task の終わりの行を、設定の dir の日の file に足すため(worker/core/task_record — 常駐の job と、dir の無い worker は書かない)。
+   日の file を初めて作る時は、先に dir を作り、残す日数より古い日の file を消す。書けなければ行を 1 つ出して進む(回収を止めない)。"
+  (val dir settings.task-record-dir)
+  (val view started.view)
+  (when (or (is dir None) (not view.spec.once))
+    (return None))
+  (<- now int (now-epoch-ms))
+  (<- usage TaskUsage (task-group-usage started.group))
+  (<- line str (task-record-line view.name view.spec.task-name view.attempt view.started-ms now outcome.value exit-code usage stop-reason))
+  (<- day str (day-file-name now))
+  (val path (posixpath.join dir day))
+  (<- seen (| PathStat FileFailed) (StatPath path))
+  (when (or (isinstance seen FileFailed) (= seen.kind PathKind.MISSING))
+    (<- _made (| FileFailed None) (MakeDirectory dir))  ; 作れない断りは下の足しが名乗る
+    (<- entries (| tuple FileFailed) (ListDirectory dir))
+    (when (not (isinstance entries FileFailed))
+      (<- expired tuple (expired-day-files (tuple (gfor entry entries entry.name)) now))
+      (for [old expired]
+        (<- _gone (| FileFailed None) (RemoveTree (posixpath.join dir old))))))  ; 消せなかった file は次の日の最初の行が消し直す
+  (<- appended (| FileFailed None) (AppendText path line))
+  (when (isinstance appended FileFailed)
+    (<- (slog TASK-RECORD-FAILED-LOG :level "warning" :job view.name :path path :detail appended.detail)))
+  None)
+
+
 (defk start-job [settings action [job-procs None]]
   {:pre [(: settings HostSettings) (: action StartJob) (: job-procs (| str None))] :post [(: % (| Started JobNotStarted))]
    :tags {:context "worker" :role "protocol" :spells "env"}}
@@ -477,6 +530,11 @@
     (<- (file-done (MakeDirectory plan.work-dir))))
   (<- stem str (job-log-stem settings spec.name action.attempt))
   (val log (+ stem ".log"))
+  ;; task を置く job の名の子の dir(回収の時に使いを読む — Started.group): shim の道は job-procs へ移す task・待ちの子の道は頼みの cgroup を
+  ;; 受ける版の待ちの子から分ける task だけ(下の cgroup-procs と同じ条件)。
+  (val group (if (and spec.once (is-not job-procs None) (or (is action.warm-key None) action.warm-places))
+                 (posixpath.dirname job-procs)
+                 None))
   (var started None)
   (if (is-not action.warm-key None)
       (do (<- place WarmPlace (warm-place settings.warm-dir action.warm-key))
@@ -503,13 +561,15 @@
                           (JobNotStarted :name spec.name :warm-key action.warm-key :detail (+ "待ちの子が分けるのを断った: " forked.detail)
                                          :at-ms started-ms)
                           (Started :view (ProcessView spec.name spec action.attempt forked.pid started-ms :instance instance)
-                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path :holds-input held)))))
+                                   :fork (ForkedFrom :start-ticks forked.start-ticks :exit-path exit-path :holds-input held)
+                                   :group group))))
       (do (<- argv tuple (shim-argv settings spec plan.argv job-procs))
           (<- answer (StartProcess :argv argv :cwd plan.cwd :env plan.env :env-mode plan.env-mode :stdout-path log :stderr-path log
                                    :process-group True :hold-stdin True :reap-group True))
           (:= started (if (isinstance answer ProcessNotStarted)
                           (JobNotStarted :name spec.name :warm-key None :detail (+ "子を起こせない: " answer.detail) :at-ms started-ms)
-                          (Started :view (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance) :fork None)))))
+                          (Started :view (ProcessView spec.name spec action.attempt answer.pid started-ms :instance instance) :fork None
+                                   :group group)))))
   (val via (if (is action.warm-key None) "shim" (+ "warm:" action.warm-key)))
   (match started
     (JobNotStarted) (<- (slog JOB-NOT-STARTED-LOG :level "warning" :job spec.name :via via :detail started.detail))
@@ -572,7 +632,7 @@
     ;; 行の段は送った合図の段(断られた KILL も段は kill — killed の欄が送れたかを名乗る)。
     (<- (noted-stop (if (= stage StopStage.KILL) StopMoment.KILL StopMoment.TERM) name pid asked now))
     (resume None))
-  (ReapJob [name pid outcome exit-code]
+  (ReapJob [name pid outcome exit-code stop-reason]
     (val started (.get table name))
     (when (and started (= started.view.pid pid))
       ;; 終わりを観測していない子(止め切れていない)は、止めて回収する(group の残りも — reap-group)。観測した子は回収の時に
@@ -589,6 +649,8 @@
       (when (is-not started.stop None)
         (<- now int (now-epoch-ms))
         (<- (noted-stop StopMoment.REAPED name pid started.stop now)))
+      ;; task の終わりの行(worker/core/task_record): job の名の子は次の掃きまで残るので、ここで CPU 秒と memory の山を読める。
+      (<- (recorded-task-end settings started outcome exit-code stop-reason))
       ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に置き場へ退け、拍の外の task が消す(頭の註 — 拍は消しの終わりを
       ;; 待たない)。
       (when started.view.spec.runtime-env
