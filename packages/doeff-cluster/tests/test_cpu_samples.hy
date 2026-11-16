@@ -70,6 +70,18 @@
   spins)
 
 
+(defk burned-until-sampled [taker most-seconds]
+  {:pre [(: taker SampleTaker) (: most-seconds float)] :post [(: % int)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "taker の合図の受け手が 1 度走るまで(多くて most-seconds 秒)主の thread で CPU を使い続けるため(標本が持ち主として名指す見本の関数 —
+   焼く長さを秒で決めると、混んだ machine では標本の thread が焼く間に 1 度も起きない)。"
+  (val first-handled ((. taker handled-cpu)))
+  (val until (+ (time.thread-time) most-seconds))
+  (var spins 0)
+  (while (and (= ((. taker handled-cpu)) first-handled) (< (time.thread-time) until))
+    (:= spins (+ spins 1)))
+  spins)
+
+
 (defk lived-for [seconds]
   {:pre [(: seconds float)] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
   "主の thread を seconds 秒眠らせるため(CPU を使わない間の見本 — 本物の時計の答え手で待つ)。"
@@ -93,15 +105,15 @@
 
 
 (deftest test-the-cpu-samples-name-the-function-that-burns-the-main-thread
-  ;; 標本の thread の合図が、主の thread で CPU を使った関数(この検の burned-for)を持ち主と葉に名指す。窓は焼き終えて thread を止めた後に
-  ;; 検が閉じる(窓の時刻に依らない — 頭の註)。
+  ;; 標本の thread の合図が、主の thread で CPU を使った関数(この検の burned-until-sampled)を持ち主と葉に名指す。受け手が 1 度走るまで焼き、
+  ;; thread を止めた後に検が窓を閉じる(窓の時刻にも焼く秒にも依らない — 頭の註)。
   (<- taker SampleTaker (sample-taker HELD-SAMPLES (threading.get-ident) (threading.get-native-id)))
-  (<- (sampled-while taker (burned-for 0.5)))
+  (<- (sampled-while taker (burned-until-sampled taker 30.0)))
   (val line ((. taker line)))
   (assert (in " 主threadのCPU=" line) line)
   (assert (not-in " 標本=0 " line) line)
-  (assert (in "持ち主: test_cpu_samples:burned_for=" line) line)
-  (assert (in "葉: tests/test_cpu_samples:burned_for=" line) line))
+  (assert (in "持ち主: test_cpu_samples:burned_until_sampled=" line) line)
+  (assert (in "葉: tests/test_cpu_samples:burned_until_sampled=" line) line))
 
 
 (deftest test-the-cpu-samples-count-the-collections-of-the-window
@@ -142,6 +154,10 @@
   (assert (and (callable handler) (!= handler before-handler)) handler)
   (assert (= (len callbacks) (+ (len before-callbacks) 1)) callbacks)
   (assert (= (cut callbacks 0 (len before-callbacks)) before-callbacks) callbacks)
+  ;; with-cpu-samples は標本の thread を 2 秒まで待って戻る。混んだ machine では止まり終えるのがその後になるので、止まるのを待ってから読む。
+  (for [t (threading.enumerate)]
+    (when (= t.name "cpu-samples")
+      (.join t :timeout 60.0)))
   (assert (not-in "cpu-samples" (lfor t (threading.enumerate) t.name)) (threading.enumerate))
   (assert (= (signal.getsignal SAMPLE-SIGNAL) before-handler) (signal.getsignal SAMPLE-SIGNAL))
   (assert (= (list gc.callbacks) before-callbacks) gc.callbacks))
