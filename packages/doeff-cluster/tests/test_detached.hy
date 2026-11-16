@@ -1121,7 +1121,9 @@
   (val stopped (! (over-need-stopped (get placed 0) first-id 2000)))
   (val row (! (row-of-key stopped "job-over")))
   ;; 次の試行の待ちの行へ戻り(id が替わる)、止めは走らせ直しの上限に数え、止められた試行の山を持ち越す。
-  (assert (= #(row.phase row.attempt row.losses row.peak-mib row.worker) #("queued" 2 1 3000 None)) row)
+  ;; 次の試行は同じ heartbeat の置きで置かれうる(連絡のあった worker — heard-since-rerun)。
+  (assert (= #(row.attempt row.losses row.peak-mib) #(2 1 3000)) row)
+  (assert (in row.phase #{"queued" "assigned"}) row)
   (assert (= row.id (.format "{}-r2" first-id)) row)
   (assert (is (.row stopped.tasks first-id) None) "前の試行の行は残さない")
   (assert (in "要りの越えで止めた" row.detail) row.detail)
