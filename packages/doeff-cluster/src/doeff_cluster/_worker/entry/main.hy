@@ -886,7 +886,9 @@
         hold-cell (SuppliedHoldCell)
         ;; 機体の memory の見張りの設定。追い出しの線(CGROUP-HOST-VAR の註)は、Node の宣言を読む口 in-cluster-api-routed を組む Pod の
         ;; worker(pod-labels が在る)だけが数える。
+        ;; /proc/meminfo の無い macOS の機体は数えだけの回(memory_watch の頭の註 — 表は libproc で読み、様子・止め・追い出しの線は無い)。
         watch (MemoryWatchSettings :guard (= args.memory-guard "on")
+                                   :meminfo-path (if (.startswith (current-platform) "darwin-") None "/proc/meminfo")
                                    :eviction (run (eviction-settings-of machine-env args.node (is-not pod-labels None)))
                                    ;; 層ごとの memory.current を log に出す層の名(起動の script が層を作った worker だけ — CGROUP-DIR-VAR)。
                                    :layers (if (.get machine-env CGROUP-DIR-VAR)

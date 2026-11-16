@@ -13,7 +13,10 @@
 ;;; Purpose: when the machine's memory is nearly exhausted, the watcher that counts how much each job's tree uses and stops the largest tree first
 ;;; (the memory_watch of doeff-cluster's worker) asks for the table without reading /proc directly. In mocks it is replaced by a scripted table.
 ;;;
-;;; Responders: os-proc-table-handler (os_proc_table.hy -- real, Linux /proc) and scripted-proc-table-handler (scripted_proc_table.hy -- scripted table).
+;;; On macOS (no /proc) the real responder reads libproc (darwin_proc.hy): start-ticks is the start time in microseconds, cpu-ms is the same
+;;; own-and-waited-children sum, and rss-bytes is the footprint (ri_phys_footprint -- macOS has no PSS; see the header comment of darwin_proc.hy).
+;;;
+;;; Responders: os-proc-table-handler (os_proc_table.hy -- real, Linux /proc or macOS libproc) and scripted-proc-table-handler (scripted_proc_table.hy -- scripted table).
 ;;; The contract with the real one is tests/test_proc_table_contract.hy.
 (require doeff-hy.macros [defeffect defk val])
 (require doeff-hy.record [defrecord])
@@ -33,7 +36,7 @@
 
 (defrecord ProcRow
   "One process of the machine: pid, ppid = the parent's pid, start-ticks = start time (tells apart pid reuse -- on Linux the clock tick of starttime in /proc/<pid>/stat),
-   rss-bytes = bytes of the current resident set, comm = command name (the 2nd field of /proc/<pid>/stat -- inside the parentheses, at most 15 characters),
+   rss-bytes = bytes of the current resident set (on macOS the footprint -- header comment), comm = command name (the 2nd field of /proc/<pid>/stat -- inside the parentheses, at most 15 characters),
    cpu-ms = CPU milliseconds of the process and its already-waited children (utime + stime + cutime + cstime -- see the header comment; 0 in tables that do not
    count it)."
   {:check [(> pid 0) (>= ppid 0) (>= start-ticks 0) (>= rss-bytes 0) (>= cpu-ms 0)]}
