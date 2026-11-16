@@ -224,16 +224,19 @@
   ;; 譲らせた拍の組の上限の判じ(yield-plan の compartment-misfit)は止めた task の升を引かない held と宣言の値で問い直す — 組の升の数えは受けない。
   ;; 3 つとも下の test-the-group-holdings-ignore-the-shape-the-measured-peak-and-ungated が数えの答えで確かめる。queue-limit-seconds(待ちの
   ;; 期限 — 2026-11-12・TaskBody にも同じ名で載る)は待ちの期限を越えた task の取り消し(queue-expired-detached)だけが読み、上の数えの関数は受けない。
+  ;; family(仕事の形の族 — 2026-11-15・TaskBody にも同じ名で載る)は受け口が形 → 族の別の表(ClusterState.shape-families)へ書くだけで、
+  ;; task の行にも申告の表にも載らない。読むのは memory の要りの数え(task_table.family-peaks-of — task_claims.shape-peaks-of から)だけで、
+  ;; その答えは shape と同じく compartment-misfit の need として memory の空きと比べるだけ — 組の上限の数えは受けない。
   (assert (= (tuple (gfor f (fields TaskLimit) f.name)) #("group" "part"))
           "TaskLimit は組の名と区分だけ — 値・範囲・重さを task に名乗らせない(値の持ち主は系の宣言)")
   (assert (= (tuple (gfor f (fields SubmitDetached) f.name))
              #("program" "key" "needs" "name" "lease_seconds" "retain_seconds" "environ" "priority" "limits" "notify" "memory_mib" "rerun" "shape"
-               "ungated" "preemptible" "queue_limit_seconds"))
+               "family" "ungated" "preemptible" "queue_limit_seconds"))
           "SubmitDetached の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   (assert (= (tuple (gfor f (fields TaskBody) f.name))
              #("program" "revision" "name" "needs" "requires" "env" "blob" "versions" "runtime_env" "environ" "lease_seconds"
-               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "shape" "ungated" "preemptible" "queue_limit_seconds" "rerun"
-               "format"))
+               "retain_seconds" "priority" "limits" "notify" "memory_MiB" "shape" "family" "ungated" "preemptible" "queue_limit_seconds"
+               "rerun" "format"))
           "TaskBody(受け口の本文)の欄を足す時は、組の上限の数えに入れない事を確かめてからこの表を直す")
   ;; 置き方の判断の関数は task の行(TaskRecord — 送り手の欄を全部持つ)を受けず、組の名乗り(TaskLimit の tuple)・置いた worker・
   ;; 置いている数・系の宣言の表だけを受ける。task の行を読むのは、置いている task の名乗りを射影する placed-claims と tasks-placed の

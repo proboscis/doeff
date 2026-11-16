@@ -598,6 +598,8 @@
 
 
 ;; 下の検の状態の GET /metrics の本文(#2756 の前の coordinator — 計器の報告を写像で持っていた頃 — で取った物)。
+;; doeff_worker_tasks_claimed_mib は 2026-11-15 に足した gauge(worker ごとの申告の和 — metrics_policy の頭の註。task を置いていない
+;; worker は 0.0。使いの和 doeff_worker_tasks_used_mib は task の使いを測れた worker だけが出すので、この状態には無い)。
 (val METRICS-TEXT
   (.join "" (gfor line #("# TYPE aa_reads_total counter"
                          "aa_reads_total{service=\"w\",worker=\"node-a\"} 2.5"
@@ -629,6 +631,8 @@
                          "doeff_worker_service_standby{service=\"w\"} 0.0"
                          "# TYPE doeff_worker_service_unplaced gauge"
                          "doeff_worker_service_unplaced{service=\"w\"} 0.0"
+                         "# TYPE doeff_worker_tasks_claimed_mib gauge"
+                         "doeff_worker_tasks_claimed_mib{worker=\"node-a\"} 0.0"
                          "# TYPE doeff_worker_worker_heartbeat_age_seconds gauge"
                          "doeff_worker_worker_heartbeat_age_seconds{worker=\"node-a\"} 1.5"
                          "# TYPE queue_depth gauge"
