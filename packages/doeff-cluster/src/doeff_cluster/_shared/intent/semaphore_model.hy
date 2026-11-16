@@ -123,6 +123,11 @@
   (#^ int dropped))
 ;; 1 回の取る・延ばすで与える期限の上限(coordinator が断る)。
 (setv LEASE-MAX-TTL-MS (* 10 60 1000))
+;; 担い手の期限がいちばん遅い物を過ぎてから、lease の行を盤に残す長さ(行の期限 = 担い手の期限の最大 + この長さ — 期限の切れた行は調停が
+;; 掃く・lease_rules.semaphore-row-expiry)。期限を過ぎた担い手の延長は、行が残る間は通る(renew の註)ので、1 回の延長が遅れた持ち主を
+;; 切らない長さとして期限の上限と同じにする。出自 = 2026-11-15 の測り: 担い手が居なくなっても行が消えず、盤の lease の行が 31,574 行
+;; (担い手の在る行は 101)に増え、盤の lease の行の読み 1 回が 0.4〜1.4 秒かかった。
+(setv SEMAPHORE-ROW-GRACE-MS LEASE-MAX-TTL-MS)
 
 
 ;; この process の名前付きの lease の立場を問う(cluster-semaphore が答える)。

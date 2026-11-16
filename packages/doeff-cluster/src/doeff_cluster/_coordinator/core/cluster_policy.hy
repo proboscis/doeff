@@ -35,7 +35,7 @@
 (import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody BoardWrite HeartbeatBody EnvsReport StatusRow TaskBody MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_rules [required-field int-field])
 (import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX])
-(import doeff_cluster._shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key drop-holders lease-holder holder-tokens-prefix live-instances])
+(import doeff_cluster._shared.core.lease_rules [lease-op semaphore-write-refusal semaphore-key semaphore-row-expiry drop-holders lease-holder holder-tokens-prefix live-instances])
 (import doeff_cluster._shared.intent.readiness_model [RETIREMENT-HOLD])
 (import doeff_cluster._shared.core.board_rules [board-allows board-ttl-refusal])
 (import doeff [run])
@@ -712,7 +712,7 @@
 (defk board-without-holders [board prefixes]
   {:pre [(: board (get Table BoardRow)) (: prefixes tuple)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "token が prefixes(担い手の token の頭の列)のどれかで始まる担い手を、盤 board の lease の行から外す書き(TableWrite の列)を求めるため。
-   変わった行は版を 1 進める(POST /leases の書きと同じ)。外す物が無ければ空の列(頭の列が空なら盤を読まない)。"
+   変わった行は版を 1 進め、担い手が残らなければ消す(POST /leases の書きと同じ semaphore-row-written)。外す物が無ければ空の列(頭の列が空なら盤を読まない)。"
   (when (not prefixes)
     (return #()))
   (var freed #())
@@ -721,7 +721,7 @@
       (val value (! (holders-dropped row prefixes)))
       (match value
         None None
-        _ (:= freed (+ freed #((TableWrite key (replace row :value value :version (+ row.version 1) :size (value-size value)))))))))
+        _ (:= freed (+ freed #((! (semaphore-row-written key row value))))))))
   freed)
 
 
@@ -3507,7 +3507,8 @@
 (defk lease-write [state name body now]
   {:pre [(: state ClusterState) (: name str) (: body LeaseBody) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "POST /leases/<名>: lease の操作 1 つを coordinator の時計で当てる(lease_rules.lease-op)。行が変われば盤へ書く
-   (版を 1 進める・盤の書きと同じく永続化してから返事をする)。返り値 #(次の状態 status 答え)。"
+   (semaphore-row-written — 版を 1 進め、担い手が残らなければ行を消す・盤の書きと同じく永続化してから返事をする)。
+   返り値 #(次の状態 status 答え)。"
   ;; 本文の欄の欠け・型の誤りは本文を解く所(coordinator/protocol/request_bodies)が 400 で断る(#1024・#2445)。
   (setv key (semaphore-key name) entry (.row state.board key) current (if (is entry None) None entry.value)
         #(row verdict) (lease-op current body.op body.token body.permits body.ttl-ms now)
@@ -3515,9 +3516,31 @@
         answer verdict)
   (if (or (is row current) (is row None))
       #(state 200 answer)
-      (do (setv version (if (is entry None) 0 entry.version))
-          #((board-written state #((TableWrite key (BoardRow :value row :version (+ version 1) :expires-ms None :size (value-size row)))))
-            200 answer))))
+      #((board-written state #((! (semaphore-row-written key entry row)))) 200 answer)))
+
+
+(defk semaphore-row-written [key entry value]
+  {:pre [(: key str) (: entry (| BoardRow None)) (: value (| dict list str int float bool None))] :post [(: % TableWrite)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "lease の行 key(今の行 entry)を値 value に書く盤の書きを作るため: 版を 1 進め、行の期限を担い手から求め直す
+   (lease_rules.semaphore-row-expiry — 期限の切れた行は sweep-board が掃く)。担い手が 1 つも残らなければ行を消す
+   (担い手の居ない行を盤に残さない — 盤の lease の行の読みが、居なくなった担い手の行の数に比例しない)。"
+  (val expiry (semaphore-row-expiry value))
+  (if (= expiry 0)
+      (TableWrite key None)
+      (TableWrite key (BoardRow :value value :version (+ (if (is entry None) 0 entry.version) 1) :expires-ms expiry :size (value-size value)))))
+
+
+(deff semaphore-rows-dated [#^ ClusterState state]  ; cannot be a defk: coordinator の起き直し(api_policy.resume-after-downtime — Program の外の純粋な判断)が呼ぶ
+  {:pre [(: state ClusterState)] :post [(: % ClusterState)] :tags {:context "coordinator" :role "judgment"}}
+  "期限を持たない lease の行(行の期限を書く前の版が書いた行)に、担い手から求めた行の期限を付けた状態を作るため(担い手の無い行は
+   期限を今より前の 0 にする)。起き直しの時に 1 度当て(api_policy.resume-after-downtime)、次の調停の拍の sweep-board が期限の切れた行を
+   掃いて永続化する — 前の版が残した担い手の居ない行を盤から片付ける。値は変えないので版は進めない。付ける物が無ければ同じ object。"
+  (board-written state (tuple (gfor #(k r) (.items state.board)
+                                    :if (and (.startswith k SEMAPHORE-PREFIX) (is r.expires-ms None))
+                                    :setv expiry (semaphore-row-expiry r.value)
+                                    :if (is-not expiry None)
+                                    (TableWrite k (replace r :expires-ms expiry))))))
 
 
 (defn #^ int value-size [#^ (| dict list str int float bool None) value]
@@ -3593,12 +3616,26 @@
   write.body.value)
 
 
+(deff board-write-expiry [#^ str key #^ object value #^ (| int float None) ttl #^ int now]  ; cannot be a defk: board-write の答えの組の中から呼ぶ純粋な判断
+  {:pre [(: key str) (: value (| dict list str int float bool None)) (: ttl (| int float None)) (: now int)] :post [(: % (| int None))]
+   :tags {:context "coordinator" :role "judgment"}}
+  "盤への直の書き 1 つが付ける行の期限を決めるため。lease の行(旧い版の process の compare-and-set)は担い手から求め
+   (lease_rules.semaphore-row-expiry — POST /leases の書きと同じ規則で、担い手の居なくなった行を残さない)、担い手の無い行は now
+   (次の拍の sweep-board が消す — 答えの版は書いた行の版のまま)。それ以外の行と形の読めない lease の行は ttlSeconds(無ければ期限なし)。"
+  (setv expiry (if (.startswith key SEMAPHORE-PREFIX) (semaphore-row-expiry value) None))
+  (cond
+    (= expiry 0) now
+    (is-not expiry None) expiry
+    (is ttl None) None
+    True (+ now (int (* 1000 ttl)))))
+
+
 (defk board-write [state key write [now 0]]
   {:pre [(: state ClusterState) (: key str) (: write BoardWrite) (: now int)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
   "盤の行 1 つの compare-and-set。expect = 値で比べる(従来)・expectVersion = 行の版で比べる(0 = 行が無い時だけ)。
    両方あれば両方を満たす時だけ書く。value が null で delete が真なら行を消す。返事に行の新しい版を載せる。
    ttlSeconds(2026-09-25)= 行の期限。期限を過ぎた行は調停が消す(sweep-board)。付けない書きは期限を外す(ずっと残す)。
-   上限(board-capacity-refusal)を越える書きは 507 で断る。"
+   lease の行の期限は ttlSeconds でなく担い手から求める(board-write-expiry)。上限(board-capacity-refusal)を越える書きは 507 で断る。"
   (setv body write.body ttl write.body.ttl-seconds)
   (<- ttl-refusal (board-ttl-refusal ttl))
   (when (is-not ttl-refusal None)
@@ -3626,7 +3663,7 @@
           (if (is-not refusal None)
               #(state 507 (BoardRefused :reason refusal :usage (board-usage state)))
               #((board-written state #((TableWrite key (BoardRow :value (written-value write) :version (+ version 1)
-                                                                 :expires-ms (if (is ttl None) None (+ now (int (* 1000 ttl))))
+                                                                 :expires-ms (board-write-expiry key (written-value write) ttl now)
                                                                  :size size))))
                 200 (BoardWritten :version (+ version 1)))))))
 

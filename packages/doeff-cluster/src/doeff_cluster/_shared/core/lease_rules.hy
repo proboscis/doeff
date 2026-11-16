@@ -6,7 +6,7 @@
 (val MODULE-TAGS {:context "doeff-cluster" :role "judgment"})
 (import collections.abc [Mapping])
 (import doeff_cluster._shared.intent.protocol [BodyInvalid])
-(import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS LeaseAnswer])
+(import doeff_cluster._shared.intent.semaphore_model [SEMAPHORE-PREFIX FENCE-MARGIN-MS LEASE-OPS LEASE-MAX-TTL-MS SEMAPHORE-ROW-GRACE-MS LeaseAnswer])
 
 
 (deff lease-holder [#^ str job #^ str instance]  ; cannot be a defk: worker の返し(worker/protocol/lease_release)も呼ぶ純粋な判断
@@ -86,6 +86,21 @@
 
 (defn #^ str semaphore-key [#^ str name]
   (+ SEMAPHORE-PREFIX name))
+
+
+;; value は盤の lease の行の値そのもの(JSON の値 — 形を確かめてから読む)。
+(deff semaphore-row-expiry [#^ object value]  ; cannot be a defk: coordinator の起き直しの内包表記(cluster_policy.semaphore-rows-dated — Program の外)が呼ぶ純粋な判断
+  {:pre [(: value (| dict list str int float bool None))] :post [(: % (| int None))] :tags {:context "doeff-cluster" :role "judgment"}}
+  "純粋: lease の行を盤に残す期限(epoch ms — 担い手の期限のいちばん遅い物 + SEMAPHORE-ROW-GRACE-MS)。担い手が 1 つも無い行は 0
+   (今すぐ消す)。形の読めない値(担い手の写像が無い・期限が整数でない)は None(期限を付けない — 触らない)。
+   coordinator が lease の行を書くたびに行の期限をこれで求め直し、期限の切れた行を調停(sweep-board)が掃く — 担い手が居なくなった行を
+   盤に残さないため(SEMAPHORE-ROW-GRACE-MS の註)。"
+  (when (or (not (isinstance value dict)) (not (isinstance (.get value "holders") dict))) (return None))
+  (setv expiries (.values (get value "holders")))
+  (cond
+    (not expiries) 0
+    (not (all (gfor e expiries (and (isinstance e int) (not (isinstance e bool)))))) None
+    True (+ (max expiries) SEMAPHORE-ROW-GRACE-MS)))
 
 
 ;; 行は盤の読みの答えの値のまま受ける(写像の読みの口 Mapping — 値の型を細かく持つ行も渡せる)。答えの要素 = token → 期限の epoch ms。

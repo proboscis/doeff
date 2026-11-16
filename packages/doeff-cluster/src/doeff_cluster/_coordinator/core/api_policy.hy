@@ -47,7 +47,7 @@
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._coordinator.intent.due_model [StepPace Stall])
 (import doeff_cluster._shared.core.due_policy [earliest-due])
-(import doeff_cluster._coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write board-written note-liveness note-unplaced
+(import doeff_cluster._coordinator.core.cluster_policy [reconcile register-heartbeat heartbeat-reply state-view submit-task poll-task absorb-task-result board-write board-written semaphore-rows-dated note-liveness note-unplaced
                          lease-write other-generation-boot alive remember-keep-marks liveness-due task-due sweep-due])
 (import doeff_cluster._coordinator.core.resource_policy [Refused refuse stamp require-actor valid-actor service-readiness service-stopped record-readiness
                           running-process list-resources get-resource events-view create-resource update-resource delete-resource
@@ -165,9 +165,11 @@
    heartbeat を送った worker へ全 job が移ると、元の担い手と二重に動く — 実測 2026-09-23)。"
   (setv gap (if (> state.alive-ms 0) (max 0 (- now state.alive-ms)) 0))
   ;; 受付が worker から届き得るようになるまで(最初の heartbeat)の長さも沈黙に数えない — 起点の刻を置く(unreached-shifted)。
+  ;; 期限を持たない lease の行(行の期限を書く前の版が書いた行)に、ずらした担い手から行の期限を付ける(cluster_policy.semaphore-rows-dated —
+  ;; 次の拍の sweep-board が担い手の居なくなった行を掃く)。
   (if (= gap 0)
-      #((replace state :alive-ms now :unreached-ms now) 0)
-      #((replace (run (clocks-shifted state now gap)) :unreached-ms now) gap)))
+      #((semaphore-rows-dated (replace state :alive-ms now :unreached-ms now)) 0)
+      #((semaphore-rows-dated (replace (run (clocks-shifted state now gap)) :unreached-ms now)) gap)))
 
 
 ;; --- 起き直しの後、worker から届き得るようになるまで(2026-10-21) ------------------------------------

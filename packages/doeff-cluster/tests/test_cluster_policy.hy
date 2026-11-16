@@ -1052,7 +1052,7 @@
   (assert (= (! (holders-of reborn "other-lock")) (! (holders-of held "other-lock"))))
   (assert (is (.row reborn.board (+ "semaphore/" "other-lock")) (.row held.board (+ "semaphore/" "other-lock"))) "外さない行は同じ object")
   (assert (= reborn.board-tally (board-tally-of reborn.board)) "世代の名乗りの後も集計は全行から求めた値と同じ")
-  (assert (= (. (.row reborn.board "semaphore/writer-lock") version) (+ (. (.row held.board "semaphore/writer-lock") version) 1)) "外した行は版 +1")
+  (assert (is (.row reborn.board "semaphore/writer-lock") None) "担い手の残らない行は消える(担い手の居ない行を盤に残さない)")
   (setv #(_ ok) (! (lease-asked reborn "writer-lock" "claim" (! (token-of "w" "2-bbb")) (+ BOOT-1 5000))))
   (assert ok "新しい世代の process が期限の前に lease を取れる"))
 
