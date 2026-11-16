@@ -11,7 +11,6 @@ from __future__ import annotations
 import base64
 import hashlib
 import importlib.util
-import os
 import shutil
 import subprocess
 import sys
@@ -46,9 +45,16 @@ def _digest(data: bytes) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode("ascii")
 
 
+def _child_env(name: str) -> str | None:
+    """The value of an environment variable as a child of the build sees it (None if unset). build.rs runs as a child of cargo and reads the env it inherits,
+    so the fake build reads it the same way; /usr/bin/env by absolute path, so the tests that empty PATH still read it."""
+    listed = subprocess.run(["/usr/bin/env"], capture_output=True, text=True, check=True).stdout
+    return next((line.split("=", 1)[1] for line in listed.splitlines() if line.startswith(f"{name}=")), None)
+
+
 def fake_build(target: Path, wheel_directory: str, config_settings: object) -> str:
-    """Fake build: like build.rs, embeds the commit it reads from env DOEFF_LINTER_BUILD_COMMIT into the wheel (CLAIM)."""
-    claim = os.environ.get(ENV, "")
+    """Fake build: like build.rs, embeds the commit a child of the build reads from env DOEFF_LINTER_BUILD_COMMIT into the wheel (CLAIM)."""
+    claim = _child_env(ENV) or ""
     files = (
         (CLAIM, claim.encode("utf-8")),
         ("probe_linter-0.1.0.dist-info/METADATA", b"Metadata-Version: 2.1\nName: probe-linter\nVersion: 0.1.0\n"),
@@ -182,7 +188,7 @@ def test_a_caller_given_commit_is_used_as_is_and_keyed(backend: ModuleType, cano
     assert _prepare(backend, checkout) == Prepared(claim="b" * 40, source="built")
     monkeypatch.delenv(ENV)
     assert _prepare(backend, checkout).source == "built"
-    assert ENV not in os.environ
+    assert _child_env(ENV) is None
 
 
 def test_another_repos_git_env_does_not_decide_the_commit(backend: ModuleType, canonical: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
