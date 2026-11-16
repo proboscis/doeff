@@ -22,7 +22,8 @@
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [state])
 (import doeff_core_effects [postgres-sql-handler])
-(import doeff_core_effects [SqlQuery SqlRows])
+(import doeff_core_effects [SqlQuery SqlTransaction SqlRows])
+(import doeff_core_effects._sql_transaction [TransactionFlush run-in-batched-transaction])
 (import doeff_time [SimClock sim-time-handler])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [FieldDecl TableDecl RecordsSchema ExpectAbsent])
@@ -128,13 +129,41 @@
 
 ;; --- scheduler の thread の CPU の秒は頁の行の数に依らない -------------------------------------------------------------------------
 
+(defk scripted-rows [records statement]
+  {:pre [(: records tuple) (: statement str)] :post [(: % SqlRows)] :tags {:context "records" :role "foundation"}}
+  "代役の置き場の文 1 つの答え: 置き場の頭の読み(store_epoch)には版 1・番号 0 を、ほかの読み(一覧の頁)には決まった頁の行 records を
+   返すため。"
+  (SqlRows :rows (if (in "store_epoch" statement) #(#(1 0 0)) records) :rowcount None))
+
+
+(defk scripted-flush [records flush]
+  {:pre [(: records tuple) (: flush TransactionFlush)] :post [(: % tuple)] :tags {:context "records" :role "foundation"}}
+  "往復をまとめる transaction の往復 1 回の代役: 往復の文ごとに scripted-rows と同じ答えを、文の順に返すため(BEGIN・COMMIT は流さない)。"
+  (var answers #())
+  (for [request flush.requests]
+    (<- answer SqlRows (scripted-rows records request.statement))
+    (:= answers (+ answers #(answer))))
+  answers)
+
+
+(defk scripted-rollback []
+  {:pre [] :post [(: % None)] :tags {:context "records" :role "foundation"}}
+  "往復をまとめる transaction の ROLLBACK の代役(流す先が無いので何もしない)。"
+  None)
+
+
 (defhandler scripted-page-sql [#^ tuple records]
-  "置き場の SQL の答えの代役: 置き場の頭の読み(store_epoch)には版 1・番号 0 を、ほかの読み(一覧の頁)には決まった頁の行 records を
-   答えるため(DB の往復を測りに入れず、scheduler の thread の CPU の秒だけを測る)。"
+  "置き場の SQL の答えの代役: 文 1 つ(SqlQuery)にも、往復をまとめる読みだけの transaction(SqlTransaction の batched — 最初の一覧の頁の
+   読みが頭と行を 1 往復にまとめる形)の中の文にも、scripted-rows の答えを返すため(DB の往復を測りに入れず、scheduler の thread の
+   CPU の秒だけを測る)。transaction の手順は本番の答え手と同じ run-in-batched-transaction で、往復だけを代役が答える。"
   {:tags {:context "records" :role "foundation"}}
   ;; 引数に残す理由: records は検ごとの頁の行(大きな頁と小さな頁を同じ答え手で比べる — Ask で読む設定ではない)。
   (SqlQuery [database statement params]
-    (resume (SqlRows :rows (if (in "store_epoch" statement) #(#(1 0 0)) records) :rowcount None))))
+    (<- answer SqlRows (scripted-rows records statement))
+    (resume answer))
+  (SqlTransaction [database program lock-key batched locks] :when batched
+    (<- answer (run-in-batched-transaction database program (fn [flush] (scripted-flush records flush)) (fn [] (scripted-rollback))))
+    (resume answer)))
 
 
 (defk page-records [count]
