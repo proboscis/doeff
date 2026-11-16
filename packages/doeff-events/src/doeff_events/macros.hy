@@ -222,7 +222,15 @@
                [pattern `(do (~bind ~out (~program ~@(_el-body body loop-stop)))
                              ~@out-check)]))
   (setv next-state (if state-name [`(setv ~state-name ~out)] []))
-  (setv start-state (if state-name [`(~bind ~state-name ~@state-check (~program ~state-init))] []))
+  ;; The state name itself is declared with the state type: the type-check expansion of a typed `(<- x T e)` puts T on a
+  ;; temporary and leaves x without a declared type, and then `state = out` / `out = (clause reading state)` in the loop
+  ;; is a cycle pyright reads as Unknown. The declaration breaks the cycle (the loop reads the state as the state type).
+  (setv start-state (cond
+                      (not state-name) []
+                      state-type (let [held (hy.gensym "el-start")]
+                                   [`(~bind ~held ~state-type (~program ~state-init))
+                                    `(setv (annotate ~state-name ~state-type) ~held)])
+                      True [`(~bind ~state-name (~program ~state-init))]))
   `(do
      (import doeff_events._event_loop [begin_watch :as ~begin next_event :as ~next-of end_watch :as ~end
                                       LoopStop :as ~loop-stop stopped_value :as ~value-of]
