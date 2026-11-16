@@ -53,13 +53,14 @@ import ast
 import fnmatch
 import json
 import os
+import queue
 import signal
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from enum import Enum
 from itertools import groupby
 from pathlib import Path
@@ -983,11 +984,11 @@ class ChildClock:
     promises "waiting is not counted against the 60 seconds of changed-scope verification". From start to configure (uv, python,
     conftest import) and from session start onward are counted as before (so a child that stays stuck is also cut by the budget).
 
-    WARNING: An uncounted span is also a span the entry point does not cut by time (_ChildProgress.wait_within waits only for the child's end or a beat while paused).
+    WARNING: An uncounted span is also a span the entry point does not cut by time (supervise waits only for the child's next signal without a limit while paused).
     So uncounted spans are limited to those whose budget is held by another owner — the slot wait in the configure phase (its upper limit is held at one point by the slot's source of truth, and when exceeded
     pytest ends declaring it did not run). If collection or the test body is added to an uncounted span, nobody cuts a stuck child and the entry point
     never ends (blind review A of the design verification — guarded by test_a_collection_over_the_budget_is_cut_not_excluded).
-    When adding a span, first decide who owns that span's budget, and change paused and wait_within together."""
+    When adding a span, first decide who owns that span's budget, and change paused and supervise together."""
 
     spawned: float
     configuring: float | None
@@ -1024,84 +1025,174 @@ class ChildClock:
 
 
 @dataclass(frozen=True)
-class Drained:
-    """The outcome of a child whose pipe was fully read — all outcome lines, and the clock with the beats recorded."""
+class Received:
+    """One outcome line of the child, and the entry point's monotonic second it arrived (the beat time of ChildClock)."""
 
-    events: tuple[Event, ...]
+    line: str
+    at: float
+
+
+@dataclass(frozen=True)
+class Exited:
+    """The child process ended with returncode."""
+
+    returncode: int
+
+
+@dataclass(frozen=True)
+class PipeClosed:
+    """Every writer closed the outcome pipe — all outcome lines are in."""
+
+
+ChildSignal = Received | Exited | PipeClosed
+
+
+class Child(Protocol):
+    """One started pytest child, seen from the budget control (`supervise`) — the only source of its input (outcome lines, end, pipe end) and of time.
+    The entry point gives the real process (`_PipedChild`); a test gives a child on a virtual clock, so the budget control and ChildClock are verified
+    without depending on how fast the machine starts uv and pytest."""
+
+    @property
+    def spawned(self) -> float:
+        """The second the child was started (the start of ChildClock)."""
+        ...
+
+    def now(self) -> float:
+        """The current second, on the same clock as spawned and Received.at."""
+        ...
+
+    def next_signal(self, timeout: float | None) -> ChildSignal | None:
+        """Wait for the next signal of the child — None when timeout seconds passed without one (timeout None = wait without a limit)."""
+        ...
+
+    def stop(self) -> None:
+        """Stop the child (and its process group) that exceeded the budget, and return after it ended."""
+        ...
+
+
+#: Starts one pytest child for the tests of one bundle.
+StartChild = Callable[[tuple[Target, ...]], Child]
+
+
+@dataclass(frozen=True)
+class _Progress:
+    """What the budget control has received from one child so far (outcome lines, beats, end, pipe end, the first unreadable line)."""
+
     clock: ChildClock
+    events: tuple[Event, ...]
+    returncode: int | None
+    exited: bool
+    drained: bool
+    unreadable: StopError | None
+
+    def receive(self, signal: ChildSignal) -> _Progress:
+        """Take in one signal of the child; an outcome line that is a beat is recorded in the clock at the second it arrived.
+        The first unreadable line is remembered and reading goes on (if reading stops, the writing child blocks on the full pipe)."""
+        match signal:
+            case Received(line=line, at=at):
+                try:
+                    event = _parse_event(line)
+                except StopError as exc:
+                    return replace(self, unreadable=self.unreadable or exc)
+                return replace(self, clock=self.clock.mark(event, at), events=(*self.events, event))
+            case Exited(returncode=returncode):
+                return replace(self, exited=True, returncode=returncode)
+            case PipeClosed():
+                return replace(self, drained=True)
 
 
-class _ChildProgress:
-    """Progress of one pytest process — written by two threads, the pipe reader (outcome lines and beats) and the process waiter (the end), while
-    the entry point's thread waits counting the seconds that count against the budget (the beat time is the monotonic of the entry-point side that received the line)."""
+def supervise(child: Child, budget: float) -> PytestRun:
+    """Wait until the child ends, cutting it off when the seconds counted against the budget reach budget, then read the pipe to its end and return the run.
+    The configure phase is not counted, so it is waited without a time limit (the slot wait is bounded by the slot's source-of-truth limit; when exceeded pytest ends declaring it did not run).
+    WARNING: Do not place the entry point's own limit in this span — doing so moves the decision to give up waiting from the slot's source of truth (the wait-limit .json and the declaration of not having run)
+    to the entry point, and the smaller of two limits takes effect (blind review B of the design verification). To change the wait limit,
+    change the source-of-truth value."""
+    progress = _Progress(
+        clock=ChildClock(spawned=child.spawned, configuring=None, started=None),
+        events=(),
+        returncode=None,
+        exited=False,
+        drained=False,
+        unreadable=None,
+    )
+    timed_out = False
+    while not progress.exited:
+        left = None if progress.clock.paused else budget - progress.clock.counted(child.now())
+        if left is not None and left <= 0:
+            timed_out = True
+            child.stop()
+            break
+        signal = child.next_signal(left)
+        if signal is not None:
+            progress = progress.receive(signal)
+    ended = child.now()
+    deadline = ended + KILL_GRACE_SECONDS
+    while not progress.drained:
+        signal = child.next_signal(max(deadline - child.now(), 0.0))
+        if signal is None:
+            raise StopError(
+                "a process still holds the outcome pipe after pytest ended (a child the test let escape the group)"
+            )
+        progress = progress.receive(signal)
+    if progress.unreadable is not None:
+        raise progress.unreadable
+    returncode = None if timed_out else progress.returncode
+    events = progress.events
+    if not timed_out and (returncode in PYTEST_TOOL_FAILURES or not events):
+        raise StopError(
+            f"pytest stopped with rc {returncode}{' without returning' if not events else ' after returning'} test outcomes"
+            " (a uv, conftest or command-line error) — read the output above"
+        )
+    return PytestRun(
+        events=events,
+        returncode=returncode,
+        timed_out=timed_out,
+        seconds=progress.clock.counted(ended),
+        waited=progress.clock.waited(ended),
+    )
 
-    def __init__(self, clock: ChildClock) -> None:
-        self._changed = threading.Condition()
-        self._mut_clock = clock
-        self._mut_events: tuple[Event, ...] = ()
-        self._mut_unreadable: StopError | None = None
-        self._mut_exited = False
-        self._mut_drained = False
 
-    def read(self, fd: int) -> None:
-        """Body of the reader thread: read line by line until all writers close the pipe's read end (all outcome lines the plugin writes).
-        Remember the first unreadable line and keep reading (if reading stops, the writing child blocks on the full pipe)."""
+class _PipedChild:
+    """A real pytest process — two threads, the pipe reader (outcome lines, then the pipe end) and the process waiter (the end), put its signals in one
+    queue that the budget control reads (the beat time is the monotonic of the entry-point side that received the line)."""
+
+    def __init__(self, command: list[str], repo: Path, env: dict[str, str], read_fd: int, write_fd: int) -> None:
+        self._signals: queue.SimpleQueue[ChildSignal] = queue.SimpleQueue()
+        self._spawned = time.monotonic()
+        threading.Thread(target=self._read, args=(read_fd,), daemon=True).start()
+        self._proc = subprocess.Popen(
+            command, cwd=repo, env=env, start_new_session=True, pass_fds=(write_fd,)
+        )
+        os.close(write_fd)
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    @property
+    def spawned(self) -> float:
+        return self._spawned
+
+    def now(self) -> float:
+        return time.monotonic()
+
+    def next_signal(self, timeout: float | None) -> ChildSignal | None:
+        try:
+            return self._signals.get(timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def stop(self) -> None:
+        _stop_group(self._proc)
+
+    def _read(self, fd: int) -> None:
+        """Body of the reader thread: read line by line until all writers close the pipe's read end (all outcome lines the plugin writes)."""
         with os.fdopen(fd, "r", encoding="utf-8") as fh:
             for line in fh:
                 if line.strip():
-                    self._receive(line, time.monotonic())
-        with self._changed:
-            self._mut_drained = True
-            self._changed.notify_all()
+                    self._signals.put(Received(line=line, at=time.monotonic()))
+        self._signals.put(PipeClosed())
 
-    def _receive(self, line: str, at: float) -> None:
-        """Receive one outcome line; if it is a beat, record it in the clock and wake the waiter."""
-        try:
-            event = _parse_event(line)
-        except StopError as exc:
-            with self._changed:
-                self._mut_unreadable = self._mut_unreadable or exc
-            return
-        with self._changed:
-            self._mut_events = (*self._mut_events, event)
-            self._mut_clock = self._mut_clock.mark(event, at)
-            self._changed.notify_all()
-
-    def watch(self, proc: subprocess.Popen[bytes]) -> None:
-        """Body of the waiter thread: wait for the process to end and wake the entry point's thread."""
-        proc.wait()
-        with self._changed:
-            self._mut_exited = True
-            self._changed.notify_all()
-
-    def wait_within(self, budget: float) -> bool:
-        """Wait until the process ends — return False when the seconds counted against the budget reach budget (the caller cuts it off). The configure phase is not counted,
-        so wait without a time limit (the slot wait is bounded by the slot's source-of-truth limit; when exceeded pytest ends declaring it did not run).
-        WARNING: Do not place the entry point's own limit in this span — doing so moves the decision to give up waiting from the slot's source of truth (the wait-limit .json and the declaration of not having run)
-        to the entry point, and the smaller of two limits takes effect (blind review B of the design verification). To change the wait limit,
-        change the source-of-truth value."""
-        with self._changed:
-            while not self._mut_exited:
-                if self._mut_clock.paused:
-                    self._changed.wait()
-                    continue
-                left = budget - self._mut_clock.counted(time.monotonic())
-                if left <= 0:
-                    return False
-                self._changed.wait(left)
-            return True
-
-    def drain(self, grace: float) -> Drained:
-        """After the process ends, wait up to grace seconds for the pipe to be fully read and return the outcomes — stop if it is not fully read (a child the test
-        let escape the group holds the write end) or if an unreadable line existed."""
-        with self._changed:
-            if not self._changed.wait_for(lambda: self._mut_drained, timeout=grace):
-                raise StopError(
-                    "a process still holds the outcome pipe after pytest ended (a child the test let escape the group)"
-                )
-            if self._mut_unreadable is not None:
-                raise self._mut_unreadable
-            return Drained(events=self._mut_events, clock=self._mut_clock)
+    def _watch(self) -> None:
+        """Body of the waiter thread: wait for the process to end."""
+        self._signals.put(Exited(returncode=self._proc.wait()))
 
 
 def _stop_group(proc: subprocess.Popen[bytes]) -> None:
@@ -1182,13 +1273,10 @@ def project_environment(repo: Path, environment: RunEnvironment) -> Path:
             return repo / DEFAULT_PROJECT_ENVIRONMENT
 
 
-def run_pytest(
-    repo: Path, targets: tuple[Target, ...], budget: float, environment: RunEnvironment
-) -> PytestRun:
-    """Run one pytest with a budget in the working tree's uv environment and receive the outcomes the plugin wrote to the pipe (nothing is left in a file).
-    The budget is counted excluding the configure phase (waiting for the machine's test slot) — ChildClock. The pipe's write-end number is passed on the child's command line."""
+def start_pytest(repo: Path, targets: tuple[Target, ...], environment: RunEnvironment) -> Child:
+    """Start one pytest in the working tree's uv environment; the plugin writes the outcomes to a pipe (nothing is left in a file).
+    The pipe's write-end number is passed on the child's command line."""
     read_fd, write_fd = os.pipe()
-    env = {entry.name: entry.value for entry in environment.child}
     command = [
         "uv",
         "run",
@@ -1205,40 +1293,12 @@ def run_pytest(
         "--continue-on-collection-errors",
         *(t.arg for t in targets),
     ]
-    progress = _ChildProgress(ChildClock(spawned=time.monotonic(), configuring=None, started=None))
-    threading.Thread(target=progress.read, args=(read_fd,), daemon=True).start()
-    proc = subprocess.Popen(
-        command, cwd=repo, env=env, start_new_session=True, pass_fds=(write_fd,)
-    )
-    os.close(write_fd)
-    threading.Thread(target=progress.watch, args=(proc,), daemon=True).start()
-    timed_out = not progress.wait_within(budget)
-    if timed_out:
-        _stop_group(proc)
-    ended = time.monotonic()
-    returncode = None if timed_out else proc.returncode
-    drained = progress.drain(KILL_GRACE_SECONDS)
-    events = drained.events
-    if not timed_out and (returncode in PYTEST_TOOL_FAILURES or not events):
-        raise StopError(
-            f"pytest stopped with rc {returncode}{' without returning' if not events else ' after returning'} test outcomes"
-            " (a uv, conftest or command-line error) — read the output above"
-        )
-    return PytestRun(
-        events=events,
-        returncode=returncode,
-        timed_out=timed_out,
-        seconds=drained.clock.counted(ended),
-        waited=drained.clock.waited(ended),
-    )
+    env = {entry.name: entry.value for entry in environment.child}
+    return _PipedChild(command, repo, env, read_fd, write_fd)
 
 
 def _run_batch(
-    repo: Path,
-    index: int,
-    batches: tuple[Batch, ...],
-    remaining: float,
-    environment: RunEnvironment,
+    index: int, batches: tuple[Batch, ...], remaining: float, start: StartChild
 ) -> BatchOutcome:
     """Run one bundle in one pytest process with the remainder of the total budget as its limit — do not start it if nothing remains
     (so that bundles behind what the previous bundles used up are named "unmeasured")."""
@@ -1250,18 +1310,18 @@ def _run_batch(
         f" ({len(batch.targets)} test(s), {remaining:.1f}s left) ==",
         flush=True,  # print before pytest's output
     )
-    return BatchOutcome(batch=batch, run=run_pytest(repo, batch.targets, remaining, environment))
+    return BatchOutcome(batch=batch, run=supervise(start(batch.targets), remaining))
 
 
 def run_batches(
-    repo: Path, batches: tuple[Batch, ...], budget: float, environment: RunEnvironment
+    batches: tuple[Batch, ...], budget: float, start: StartChild
 ) -> tuple[BatchOutcome, ...]:
     """Run bundles one at a time in order, sharing the total budget among them — the contract-set bundle always runs first.
     Each bundle receives the remainder after subtracting the seconds the previous bundles counted against the budget (excluding the configure phase = waiting for the machine's test slot — ChildClock)."""
     outcomes: tuple[BatchOutcome, ...] = ()
     for index in range(len(batches)):
         remaining = budget - _counted_seconds(outcomes)
-        outcomes = (*outcomes, _run_batch(repo, index, batches, remaining, environment))
+        outcomes = (*outcomes, _run_batch(index, batches, remaining, start))
     return outcomes
 
 
@@ -1430,19 +1490,33 @@ def _run_entry(args: argparse.Namespace, run_environment: RunEnvironment) -> Fin
         unready = tuple(TargetResult(t, Verdict.UNMEASURED, reason) for t in targets)
         _print_summary(unready, 0.0, args.budget, reverse)
         return Finished(rc=0, results=unready)
-    batches = batches_of(selection, roots)
+    return run_selected(
+        batches_of(selection, roots),
+        args.budget,
+        lambda tests: start_pytest(repo, tests, run_environment),
+        reverse,
+    )
+
+
+def run_selected(
+    batches: tuple[Batch, ...], budget: float, start: StartChild, reverse: AffectedAnswer
+) -> Finished:
+    """Run the bundles sharing the budget, print the summary split into three, and return the outcome (rc and per-test results)."""
     try:
-        outcomes = run_batches(repo, batches, args.budget, run_environment)
+        outcomes = run_batches(batches, budget, start)
     except StopError as exc:
         print(f"Changed tests: stopping — {exc}", file=sys.stderr)
         stopped = f"the entry point stopped — {exc}"
         return Finished(
-            rc=2, results=tuple(TargetResult(t, Verdict.UNMEASURED, stopped) for t in targets)
+            rc=2,
+            results=tuple(
+                TargetResult(t, Verdict.UNMEASURED, stopped) for b in batches for t in b.targets
+            ),
         )
     results = tuple(
-        classify(t, outcome.run, args.budget) for outcome in outcomes for t in outcome.batch.targets
+        classify(t, outcome.run, budget) for outcome in outcomes for t in outcome.batch.targets
     )
-    _print_summary(results, _counted_seconds(outcomes), args.budget, reverse)
+    _print_summary(results, _counted_seconds(outcomes), budget, reverse)
     print(
         f"pytest processes: {sum(1 for o in outcomes if isinstance(o.run, PytestRun))}/{len(outcomes)} ran"
         f" (sessions: {', '.join(o.batch.session for o in outcomes)})"
