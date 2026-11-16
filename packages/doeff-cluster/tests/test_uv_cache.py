@@ -924,7 +924,7 @@ def test_keep_after_a_recent_gc_sleeps_only_until_the_gc_is_due(tmp_path: Path) 
 
     def run(*_: object) -> dict[str, object]:
         nonlocal runs
-        runs = (*runs, clock.slept)
+        runs = (*runs, clock.mut_slept)
         return answers[len(runs) - 1]
 
     result = uv_cache.keep(cache, settings, run=run, sleep=clock, emit=lambda _: None)
