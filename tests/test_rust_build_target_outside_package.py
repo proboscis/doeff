@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import ast
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
+import warnings
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import BinaryIO
 
 import pytest
 import tomllib
@@ -131,14 +134,28 @@ def _build(package: Path, wheel_dir: Path, env: list[str], hook: str = "build_wh
     return _finish_build(_start_build(package, wheel_dir, env, hook), wheel_dir)
 
 
+# Extract the probe of a wheel (argv[1]) under a dir (argv[2]), make it executable, and print its path. Run in a process of its own.
+_EXTRACT_PROBE = (
+    "import pathlib, sys, zipfile; archive = zipfile.ZipFile(sys.argv[1]); "
+    "(member,) = [name for name in archive.namelist() if name.endswith('/scripts/probe')]; "
+    "binary = pathlib.Path(archive.extract(member, sys.argv[2])); binary.chmod(0o755); print(binary)"
+)
+
+
 def _greeting(wheel: Path, scratch: Path) -> str:
-    """Extract the probe binary contained in the wheel and run it to read which working tree's contents it was built from."""
-    with zipfile.ZipFile(wheel) as archive:
-        (member,) = [name for name in archive.namelist() if name.endswith("/scripts/probe")]
-        archive.extract(member, scratch)
-    binary = scratch / member
-    binary.chmod(0o755)
-    return subprocess.run([str(binary)], capture_output=True, text=True, check=True).stdout.strip()
+    """Extract the probe binary contained in the wheel and run it to read which working tree's contents it was built from.
+
+    The binary is written by a single-threaded process of its own, which has exited before the binary runs. Written here, a child
+    that another thread of this process forks during the write would keep the write descriptor until it execs or exits, and the run
+    would fail with ETXTBSY (test_a_child_forked_while_the_probe_is_written_does_not_keep_it_from_running)."""
+    extracted = subprocess.run(
+        [sys.executable, "-I", "-B", "-c", _EXTRACT_PROBE, str(wheel), str(scratch)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    binary = extracted.stdout.strip()
+    return subprocess.run([binary], capture_output=True, text=True, check=True).stdout.strip()
 
 
 def _leftovers(temp_root: Path) -> list[str]:
@@ -214,6 +231,43 @@ def test_two_builds_at_once_each_get_their_own_wheel(tmp_path: Path) -> None:
         "from-B",
     ]
     assert _leftovers(temp_root) == []
+
+
+def test_a_child_forked_while_the_probe_is_written_does_not_keep_it_from_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Failure case (daily 2026-11-14, free-threaded CPython): a child forked from the test process while that process has the extracted
+    probe open for writing keeps the write descriptor until it execs or exits, and running the probe then fails with ETXTBSY
+    (Text file busy). Here the fork is placed at that moment on purpose and the child holds on until _greeting has returned."""
+    wheel = tmp_path / "probe.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("probe-0.1.0.data/scripts/probe", "#!/bin/sh\necho from-probe\n")
+    release_read, release_write = os.pipe()
+    forked: dict[str, int] = {}
+    copy = shutil.copyfileobj
+
+    def copy_with_a_fork(source: BinaryIO, target: BinaryIO, *args: int) -> None:
+        with warnings.catch_warnings():
+            # The child only reads a pipe and exits, so fork's warning about a multi-threaded parent does not apply.
+            warnings.simplefilter("ignore", DeprecationWarning)
+            pid = os.fork()
+        if pid == 0:
+            os.close(release_write)
+            os.read(release_read, 1)
+            os._exit(0)
+        forked["holder"] = pid
+        return copy(source, target, *args)
+
+    monkeypatch.setattr(shutil, "copyfileobj", copy_with_a_fork)
+    try:
+        greeting = _greeting(wheel, tmp_path / "x")
+    finally:
+        os.close(release_write)
+        for pid in forked.values():
+            os.waitpid(pid, 0)
+        os.close(release_read)
+
+    assert greeting == "from-probe"
 
 
 def test_a_given_target_dir_is_used_and_kept(tmp_path: Path) -> None:
