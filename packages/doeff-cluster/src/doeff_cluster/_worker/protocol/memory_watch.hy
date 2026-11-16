@@ -48,6 +48,10 @@
 ;;; PSS の読みは process 1 本に数 ms かかる(11-10 の測り — 機体の 421 本で 2.8 秒・stat の 40 倍)ので回ごとには読まず、木が
 ;;; pss-process-limit 本を越える job(shim に引き取られた孤児の群れ)は読まない(None)。読みの答えは入れ物 eviction に置き、heartbeat の
 ;;; 測りが名乗る — coordinator の GET /state の worker の行から、測りの task を置かずにどの worker の job も読める。
+;;; 数えだけの回(/proc/meminfo の無い機体 — macOS): 設定の meminfo-path が None の worker は、機体の memory・container・追い出しの線を
+;;; 読まず、様子を判じず、何も止めない(止めと追い出しの線は /proc の在る機体だけ)。回ごとに job の根と process の表だけを読み、task の
+;;; 今の使い・task ごとの山・常駐の job ごとの CPU と memory を同じ入れ物に置く(heartbeat の測りが名乗る)。macOS の表(doeff_core_effects の
+;;; darwin_proc)の rss の欄は footprint(ri_phys_footprint)で、PSS は無い — smaps_rollup が読めず、jobUses の pssMiB は名乗らない。
 ;;; 要りの越えの止め(OVER-NEED-KILL-LOG): 上に載る系が残す線(worker/core/eviction_rules の頭の註)を機体の MemAvailable が割った回は、
 ;;; 様子に依らず、名乗った要りを越えて伸びた task だけを越えの大きい順に、割った量に届くまで止める(over-need-stopped)。jobs の層の
 ;;; memory.max はこの線では絞らないので、要りの内で走る task・要りを名乗らずに置かれた task・実行環境の準備は、線を割っても止まらない。
@@ -84,7 +88,8 @@
 
 
 (defrecord MemoryWatchSettings
-  "見張りの設定(頭の註): meminfo-path・pressure-path・cgroup-dir = 読む file の置き場・sample-seconds = 読みの間隔・window-seconds = job ごとの
+  "見張りの設定(頭の註): meminfo-path・pressure-path・cgroup-dir = 読む file の置き場(meminfo-path が None = /proc/meminfo の無い機体 —
+   頭の註の数えだけの回)・sample-seconds = 読みの間隔・window-seconds = job ごとの
    最大の行の間隔・kill-cooldown-seconds = 止めた後に次を止めない秒・guard = 止めるか(偽は log だけ)・limits = 様子の閾・report-floor-bytes =
    最大の行に載せる job の最低・report-jobs = 最大の行に載せる job の数の上限・kill-mark-seconds = 止めた印を残す秒(調整ループが止めた
    process の終わりを回収するまでの間を十分に覆う)・steady-windows = 平常の大きさに数える最大の行の間の数(頭の註 — 既定 12 は 1 時間)・
@@ -93,7 +98,7 @@
    間隔(頭の註)・pss-process-limit = PSS を読む木の process の数の上限(越えた job の PSS は読まない)・proc-dir = PSS を読む /proc の置き場。"
   {:check [(> sample-seconds 0) (>= window-seconds sample-seconds) (>= kill-cooldown-seconds 0) (>= report-floor-bytes 0) (> report-jobs 0)
            (> kill-mark-seconds 0) (> steady-windows 0) (> pss-seconds 0) (> pss-process-limit 0)]}
-  (setv #^ str meminfo-path "/proc/meminfo")
+  (setv #^ (| str None) meminfo-path "/proc/meminfo")
   (setv #^ str pressure-path "/proc/pressure/memory")
   (setv #^ str cgroup-dir "/sys/fs/cgroup")
   (setv #^ float sample-seconds 5.0)
@@ -502,12 +507,31 @@
   None)
 
 
+(defk meters-counted [settings cell now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: now-ms int)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "数えだけの回(頭の註 — /proc/meminfo の無い機体): job の根と process の表を読み、task の今の使い・task ごとの山・常駐の job ごとの CPU と
+   memory を入れ物 eviction に置くため(様子・止め・最大の行は無い)。"
+  (<- observed tuple (ObserveJobRoots))
+  (<- roots tuple (declared-roots observed cell.eviction.declared))
+  (<- rows tuple (ReadProcTable))
+  (<- walks tuple (_job-walks rows roots))
+  (<- uses tuple (_uses-of walks))
+  (setv cell.eviction.uses uses cell.eviction.uses-at-ms now-ms)
+  (<- (noted-peaks cell uses roots now-ms))
+  (<- (noted-meters settings cell walks now-ms))
+  None)
+
+
 (defk memory-watch-step [settings cell]
   {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
   "見張りの 1 回: 読み、job ごとの最大を更新し、様子が変わったら言い、DANGER なら止め、最大の行の間の印を更新するため。"
   (<- now-ms int (now-epoch-ms))
   ;; kill-mark-seconds を過ぎた止めた印を除く(調整ループは止めた process の終わりを秒の桁で回収するので、残す間はそれを十分に覆う)。
   (setv cell.kills (tuple (gfor k cell.kills :if (< (- now-ms k.at-ms) (* settings.kill-mark-seconds 1000)) k)))
+  ;; /proc/meminfo の無い機体は数えだけの回(頭の註 — 線も様子も止めも無い)。
+  (when (is settings.meminfo-path None)
+    (<- (meters-counted settings cell now-ms))
+    (return None))
   ;; 追い出しの線を数え、jobs の層の上限を掛け直す(process の表の読みより先 — 表が大きい回も掛け直しを遅らせない)。
   (<- line (| EvictionLine None) (eviction-noted settings.eviction cell.eviction settings.guard now-ms))
   (<- read (| MemoryReading MemoryUnreadable) (memory-reading settings))

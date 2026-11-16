@@ -262,6 +262,23 @@
   (assert (= (len table) 10) table))
 
 
+(deftest test-a-watch-without-meminfo-counts-the-jobs-and-kills-nothing
+  ;; /proc/meminfo の無い機体(macOS — 設定の meminfo-path が None)は数えだけの回: 機体の file が 1 つも無くても読めない訳を言わず、様子を
+  ;; 判じず何も止めず、task の今の使いと常駐の job ごとの CPU と memory を入れ物に置く(heartbeat の taskMemoryMiB と jobUses)。rssMiB に
+  ;; 当たる値は表の rss の欄の木の和(macOS の表では footprint — doeff_core_effects の darwin_proc)で、PSS は smaps_rollup が無いので None。
+  (val cell (MemoryCell))
+  (<- seen WatchSeen (watched-in (MemoryWatchSettings :meminfo-path None) (MemoryFiles) None 16000 cell))
+  (assert (= seen.lines #()) seen.lines)
+  (assert (= (len seen.table) 10) seen.table)
+  (assert (= (tuple (gfor u cell.eviction.uses #(u.job (// u.bytes MIB)))) #(#("svc" 2835) #("task/1" 710))) cell.eviction.uses)
+  (assert (is-not cell.eviction.uses-at-ms None) cell.eviction.uses-at-ms)
+  (val meters cell.eviction.meters)
+  (assert (= (tuple (gfor m meters #(m.job m.pid (// m.rss-bytes MIB) m.processes m.pss-bytes))) #(#("svc" 10 2835 7 None))) meters)
+  (assert (is-not cell.eviction.meters-at-ms None) cell.eviction.meters-at-ms)
+  ;; 追い出しの線も数えない(線は /proc の在る機体だけ)。
+  (assert (is cell.eviction.line None) cell.eviction.line))
+
+
 (deftest test-a-tool-deep-in-a-single-child-chain-is-its-own-unit
   ;; 子が 1 つだけの鎖(shim 30 → uv 31 → 本体 32 → 子 33 → 道具 34)では、食った道具 34 まで下り、34 だけを止める(本体と子を道連れに
   ;; しない)。根の shim は単位に入らない。

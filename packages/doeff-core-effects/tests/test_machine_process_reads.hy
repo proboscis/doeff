@@ -19,7 +19,9 @@
         doeff_core_effects._process_exit [exit-fd-opener-for])
 (import doeff_core_effects._pidfd_exit [pidfd-of])
 (import doeff_core_effects._kqueue_exit [kqueue-fd-of])
-(import doeff_core_effects._darwin_proc [bsd-info-stat task-info-threads BSD-INFO-SIZE TASK-INFO-SIZE])
+(import doeff_core_effects._darwin_proc [bsd-info-stat task-info-threads bsd-rusage-row darwin-proc-table BSD-INFO-SIZE TASK-INFO-SIZE
+                                         RUSAGE-V4-SIZE])
+(import doeff_core_effects._proc_table_effects [ProcRow])
 (import doeff_core_effects._os_warm_process [same-child-running])
 (import doeff_core_effects._os_warm_process :as os-warm-process-module)
 (import doeff_core_effects._process_stat [ProcStat])
@@ -115,3 +117,68 @@
   ;; Read pti_threadnum (the 10th int32) as the number of threads.
   (val raw (struct.pack TASK-INFO-LAYOUT 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 3 1 31))
   (assert (= (run (task-info-threads raw)) 3)))
+
+
+;; The layout of struct rusage_info_v4 in <sys/resource.h> (296 bytes): uint8 ri_uuid[16], then uint64 x 35 -- user_time system_time pkg_idle_wkups
+;; interrupt_wkups pageins wired_size resident_size phys_footprint proc_start_abstime proc_exit_abstime child_user_time child_system_time ... (the rest
+;; is not read).
+(val RUSAGE-V4-LAYOUT "=16s35Q")
+(val MIB (* 1024 1024))
+
+
+(defn #^ bytes bsd-info-of [#^ int pid #^ int ppid #^ int status #^ bytes comm]
+  "To build the bytes of a proc_bsdinfo with pid, ppid, status and comm (the start time is 1760000000 s + 5 us; other fields are 0)."
+  (struct.pack BSD-INFO-LAYOUT 0 status 0 pid ppid 501 20 501 20 501 20 0 comm comm 0 pid 0 0 0 0 1760000000 5))
+
+
+(defn #^ bytes rusage-of [#^ int user #^ int system #^ int resident #^ int footprint #^ int child-user #^ int child-system]
+  "To build the bytes of a rusage_info_v4 with the CPU times (mach absolute time units), the resident size and the footprint (others 0)."
+  (struct.pack RUSAGE-V4-LAYOUT (bytes 16) user system 0 0 0 0 resident footprint 0 0 child-user child-system #* (* [0] 23)))
+
+
+(deftest test-the-rusage-layout-is-the-size-proc-pid-rusage-writes
+  ;; The layout of the bytes the row reader reads is rusage_info_v4's 296 bytes (a shifted layout would read another field as the footprint).
+  (assert (= (struct.calcsize RUSAGE-V4-LAYOUT) RUSAGE-V4-SIZE 296)))
+
+
+(deftest test-a-macos-row-counts-the-cpu-with-the-timebase-and-carries-the-footprint-as-rss
+  ;; cpu-ms = (user + system + child user + child system) in mach absolute time units x numer / denom = ns -> ms. On Apple silicon (125/3)
+  ;; 6e9 units = 250 s. rss-bytes is ri_phys_footprint (700 MiB), not ri_resident_size (900 MiB): macOS has no PSS, and the footprint is the
+  ;; memory the kernel charges the process (darwin_proc.hy header comment).
+  (val row (run (bsd-rusage-row 4242 (bsd-info-of 4242 77 3 b"web-reader") (rusage-of 3000000000 1000000000 (* 900 MIB) (* 700 MIB) 2000000000 0)
+                                125 3)))
+  (assert (= row (ProcRow :pid 4242 :ppid 77 :start-ticks 1760000000000005 :rss-bytes (* 700 MIB) :comm "web-reader" :cpu-ms 250000)) row)
+  ;; Intel (1/1): the units are already nanoseconds.
+  (val intel (run (bsd-rusage-row 4242 (bsd-info-of 4242 77 3 b"web-reader") (rusage-of 1500000000 0 0 0 0 0) 1 1)))
+  (assert (= intel.cpu-ms 1500) intel)
+  ;; A comm that fills all 16 bytes has no NUL and is read whole.
+  (val full (run (bsd-rusage-row 9 (bsd-info-of 9 1 2 b"0123456789abcdef") (rusage-of 0 0 0 0 0 0) 1 1)))
+  (assert (= full.comm "0123456789abcdef") full))
+
+
+(deftest test-a-macos-zombie-is-not-put-in-the-table
+  (assert (is (run (bsd-rusage-row 4242 (bsd-info-of 4242 77 5 b"sleep") (rusage-of 0 0 0 0 0 0) 1 1)) None)))
+
+
+(deftest test-a-macos-row-of-another-pid-or-a-short-rusage-is-refused
+  ;; Failure case: a proc_bsdinfo that names another pid, or a rusage_info_v4 shorter than the struct, is refused by name -- a number at a shifted
+  ;; position or of another process is never put in the table.
+  (with [caught (pytest.raises ValueError)]
+    (run (bsd-rusage-row 4242 (bsd-info-of 4243 77 3 b"sleep") (rusage-of 0 0 0 0 0 0) 1 1)))
+  (assert (in "4243" (str caught.value)) caught.value)
+  (with [short (pytest.raises ValueError)]
+    (run (bsd-rusage-row 4242 (bsd-info-of 4242 77 3 b"sleep") (cut (rusage-of 0 0 0 0 0 0) 0 200) 1 1)))
+  (assert (in "296" (str short.value)) short.value))
+
+
+(deftest test-the-macos-table-names-this-process-with-its-parent
+  ;; On macOS only: the real libproc table holds this process with its parent, its CPU so far and a footprint above 0.
+  (when (!= sys.platform "darwin")
+    (pytest.skip "libproc is only on macOS"))
+  (val table (run (darwin-proc-table)))
+  (val numbers (lfor row table row.pid))
+  (assert (= numbers (sorted (set numbers))) "the table is not in ascending pid order without overlaps")
+  (val own (next (gfor row table :if (= row.pid (os.getpid)) row) None))
+  (assert (is-not own None) "this process is not in the table")
+  (assert (= own.ppid (os.getppid)) own)
+  (assert (> own.rss-bytes 0) own))
