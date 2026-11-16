@@ -52,7 +52,8 @@ Does nothing unless at least one of the three budgets (steps, per-marker run sec
   ``doeff_hy_pytest._tree_cpu``) against the same seconds budget. Wall-clock stretches with machine congestion
   (CPU wait and disk wait), so the same test turns red only in congested runs — in the daily run of 2026-10-22 04:00 JST, a test that fires a type check in a child exceeded the 30-second limit with
   wall-clock 33 seconds and own CPU 0.96 seconds, and was green with the limit removed. Tree CPU seconds are the amount of work the test did and
-  barely change with congestion. Wall-clock retreats to a safety valve that cuts a test that stopped without using CPU (budget × ``TREE_CPU_WALL_BACKSTOP_FACTOR``)
+  barely change with congestion. Wall-clock retreats to a safety valve that cuts a test that stopped without using CPU (budget × ``TREE_CPU_WALL_BACKSTOP_FACTOR``),
+  looked at only after tree CPU seconds are within budget — a test over both is named by tree CPU seconds, so congestion does not pick the named limit
   (the same shape as making the agora-controllers whole-repo linter budget CPU seconds — 9c1a6659f7). On a machine that cannot read tree CPU seconds (macOS, with no ``/proc``),
   a declared test is also judged by the wall-clock budget (no looser than before). Tests that wait on the outside (socket, HTTP, listener) do not declare —
   waiting does not show in CPU seconds.
@@ -640,7 +641,7 @@ def declare_process_tree_cpu(test: Callable[..., object], reason: str) -> None:
     (the "per-test declaration declare_process_tree_cpu" in the header note). The budget value stays the marker's seconds.
 
     Place it only on a test whose weight is in the CPU of child processes (and its own threads) and that does not wait on the outside (socket, HTTP, listener) — waiting does not show in CPU seconds.
-    Wall-clock remains as a safety valve (marker seconds × TREE_CPU_WALL_BACKSTOP_FACTOR). Placing it on a test that hits no marker budget does not change the judgment.
+    Wall-clock remains as a safety valve (marker seconds × TREE_CPU_WALL_BACKSTOP_FACTOR) for a test within the CPU budget. Placing it on a test that hits no marker budget does not change the judgment.
     In a Hy test, right after deftest write ``(declare-process-tree-cpu test-name "reason")``. An unreadable value stops at import time."""
     if not isinstance(reason, str) or not reason.strip() or "\n" in reason.strip():
         raise ValueError(f"reason must be a non-empty single line: {reason!r}")
@@ -789,6 +790,19 @@ def call_budget_for(markers: Iterable[str], by_marker: Mapping[str, float]) -> f
     return max(matched) if matched else None
 
 
+def _judge_tree_cpu(budgets: Budgets, marker_seconds: float, measurement: Measurement) -> Verdict:
+    """Judge a declared test whose tree was measured — tree CPU seconds first: a test over the CPU budget is named by tree CPU seconds however long its wall-clock
+    stretched, so which limit the verdict names does not depend on machine congestion (2026-11-15 daily run — a child spinning 2.3 s of CPU took 7.5 s of
+    wall-clock and was named by the valve). Only a test within the CPU budget is then cut by the wall-clock safety valve."""
+    verdict = judge(measurement, marker_seconds, budgets.registry, "tree-cpu-seconds")
+    if isinstance(verdict, (OverBudget, RegisteredOverBudget)):
+        return verdict
+    backstop = marker_seconds * TREE_CPU_WALL_BACKSTOP_FACTOR
+    if measurement.judged_wall_seconds > backstop and measurement.key not in budgets.registry:
+        return OverBudget(measurement, backstop, "wall-seconds")
+    return verdict
+
+
 def judge_call(
     budgets: Budgets,
     markers: Sequence[str],
@@ -800,14 +814,12 @@ def judge_call(
     is judged by wall-clock seconds since its weight shows no steps (the weight is in child processes and waiting and does not show in process CPU seconds).
     Everything else is judged by the step budget (a test with a declaration by the declared value). A test hitting neither the step budget nor a marker budget
     is not judged. A test that hits a marker budget and declared tree CPU seconds (tree_cpu) is judged by the same seconds as tree CPU seconds only when the tree could be measured, and
-    if wall-clock exceeds the safety valve (seconds × TREE_CPU_WALL_BACKSTOP_FACTOR) it is red regardless of CPU seconds."""
+    a test within the CPU budget whose wall-clock exceeds the safety valve (seconds × TREE_CPU_WALL_BACKSTOP_FACTOR) is red by the valve. A test over both is named by tree CPU seconds
+    (the valve is only for a test that stopped or waited without using CPU), so the verdict does not change with how long congestion stretched the wall-clock."""
     marker_seconds = call_budget_for(markers, budgets.call_seconds_by_marker)
     if marker_seconds is not None:
         if tree_cpu is not None and isinstance(measurement.tree, TreeCpu):
-            backstop = marker_seconds * TREE_CPU_WALL_BACKSTOP_FACTOR
-            if measurement.judged_wall_seconds > backstop and measurement.key not in budgets.registry:
-                return OverBudget(measurement, backstop, "wall-seconds")
-            return judge(measurement, marker_seconds, budgets.registry, "tree-cpu-seconds")
+            return _judge_tree_cpu(budgets, marker_seconds, measurement)
         return judge(measurement, marker_seconds, budgets.registry, "wall-seconds")
     match budgets.call_steps:
         case None:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from dataclasses import replace
 
 import pytest
 from doeff_hy_pytest._budget import (
@@ -18,6 +19,7 @@ from doeff_hy_pytest._budget import (
     CompileTally,
     Measurement,
     OverBudget,
+    RegisteredOverBudget,
     TreeCpuDeclaration,
     UncheckedVmBuild,
     WithinBudget,
@@ -99,6 +101,22 @@ def test_a_declared_test_that_waits_past_the_wall_backstop_is_red() -> None:
             _budgets(), ["real_world"], _measured(backstop, TreeCpu(0.5, 0.5, 1)), None, DECLARED
         ),
         WithinBudget,
+    )
+
+
+def test_a_declared_test_over_both_the_cpu_budget_and_the_wall_backstop_is_named_by_its_tree_cpu() -> None:
+    """The shape of the daily run 11-15: a child spun CPU past the limit and congestion stretched wall clock past the safety valve too. The verdict names tree CPU seconds
+    whatever the wall clock, so which limit is named does not depend on congestion; a registered test stays registered rather than red by the valve."""
+    backstop = 30.0 * TREE_CPU_WALL_BACKSTOP_FACTOR
+    for wall in (20.0, backstop + 1.0, backstop * 4):
+        measured = _measured(wall, TreeCpu(1.0, 31.0, 3))
+        assert judge_call(_budgets(), ["real_world"], measured, None, DECLARED) == OverBudget(
+            measured, 30.0, "tree-cpu-seconds"
+        )
+    registered = replace(_budgets(), registry={"t.hy::test": "known slow"})
+    measured = _measured(backstop * 4, TreeCpu(1.0, 31.0, 3))
+    assert judge_call(registered, ["real_world"], measured, None, DECLARED) == RegisteredOverBudget(
+        measured, "tree-cpu-seconds"
     )
 
 
