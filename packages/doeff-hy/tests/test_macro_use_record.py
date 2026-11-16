@@ -740,13 +740,19 @@ else:
 """
 
 
+#: Time limit of one child process before it is stretched for load (seconds). With the compiled copy a record takes 1-4 s; a check after macros.hy changed
+#: compiles macros.hy again, which took 37 s on the loaded daily run of 2026-11-15 (load factor 8) and hit this limit when it was not stretched.
+CHILD_DEADLINE_SECONDS = 25
+
+
 @dataclass(frozen=True)
 class RealTree:
-    """The doeff_hy copied to a temp dir (lib/doeff_hy), the root of the module using it, and the record file."""
+    """The doeff_hy copied to a temp dir (lib/doeff_hy), the root of the module using it, the record file, and the child's deadline (stretched for load)."""
 
     lib: Path
     root: Path
     stored: Path
+    child_deadline: float
 
     @property
     def macros(self) -> Path:
@@ -761,7 +767,7 @@ class RealTree:
             [sys.executable, "-c", REAL_CHILD, str(self.root), mode, str(self.stored)],
             capture_output=True,
             text=True,
-            timeout=25,
+            timeout=self.child_deadline,
             check=False,
         )
         assert done.returncode == 0, done.stderr
@@ -824,7 +830,10 @@ def compiled_doeff_hy(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 @pytest.fixture
 def real_tree(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, compiled_doeff_hy: Path
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    compiled_doeff_hy: Path,
+    deadline_scale_factor: float,
 ) -> RealTree:
     import shutil
 
@@ -836,7 +845,9 @@ def real_tree(
     # The child reads the copied .pyc beside the sources (a cache prefix would hide them).
     monkeypatch.delenv("PYTHONPYCACHEPREFIX", raising=False)
     monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
-    return RealTree(lib, root, tmp_path / "record.json")
+    return RealTree(
+        lib, root, tmp_path / "record.json", CHILD_DEADLINE_SECONDS * deadline_scale_factor
+    )
 
 
 def test_the_record_of_a_defk_user_does_not_cover_doeff_hy_macros_by_its_file(real_tree: RealTree) -> None:
