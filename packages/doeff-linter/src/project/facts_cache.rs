@@ -203,7 +203,7 @@ where
     T: Clone + Send + Sync + Serialize + DeserializeOwned,
     F: Fn(&str, &Path) -> Option<T> + Sync,
 {
-    per_file_at(place(root, kind, Format::Json).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, no_bind, Format::Json)
+    per_file_at(place(root, kind, Format::Json).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, kept, Format::Json)
 }
 
 /// Same as `per_file`, but the cache is placed in binary form without field names (header comment; for large kinds).
@@ -224,10 +224,29 @@ where
     F: Fn(&str, &Path) -> Option<T> + Sync,
     B: Fn(&mut T, &str, &Path) + Sync,
 {
-    per_file_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/", identity(kind)), files, compute, bind, Format::Compact)
+    per_file_compact_finished(root, kind, files, compute, |mut value, rel, path| {
+        bind(&mut value, rel, path);
+        value
+    })
+}
+
+/// Same as `per_file_compact_bound`, but `finish(fact, rel, absolute path)` both attaches the current root's path and turns the stored form into the form the caller
+/// keeps, file by file as each is read (see `per_file_at`) — for a stored form that carries parts the kept form does not hold.
+pub fn per_file_compact_finished<T, U, F, G>(root: &Path, kind: &str, files: &[(String, PathBuf)], compute: F, finish: G) -> Vec<U>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    U: Send,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+    G: Fn(T, &str, &Path) -> U + Sync,
+{
+    per_file_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/", identity(kind)), files, compute, finish, Format::Compact)
 }
 
 fn no_bind<T>(_value: &mut T, _rel: &str, _path: &Path) {}
+
+fn kept<T>(value: T, _rel: &str, _path: &Path) -> T {
+    value
+}
 
 /// The range over which facts are looked up: look up the whole repo's files through the table (a whole run), or look up a few files by the hash of their contents (a one-file run, `per_file_named`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -463,25 +482,28 @@ where
     Resolved { value, row: Some(row), changed, written }
 }
 
-/// The body of `per_file`: takes the cache's store, marker, and form (store None = do not use the cache).
-fn per_file_at<T, F, B>(place: Option<&Place>, identity: &str, files: &[(String, PathBuf)], compute: F, bind: B, format: Format) -> Vec<T>
+/// The body of `per_file`: takes the cache's store, marker, and form (store None = do not use the cache). Each fact is handed to `finish(fact, rel, absolute path)`
+/// as soon as it is read or built, on the same thread, and only what `finish` returns is kept — so a fact's parts the caller does not keep are freed file by file
+/// instead of living for every file of the repo until the end (the Hy index's cache form held about 300 MB of such parts for agora-controllers).
+fn per_file_at<T, U, F, G>(place: Option<&Place>, identity: &str, files: &[(String, PathBuf)], compute: F, finish: G, format: Format) -> Vec<U>
 where
     T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    U: Send,
     F: Fn(&str, &Path) -> Option<T> + Sync,
-    B: Fn(&mut T, &str, &Path) + Sync,
+    G: Fn(T, &str, &Path) -> U + Sync,
 {
-    let bound = |rel: &str, path: &Path, value: Option<T>| {
-        value.map(|mut value| {
-            bind(&mut value, rel, path);
-            value
-        })
-    };
     let Some(place) = place else {
-        return files.par_iter().filter_map(|(rel, path)| bound(rel, path, compute(rel, path))).collect();
+        return files.par_iter().filter_map(|(rel, path)| compute(rel, path).map(|value| finish(value, rel, path))).collect();
     };
     let known: HashMap<String, Row> = crate::timing::timed("facts-cache.load", || load_index(&place.index, identity));
-    let resolved: Vec<Resolved<T>> = crate::timing::timed("facts-cache.resolve", || {
-        files.par_iter().map(|(rel, path)| resolve(place, identity, rel, path, known.get(rel), &compute, format)).collect()
+    let resolved: Vec<Resolved<U>> = crate::timing::timed("facts-cache.resolve", || {
+        files
+            .par_iter()
+            .map(|(rel, path)| {
+                let Resolved { value, row, changed, written } = resolve(place, identity, rel, path, known.get(rel), &compute, format);
+                Resolved { value: value.map(|value| finish(value, rel, path)), row, changed, written }
+            })
+            .collect()
     });
     note_object_bytes(resolved.iter().map(|r| r.written).sum());
     // Chunks to rewrite = the chunks of files whose rows changed, plus the chunks of files that were in the table but are now absent (vanished or unreadable).
@@ -511,7 +533,7 @@ where
             let _ = std::fs::remove_file(&place.index);
         });
     }
-    files.par_iter().zip(resolved.into_par_iter()).filter_map(|((rel, path), one)| bound(rel, path, one.value)).collect()
+    resolved.into_iter().filter_map(|one| one.value).collect()
 }
 
 
@@ -538,7 +560,7 @@ mod tests {
                 let text = std::fs::read_to_string(path).ok()?;
                 (!text.is_empty()).then_some(text)
             },
-            no_bind,
+            kept,
             format,
         )
     }
@@ -735,7 +757,10 @@ mod tests {
                 "v1",
                 files,
                 |_rel, path| Some(Fact { path: String::new(), text: std::fs::read_to_string(path).ok()? }),
-                |fact, _rel, path| fact.path = path.to_string_lossy().into_owned(),
+                |mut fact: Fact, _rel, path| {
+                    fact.path = path.to_string_lossy().into_owned();
+                    fact
+                },
                 format,
             )
         };
@@ -774,7 +799,7 @@ mod tests {
         };
         let before = store::LEAKED.load(Ordering::Relaxed);
         for _ in 0..2 {
-            let found = per_file_at(Some(&cache), "v1", &files, leaking, no_bind, Format::Compact);
+            let found = per_file_at(Some(&cache), "v1", &files, leaking, kept, Format::Compact);
             assert_eq!(found, vec![path.to_string_lossy().into_owned()], "the answer differs from the rebuilt value");
         }
         assert_eq!(calls.load(Ordering::SeqCst), 2, "stored a value holding the root's path, and did not rebuild on the second run");
@@ -800,7 +825,7 @@ mod tests {
                 set_mtime(path, SystemTime::now() + std::time::Duration::from_secs(5));
                 seen
             },
-            no_bind,
+            kept,
             Format::Json,
         );
         assert_eq!(racing, vec!["(defk before [])".to_string()]);

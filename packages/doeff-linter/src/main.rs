@@ -23,6 +23,21 @@ use std::process::{Command, ExitCode};
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
+/// mimalloc keeps the pages a thread freed and gives them back to the OS only after `purge_delay` (10 ms), on later allocator calls -- the rayon threads that
+/// finish a parallel stage sit idle holding them. In a five-file run of agora-controllers the stages before the Hy index left about 280 MB resident that
+/// way, and the run's peak was 300-400 MB higher than with immediate purging. Purge at once (the environment variable MIMALLOC_PURGE_DELAY, if set, still wins).
+fn purge_freed_pages_at_once() {
+    extern "C" {
+        fn mi_option_set(option: std::os::raw::c_int, value: std::os::raw::c_long);
+    }
+    /// `mi_option_purge_delay` of mimalloc.h (the same slot in mimalloc v2 and v3 -- retired options keep their slots).
+    const MI_OPTION_PURGE_DELAY: std::os::raw::c_int = 15;
+    if std::env::var_os("MIMALLOC_PURGE_DELAY").is_none() {
+        // SAFETY: mi_option_set only stores one integer option of the allocator linked into this binary (libmimalloc-sys); it reads and writes no Rust memory.
+        unsafe { mi_option_set(MI_OPTION_PURGE_DELAY, 0) };
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
 #[command(version = doeff_linter::VERSION_TEXT, about = "A linter for enforcing code quality and immutability patterns")]
@@ -685,6 +700,7 @@ fn run_fix(argv: &[String]) -> ExitCode {
 const SINGLE_FILE_THREADS: usize = 4;
 
 fn main() -> ExitCode {
+    purge_freed_pages_at_once();
     let argv: Vec<String> = std::env::args().collect();
     if argv.get(1).map(String::as_str) == Some("fix") {
         return run_fix(&argv);
