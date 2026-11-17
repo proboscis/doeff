@@ -3,6 +3,8 @@
 //! A single hook run right after a write took 3 seconds of CPU: this measures which processing stage is heavy,
 //! without changing the answer (the JSON on stdout). Parallel work hides its weight behind wall-clock time, so the
 //! difference in process CPU seconds (utime + stime from `/proc/self/stat`) is printed too. On machines where it cannot be read, the CPU-seconds field is `?`.
+//! The memory after the stage is printed too (`rss` = resident anonymous memory now, `hwm` = the process's resident peak so far, in MiB, from
+//! `/proc/self/status`): a few-file run reached 4 GiB, over the 2 GiB a command may use, and the stage whose `hwm` jumps is where it went.
 
 use std::time::Instant;
 
@@ -17,7 +19,19 @@ fn cpu_seconds() -> Option<f64> {
     Some(ticks / 100.0)
 }
 
-/// Runs `f` and, if the instrument is enabled, prints one line to stderr: `doeff-linter-timing: <label> wall=<seconds> cpu=<seconds>`.
+/// The resident anonymous memory now and the resident peak so far, in MiB (`?` where `/proc/self/status` cannot be read).
+fn memory_mib() -> (String, String) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|line| line.strip_prefix(name)?.trim().strip_suffix("kB")?.trim().parse::<u64>().ok())
+            .map_or_else(|| "?".to_string(), |kib| (kib / 1024).to_string())
+    };
+    (field("RssAnon:"), field("VmHWM:"))
+}
+
+/// Runs `f` and, if the instrument is enabled, prints one line to stderr: `doeff-linter-timing: <label> wall=<seconds> cpu=<seconds> rss=<MiB> hwm=<MiB>`.
 pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
     if std::env::var_os(ENV).is_none() {
         return f();
@@ -28,7 +42,8 @@ pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
         (Some(before), Some(after)) => format!("{:.2}", after - before),
         _ => "?".to_string(),
     };
-    eprintln!("doeff-linter-timing: {label} wall={:.3} cpu={spent}", wall.elapsed().as_secs_f64());
+    let (rss, hwm) = memory_mib();
+    eprintln!("doeff-linter-timing: {label} wall={:.3} cpu={spent} rss={rss} hwm={hwm}", wall.elapsed().as_secs_f64());
     out
 }
 

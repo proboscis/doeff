@@ -211,9 +211,42 @@ fn calibration_drift_discards_the_cache_and_warns() {
     let (_, report, _) = run(dir.path(), &drifted.url, &["--semantic", "app/core/plan.hy"]);
     assert_eq!(report["semantic"]["calibration"], "drifted");
     assert!(report["errors"].as_array().unwrap().iter().any(|e| e.as_str().unwrap().contains("calibration")), "{}", report["errors"]);
-    // The discarded cache's part returns to unjudged (only the 2 definitions of plan.hy fired this time are judged).
+    // A named run counts only the named file's definitions: the 2 of plan.hy fired this time are judged.
+    assert_eq!(report["semantic"]["judged"], 2);
+    assert_eq!(report["semantic"]["unjudged"], 0);
+    // The discarded cache's part returns to unjudged: the whole run reads the 2 answers fired after the discard and none for the 3 of chat.hy.
+    let (_, report, _) = run(dir.path(), &drifted.url, &[]);
     assert_eq!(report["semantic"]["judged"], 2);
     assert_eq!(report["semantic"]["unjudged"], 3);
+}
+
+#[test]
+fn named_run_builds_semantic_questions_only_for_the_named_files() {
+    // A named run builds the semantic rules' questions only from the named files: its hits are the same as the hits of the whole run inside the named file, and
+    // a definition outside it is neither read from the cache nor counted (the whole run of agora-controllers built about 31,000 questions for a five-file run).
+    let dir = repo(FILES, SEMANTIC);
+    let jev = fake_jev(false);
+    let (_, whole, _) = run(dir.path(), &jev.url, &["--semantic-all"]);
+    let hits_in = |report: &Value, file: &str| -> Vec<String> {
+        let mut keys: Vec<String> = report["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|v| v["source"] == "jev" && v["path"].as_str().unwrap().ends_with(file))
+            .map(|v| format!("{} {} {}", v["rule"], v["key"], v["severity"]))
+            .collect();
+        keys.sort();
+        keys
+    };
+    assert!(!hits_in(&whole, "app/protocol/chat.hy").is_empty(), "{}", whole["violations"]);
+    let before = jev.hits.load(Ordering::SeqCst);
+    let (_, named, stderr) = run(dir.path(), &jev.url, &["app/protocol/chat.hy"]);
+    assert_eq!(jev.hits.load(Ordering::SeqCst), before, "the named file's answers are in the cache");
+    assert_eq!(hits_in(&named, "app/protocol/chat.hy"), hits_in(&whole, "app/protocol/chat.hy"), "{}", stderr);
+    assert!(hits_in(&named, "app/core/plan.hy").is_empty(), "{}", named["violations"]);
+    // chat.hy has 3 definitions; plan.hy's 2 are outside the named path.
+    assert_eq!(named["semantic"]["judged"], 3, "{} {}", named["semantic"], stderr);
+    assert_eq!(named["semantic"]["unjudged"], 0);
 }
 
 #[test]

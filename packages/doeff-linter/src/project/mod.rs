@@ -473,11 +473,15 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
             }
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
-            semantic_files = layer_files.iter().map(|f| (f.clone(), None)).collect();
+            // The semantic rules' questions are built only from the named files (focus): a question is built from one definition's own file, and the hits outside
+            // the named paths are dropped before reporting anyway. Building them for every layer file kept a second Hy index of those files and a question JSON per
+            // definition (about 31,000 definitions in agora-controllers) next to the whole-repo index, and a five-file run went past 4 GiB.
+            semantic_files = layer_files.iter().filter(|f| in_scope(&f.file.path, focus)).map(|f| (f.clone(), None)).collect();
             let wants_plain = settings.semantic.as_ref().is_some_and(|s| s.plain_callable.is_some() || s.class_role.is_some() || s.mixed_concerns.is_some());
             plain_files = match (&settings.definitions, wants_plain) {
                 (Some(definitions), true) => hy_files::collect(root)
                     .into_iter()
+                    .filter(|path| in_scope(path, focus))
                     .filter_map(|path| {
                         let rel = relative_path(root, &path)?;
                         is_definition_file(&rel, definitions).then_some((SourceFile { rel, path, language: Language::Hy }, None))
