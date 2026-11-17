@@ -12,10 +12,12 @@
 ;; env DOEFF_RECORDS_TEST_PG_DSN が無ければ conftest が使い捨ての PostgreSQL を立てて置く(#2830)。立てられなければ理由を名指して skip。
 (require doeff-hy.macros [defeffect defhandler deftest defk <- val var])
 (require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (import math)
 (import doeff [Perform run with_handlers])
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_core_effects [state])
+(import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects [scheduled])
 (import doeff_core_effects [postgres-sql-handler])
 (import doeff_core_effects [SqlTransaction])
@@ -119,7 +121,7 @@
   (val connections (postgres-connections))
   (val store (prepared-store connections (fresh-prefix) SWEEP-SCHEMA))
   (try
-    (val outcome (run (scheduled (with_handlers [(state) (sim-time-handler :clock (SimClock)) (postgres-sql-handler connections)
+    (val outcome (run (scheduled (with_handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler (postgres-sql-handler connections)
                                                  transaction-tally (pg-records-handler store MAKER ORIGIN-HOST)]
                                                 (sweep-after-expiry)))))
     (val whole (run (writer-lock-key store.prefix)))
