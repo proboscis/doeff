@@ -217,7 +217,7 @@
   (val settings (dataclasses.replace base :task-record TARGET))
   (<- group str (cgroup-child tmp-path))
   (val started (Started :view (ProcessView "task/t7" TASK 1 4242 (- NOON-MS 60000)) :fork None :group group))
-  (for [#(answer expected) #(#((HttpFailed ENDPOINT "ConnectError: refused" HttpFailureKind.CONNECT-FAILED) "ConnectError: refused")
+  (for [#(answer expected) #(#((HttpFailed :url ENDPOINT :detail "ConnectError: refused" :kind HttpFailureKind.CONNECT-FAILED) "ConnectError: refused")
                             #((HttpResponse 500 {} b"down" "down" ENDPOINT 0.0) "status 500: down")
                             #((RuntimeError "答え手の思わぬ失敗") "RuntimeError: 答え手の思わぬ失敗"))]
     (val collector (Collector answer))
