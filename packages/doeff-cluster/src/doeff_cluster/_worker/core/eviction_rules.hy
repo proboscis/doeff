@@ -19,6 +19,12 @@
 ;;;   線は無い(呼び手は機体の MemAvailable で見張る)。
 ;;; 追い出しまでの空き = 2 つの線の空きの小さい方(root の memory.stat の無い kernel は allocatable の線だけ)。
 ;;;
+;;; 機体の線の使いには、kubelet の式の root の working set に zram の device が持つ memory(mm_stat の mem_used_total の和 — zram-used-of)
+;;; を足す(2026-11-17): zram の page はどの cgroup にも数えられず(root の memory.stat の anon + file にも載らない)、kubelet の式の
+;;; 空きは MemAvailable より zram の分だけ大きい。node-h では RAM disk の zram 4〜5 個が 15〜22 GiB を持ち、線の空き 24〜34 GiB を
+;;; 名乗る間に MemAvailable は 2.4〜8.5 GiB で、置き先は task を置き続け、機体ごと止まった(11-16)。kubelet より早く空きが尽きると
+;;; 読む向きの違いなので、jobs の層を kubelet の追い出しより先に縮めるだけで、追い出しを招かない。
+;;;
 ;;; jobs の層の memory.max(jobs-limit)= jobs の今の使い(memory.current)+ 追い出しまでの空き − 余裕 − 準備の取り置き。上限は宣言の
 ;;; 静的な値(WORKER_CGROUP_LAYOUT の jobs の memory.max — 天井を宣言した機体は下の jobs の層の天井)、下限は 0。kernel は jobs の層の使いをこの値で止めるので、全部の Pod の working set
 ;;; は 線 − 余裕 + 掛け直しの間のほかの伸びまでしか増えない。ほかの Pod や常駐の job が伸びて空きが縮んだ時は、jobs の層が先に縮む。
@@ -319,6 +325,16 @@
   (<- inactive int (stat-bytes stat-text "inactive_file"))
   (<- answer int (working-set (+ anon file) inactive))
   answer)
+
+
+(defk zram-used-of [mm-stat-text]
+  {:pre [(: mm-stat-text str)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "judgment"}}
+  "zram の device 1 つが持つ memory を、機体の線の使いに足すため(頭の註): /sys/block/zram<N>/mm_stat の中身の 3 番目の欄
+   mem_used_total(圧縮した page と allocator の帳簿の byte)。欄が 3 つ無い・数でないなら ValueError。"
+  (val fields (.split mm-stat-text))
+  (when (or (< (len fields) 3) (not (.isdigit (get fields 2))))
+    (raise (ValueError (.format "zram の mm_stat の 3 番目の欄(mem_used_total)が無いか数でない: {!r}" (cut mm-stat-text 0 200)))))
+  (int (get fields 2)))
 
 
 (defk eviction-line [kubelet pods root-working-set]

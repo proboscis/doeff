@@ -1,7 +1,7 @@
 ;;; 追い出しの線の読みと jobs の層の上限の掛け直し(判断は worker/core/eviction_rules)。機体の memory の見張り
 ;;; (worker/protocol/memory_watch)が回のたびに頭で呼ぶ:
 ;;;   eviction-noted  1 回: Node の宣言の memory(capacity・allocatable)を要る時だけ API server から読み直し、host の cgroupfs から kubepods と
-;;;                   root の cgroup を読んで追い出しまでの空きを数え、jobs の層の memory.max を「jobs の今の使い + 空き − 余裕」(上限は
+;;;                   root の cgroup を(機体の線には /sys/block の zram の device も)読んで追い出しまでの空きを数え、jobs の層の memory.max を「jobs の今の使い + 空き − 余裕」(上限は
 ;;;                   宣言の静的な値)に掛け直す。答え = 今の線(None = 線が無い・読めない — 見張りは機体の MemAvailable で判じる)。
 ;;;                   準備の層(prepare — keeper の版の準備)が在れば、その使いと process の有無を読み、走っている準備の山までの残りを
 ;;;                   jobs の上限から引き(取り置き)、「空き − 余裕 − 取り置き」と準備が線へ足しうる量(上限 − 層の今の working set)を
@@ -68,7 +68,7 @@
 (import doeff_core_effects [HttpFailed HttpRequest HttpResponse])
 (import doeff_cluster._worker.core.memory_rules [MIB meminfo-kib])
 (import doeff_cluster._worker.core.eviction_rules [EVICTION-MARGIN-BYTES MARGIN-WINDOW CommandLayerUse EvictionLine KubeletMemory PodsMemory quantity-bytes
-                                                  pods-memory-of root-working-set-of eviction-line jobs-limit stat-bytes working-set
+                                                  pods-memory-of root-working-set-of zram-used-of eviction-line jobs-limit stat-bytes working-set
                                                   prepare-reserve prepare-room prepare-addable prepare-waiting prepare-wait-reserve margin-of kernel-bytes-of clis-limit clis-lent box-free
                                                   clis-lend-limit clis-reclaim clis-held-lend held-jobs-limit
                                                   jobs-box-limit placed-pending kept-line fresh-keep-room command-layer-use-of command-layer-limit
@@ -167,7 +167,8 @@
    宣言が無い機体)・commands = 命令の層の掛け直しの設定(None = 層の宣言に commands の memory.max が無い機体)・version-file = keeper の
    読む版の file(None = keeper の世代でない — 準備を待つ間の取り置きをしない)・own-version = この世代の版(version-file と組で在る)・
    retired-file = keeper がこの世代を退かせる時に置く印の file(None = keeper の世代でない — 印を読まない・頭の註の退いた世代)・
-   layers-dir = cgroup の層の dir の親(層 <名> は layers-dir/<名> — 持つ区画の上限を書く所・ADR-DOE-CLUSTER-005 R3。None = 書かない)。"
+   layers-dir = cgroup の層の dir の親(層 <名> は layers-dir/<名> — 持つ区画の上限を書く所・ADR-DOE-CLUSTER-005 R3。None = 書かない)・
+   block-dir = host の block の device の dir(zram<N>/mm_stat を読み、機体の線の使いに足す — worker/core/eviction_rules の頭の註)。"
   {:check [(> node-read-seconds 0) (> node-retry-seconds 0) (>= margin-bytes 0) (or (is jobs-cap-bytes None) (>= jobs-cap-bytes 0))
            (= (is prepare-dir None) (is prepare-cap-bytes None)) (or (is prepare-cap-bytes None) (>= prepare-cap-bytes 0))
            (or (is clis None) (is-not jobs-dir None)) (= (is version-file None) (is own-version None))
@@ -191,7 +192,8 @@
   (setv #^ (| str None) version-file None)
   (setv #^ (| str None) own-version None)
   (setv #^ (| str None) retired-file None)
-  (setv #^ (| str None) layers-dir None))
+  (setv #^ (| str None) layers-dir None)
+  (setv #^ str block-dir "/sys/block"))
 
 
 (defclass EvictionCell []
@@ -332,11 +334,29 @@
   text)
 
 
+(defk zram-used-read [block-dir]
+  {:pre [(: block-dir str)] :post [(: % int) (>= % 0)] :tags {:context "worker" :role "protocol"}}
+  "どの cgroup にも数えられない zram の device の memory を、機体の線の使いに足すため(worker/core/eviction_rules の頭の註): block-dir の
+   zram<N> の mm_stat の mem_used_total の和。block-dir を並べられない(block の device の見えない container)は 0。並べた device の
+   mm_stat を読めない・形が違うなら ValueError(呼び手が線を読めない訳にする)。"
+  (<- entries (ListDirectory block-dir))
+  (when (isinstance entries FileFailed)
+    (return 0))
+  (var total 0)
+  (for [entry entries]
+    (when (.startswith entry.name "zram")
+      (<- text str (text-read (posixpath.join block-dir entry.name "mm_stat")))
+      (<- used int (zram-used-of text))
+      (:= total (+ total used))))
+  total)
+
+
 (defk cgroup-line-read [settings kubelet]
   {:pre [(: settings EvictionSettings) (: kubelet KubeletMemory)] :post [(: % (| EvictionLine None str))]
    :tags {:context "worker" :role "protocol"}}
   "kubepods と root の cgroup を読んで追い出しの線を数えるため。kubepods の file を読めない・形が違う・Node と食い違う時は訳の文。
-   root の memory.stat を読めない kernel は allocatable の線だけで数える。線が無い(kubepods の memory.max が max)なら None。"
+   root の memory.stat を読めない kernel は allocatable の線だけで数える。機体の線の使いは root の working set + zram の device の
+   memory。線が無い(kubepods の memory.max が max)なら None。"
   (try
     (<- max-text str (text-read (+ settings.pods-dir "/memory.max")))
     (<- current-text str (text-read (+ settings.pods-dir "/memory.current")))
@@ -346,7 +366,8 @@
     (var root None)
     (when (isinstance root-text str)
       (<- root-set int (root-working-set-of root-text))
-      (:= root root-set))
+      (<- zram int (zram-used-read settings.block-dir))
+      (:= root (+ root-set zram)))
     (<- line (| EvictionLine None) (eviction-line kubelet pods root))
     line
     (except [error ValueError]
