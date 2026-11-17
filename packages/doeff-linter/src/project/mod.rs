@@ -67,6 +67,7 @@ pub mod top_level;
 pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
+pub mod design_evidence;
 pub mod business_fakes;
 pub mod clause_ops;
 pub mod intent_coverage;
@@ -469,6 +470,11 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 if let Some(selection) = architecture.record_stubs.as_ref().filter(|_| enabled.contains(&ProjectRule::RecordStubNotKwOnly)) {
                     let (found, errors) = crate::timing::timed("record-stubs", || record_stubs::find(root, selection, focus));
                     drafts.extend(found.into_iter().flat_map(|file| record_stub_drafts(&file.rel, &file.path, &file.source, file.mismatches)));
+                    report.errors.extend(errors);
+                }
+                if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::DesignEvidence)) {
+                    let (found, errors) = crate::timing::timed("design-evidence", || design_evidence::find(root, decl, focus));
+                    drafts.extend(found.into_iter().flat_map(|file| design_evidence_drafts(&file.rel, &file.path, &file.source, file.hits)));
                     report.errors.extend(errors);
                 }
             }
@@ -907,6 +913,23 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         }
                     }
                 }
+                if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::DesignEvidence)) {
+                    // A .hy is judged with its stdin contents and the sibling evidence from disk; an evidence file is judged with its stdin contents against the sibling .hy
+                    // from disk, and the hits are reported at the .hy.
+                    let (judging, ledger_error) = crate::timing::timed("single.design-evidence.ledger", || design_evidence::Judging::load(root, decl));
+                    report.errors.extend(ledger_error);
+                    if design_evidence::wants(rel, decl) {
+                        match crate::timing::timed("single.design-evidence", || judging.judge_module(rel, &path, source)) {
+                            Ok(found) => drafts.extend(design_evidence_drafts(rel, &path, source, found)),
+                            Err(reason) => report.errors.push(format!("{}: cannot read the DOEFF212 judgment ({})", rel, reason)),
+                        }
+                    } else if let Some((module_rel, module_path)) = design_evidence::module_of(rel, &path).filter(|(m, p)| design_evidence::wants(m, decl) && p.is_file()) {
+                        match judging.judge_evidence(&module_rel, &module_path, source) {
+                            Ok((module_source, found)) => drafts.extend(design_evidence_drafts(&module_rel, &module_path, &module_source, found)),
+                            Err(reason) => report.errors.push(format!("{}: cannot read the DOEFF212 judgment ({})", module_rel, reason)),
+                        }
+                    }
+                }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
                 if enabled.contains(&ProjectRule::EnvironmentName) && is_environment_file(rel, env) {
@@ -1057,6 +1080,28 @@ fn record_stub_drafts(rel: &str, path: &Path, source: &str, mismatches: Vec<reco
             base: Severity::Error,
             explain: Explain::RecordStubNotKwOnly { class: m.name, form: m.form.to_string() },
             rel: rel.to_string(),
+        })
+        .collect()
+}
+
+/// Turns the hits of DOEFF212 into draft violations (for one .hy — the key detail is the type name).
+fn design_evidence_drafts(rel: &str, path: &Path, source: &str, hits: Vec<design_evidence::Hit>) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    let evidence_rel = design_evidence::evidence_rel(rel);
+    hits.into_iter()
+        .map(|hit| {
+            let reason = hit.problem.describe(&hit.name, &evidence_rel);
+            Draft {
+                rule: ProjectRule::DesignEvidence,
+                layer: None,
+                path: path.to_path_buf(),
+                range: lines.range(hit.start, hit.end),
+                message: format!("{} — {}", rel, reason),
+                detail: Some(hit.problem.key_detail(&hit.name)),
+                base: Severity::Error,
+                explain: Explain::DesignEvidence { subject: format!("defrecord {}", hit.name), reason },
+                rel: rel.to_string(),
+            }
         })
         .collect()
 }

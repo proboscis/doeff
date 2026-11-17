@@ -132,6 +132,11 @@ struct Args {
     #[arg(long)]
     list_rules: bool,
 
+    /// Prints, as TOML, and exits, the ledger of the current shapes of every defrecord in architecture.hy's :design-evidence population (DOEFF212) -- written once,
+    /// when the rule is turned on, to the :existing file, so that existing types pass until their shape changes
+    #[arg(long)]
+    print_existing_shapes: bool,
+
     /// Prints as JSON, and exits, the split of rules to apply to the changed paths (path arguments; from the repo root) -- {"quick", "whole", "declaration_changed",
     /// "baseline_overlay", "world_catalogs" (the repo's catalogs of real I/O handlers as absolute paths -- pass each as --world-catalog to a run on a tree placed elsewhere),
     /// "import_roots" (the checkout's dirs for resolving names defined outside the repo, as absolute paths -- pass each as --import-root to the same run)}.
@@ -337,6 +342,7 @@ impl Setup {
                 ProjectRule::BroadCatchOutsideCarrier => self.settings.architecture.as_ref().is_some_and(|a| !a.broad_catches.is_empty()),
                 ProjectRule::UntypedStructuredValue => self.settings.architecture.as_ref().is_some_and(|a| a.typed_values.is_some()),
                 ProjectRule::RecordStubNotKwOnly => self.settings.architecture.as_ref().is_some_and(|a| a.record_stubs.is_some()),
+                ProjectRule::DesignEvidence => self.settings.architecture.as_ref().is_some_and(|a| a.design_evidence.is_some()),
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
                 ProjectRule::ServiceInvariantsMissing => self.settings.architecture.is_some(),
                 ProjectRule::ServiceSystemMissing => self.settings.architecture.is_some(),
@@ -530,7 +536,7 @@ fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
     if paths.iter().all(|p| p == ".") {
         return None;
     }
-    Some(project::record_stubs::with_sibling_stubs(paths.iter().map(|p| editor::normalize_path(Path::new(p))).collect()))
+    Some(project::design_evidence::with_sibling_modules(project::record_stubs::with_sibling_stubs(paths.iter().map(|p| editor::normalize_path(Path::new(p))).collect())))
 }
 
 /// Maps the layer rules' violations to the form that the existing output (text, json, hook) reads (the same Violation as the Python rules' violations).
@@ -724,6 +730,10 @@ fn main() -> ExitCode {
         return run_commit_hook(&args);
     }
 
+    if args.print_existing_shapes {
+        return print_existing_shapes(&args);
+    }
+
     if let Some(changed) = &args.affected_tests {
         // Reverse-dependency queries are also small work (0.05 seconds of CPU on doeff with a warm cache) -- on a machine with load 26, 36 threads used
         // 0.9 to 11 seconds in sys time alone, while 4 threads took 0.28 seconds cold and 0.07 seconds warm.
@@ -755,6 +765,32 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
         OutputFormat::Text | OutputFormat::Json => run_normal(&args),
+    }
+}
+
+/// `--print-existing-shapes` -- the ledger of DOEFF212 (the fingerprints of the current defrecord shapes in the :design-evidence population) on stdout.
+/// Exit code 0 = printed, 2 = config error, no :design-evidence declaration, or a population file that cannot be read.
+fn print_existing_shapes(args: &Args) -> ExitCode {
+    let setup = match prepare(args) {
+        Ok(setup) => setup,
+        Err(reason) => {
+            eprintln!("doeff-linter: {}", reason);
+            return ExitCode::from(2);
+        }
+    };
+    let Some(decl) = setup.settings.architecture.as_ref().and_then(|a| a.design_evidence.as_ref()) else {
+        eprintln!("doeff-linter: --print-existing-shapes needs :design-evidence in architecture.hy");
+        return ExitCode::from(2);
+    };
+    let (ledger, errors) = project::design_evidence::existing_shapes(&setup.root, decl);
+    for error in &errors {
+        eprintln!("doeff-linter: {}", error);
+    }
+    print!("{}", ledger);
+    if errors.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(2)
     }
 }
 
@@ -1296,7 +1332,7 @@ fn run_normal(args: &Args) -> ExitCode {
     if setup.has_project_rules() {
         // With --modified, only the changed files' violations (do not stop on known violations in unchanged files). Rules that can be judged by one file
         // read only under this path (the focus of Target::Whole).
-        let only: Option<Vec<PathBuf>> = if args.modified { Some(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect())) } else { only_paths(&args.paths) };
+        let only: Option<Vec<PathBuf>> = if args.modified { Some(project::design_evidence::with_sibling_modules(project::record_stubs::with_sibling_stubs(files.iter().map(|f| editor::normalize_path(f)).collect()))) } else { only_paths(&args.paths) };
         if let (Some(named), false) = (&only, args.modified) {
             outside = project::hy_files::outside_walk(&setup.root, &setup.settings.include, named, &setup.declaration);
             for path in &outside {
