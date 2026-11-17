@@ -47,6 +47,11 @@ pub fn timed<T>(label: &str, f: impl FnOnce() -> T) -> T {
     out
 }
 
+/// Whether the instrument is enabled (for counts that cost a pass of their own, made only when they are printed).
+pub fn enabled() -> bool {
+    std::env::var_os(ENV).is_some()
+}
+
 /// If the instrument is enabled, prints one line to stderr: `doeff-linter-timing: <label> <field>=<number>` (not a stage time but a count of things, e.g. the number of files whose contents were actually read).
 pub fn count(label: &str, field: &str, value: usize) {
     if std::env::var_os(ENV).is_some() {

@@ -1216,7 +1216,66 @@ fn whole_hy_index(
     let stops: BTreeSet<String> = settings.architecture.as_ref().map(|a| a.world_definition_targets().into_keys().collect()).unwrap_or_default();
     let trace = if via && scope.is_none() { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
     crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, trace));
+    if crate::timing::enabled() {
+        hy_index_census(&files);
+    }
     files.into_iter().filter_map(|file| relative_path(root, Path::new(&file.path)).map(|rel| (rel, file))).collect()
+}
+
+/// The timing instrument's count of what the whole-repo Hy index holds (rows and heap bytes per part), to see which part of the index fills the memory.
+fn hy_index_census(files: &[HyFileIndex]) {
+    use doeff_indexer::hy_index::{Call, Import, RawEvidence, RawStep, Reference};
+    let text = |s: &String| s.capacity();
+    let maybe = |s: &Option<String>| s.as_ref().map_or(0, String::capacity);
+    let evidence = |e: &RawEvidence| std::mem::size_of::<RawEvidence>() + e.name.capacity() + e.path.capacity();
+    let step = |s: &RawStep| std::mem::size_of::<RawStep>() + s.path.capacity() + s.name.capacity();
+    let (mut definitions, mut references, mut calls, mut imports, mut via) = (0, 0, 0, 0, 0);
+    let (mut definition_bytes, mut reference_bytes, mut target_bytes, mut call_bytes, mut raw_bytes) = (0, 0, 0, 0, 0);
+    for file in files {
+        definitions += file.definitions.len();
+        references += file.references.len();
+        calls += file.calls.len();
+        imports += file.imports.len();
+        for d in &file.definitions {
+            definition_bytes += std::mem::size_of::<Definition>()
+                + text(&d.name)
+                + text(&d.mangled)
+                + text(&d.qualified_name)
+                + maybe(&d.container)
+                + maybe(&d.docstring)
+                + d.params.iter().chain(&d.bases).chain(&d.decorators).map(text).sum::<usize>()
+                + d.contracts.iter().map(|c| c.text.capacity()).sum::<usize>();
+            via += d.raw.via.len();
+            raw_bytes += d.raw.direct.iter().map(evidence).sum::<usize>()
+                + d.raw.via.iter().map(|v| evidence(&v.evidence) + v.through.iter().map(step).sum::<usize>()).sum::<usize>();
+        }
+        for r in &file.references {
+            reference_bytes += std::mem::size_of::<Reference>() + text(&r.name) + text(&r.mangled) + maybe(&r.qualifier);
+            target_bytes += maybe(&r.target);
+        }
+        for c in &file.calls {
+            call_bytes += std::mem::size_of::<Call>()
+                + text(&c.callee)
+                + text(&c.mangled)
+                + maybe(&c.qualifier)
+                + c.keywords.iter().map(text).sum::<usize>()
+                + c.arguments.capacity() * 32;
+            target_bytes += maybe(&c.target);
+        }
+        call_bytes += file.imports.len() * std::mem::size_of::<Import>();
+    }
+    let mib = |bytes: usize| bytes >> 20;
+    crate::timing::count("hy-index.census", "files", files.len());
+    crate::timing::count("hy-index.census", "definitions", definitions);
+    crate::timing::count("hy-index.census", "references", references);
+    crate::timing::count("hy-index.census", "calls", calls);
+    crate::timing::count("hy-index.census", "imports", imports);
+    crate::timing::count("hy-index.census", "raw_via", via);
+    crate::timing::count("hy-index.census", "definition_mib", mib(definition_bytes));
+    crate::timing::count("hy-index.census", "reference_mib", mib(reference_bytes));
+    crate::timing::count("hy-index.census", "target_mib", mib(target_bytes));
+    crate::timing::count("hy-index.census", "call_mib", mib(call_bytes));
+    crate::timing::count("hy-index.census", "raw_mib", mib(raw_bytes));
 }
 
 /// To read the Hy file index (before annotating raw side effects) through a per-file cache (facts_cache kind "hy-index", binary form)
@@ -1225,10 +1284,12 @@ fn whole_hy_index(
 /// causes that file to be re-read. The key is the same as facts_cache (the file's size and modification time, the content hash, and the linter binary's mark and version),
 /// with the file's path from the root as the key's name (an absolute path for a file not under the root). The index holds the file's absolute path, so the stored value has an empty path,
 /// and after reading, the current root's file path is attached — so that worktrees share the index of a file with the same contents.
+/// Each file's cache shape is turned into the index as soon as it is read (`per_file_compact_finished`): the separately carried fields of every reference and call of
+/// the repo (about 5 million references in agora-controllers) used to stay alive next to the whole index until the last file was read.
 fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
     let keyed: Vec<(String, PathBuf)> =
         paths.iter().map(|path| (relative_path(root, path).unwrap_or_else(|| path.to_string_lossy().into_owned()), path.clone())).collect();
-    facts_cache::per_file_compact_bound(
+    facts_cache::per_file_compact_finished(
         root,
         "hy-index",
         &keyed,
@@ -1237,11 +1298,11 @@ fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
             cached.set_path("");
             Some(cached)
         },
-        |cached, _key, path| cached.set_path(&path.to_string_lossy()),
+        |mut cached, _key, path| {
+            cached.set_path(&path.to_string_lossy());
+            cached.into_file().unwrap_or_else(|broken| hy_index::index_file(root, Path::new(&broken.path)))
+        },
     )
-    .into_iter()
-    .map(|cached| cached.into_file().unwrap_or_else(|broken| hy_index::index_file(root, Path::new(&broken.path))))
-    .collect()
 }
 
 /// Decides the language from the path's extension (None if neither Hy nor Python).
