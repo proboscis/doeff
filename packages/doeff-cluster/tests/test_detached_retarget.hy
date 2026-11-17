@@ -8,6 +8,7 @@
 ;;;   4  新しい needs を満たす生きた worker が無い替えは替えない(替えると place-tasks が置き先の無い task として終える)
 ;;;   5  知らない key は moved 偽・phase unknown。away か toward が空の本文は 400
 ;;;   6  sim の client(RetargetDetached)は本番と同じ口で替え、待っていた task は新しい機体の worker で走り出す。ReadDetachedTasks は担い手と組の名を読む
+;;;      替えは走らせ直しでない: 替えた task は 1 回だけ走り、知らせ先の出口には終わりの行がちょうど 1 つ・走らせ直しの行は 0
 (require doeff-hy.macros [deftest defk <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses [replace])
@@ -22,9 +23,11 @@
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached retarget-detached task-by-key])
 (import doeff_cluster [http-request]
         doeff_cluster._shared.protocol.detached [detached-path])
-(import doeff_cluster [TaskLimit GroupLimit AwaitDetached DetachedPending RetargetDetached DetachedRetarget ReadDetachedTasks DetachedTasks
+(import doeff_cluster [TaskLimit GroupLimit AwaitDetached DetachedPending DetachedSucceeded AwaitDetachedOutbox DetachedOutbox RetargetDetached
+                       DetachedRetarget ReadDetachedTasks DetachedTasks
                        DetachedTaskPhase])
 (import doeff_cluster [submit-detached-task system-of sim-cluster SimWorker])
+(import doeff_cluster._shared.intent.detached_model [OUTBOX-ENDED OUTBOX-RERAN])
 (import tests.room_rows [ROOM-LOADS compartments-like-rooms])
 (import tests.program_rows [program-placed task-body-of])
 (import tests.state_rows [table-from-rows])
@@ -146,6 +149,8 @@
 (val SYSTEM (system-of "retarget-scenarios" #() :task-limits #((GroupLimit :group "probe" :scope "worker" :limit 1))))
 (val ON-H (frozenset #(#* RIG-PROVIDES "host-h")))
 (val ON-Z (frozenset #(#* RIG-PROVIDES "host-z")))
+;; 2 本目の知らせ先(出口の行を選ぶ語の頭)。
+(val NOTIFY "n:retarget")
 
 
 (defk retarget-scenario []
@@ -153,7 +158,8 @@
   "機体 h の印を持つ task 2 本(組 probe)を出し、1 本目が w-h に置かれて 2 本目が待つ間に 2 本目の置き先を h → z へ替え、2 本目が走り出した後の
    一覧の読みと、替えの答え 3 つ(待つ task・同じ頼みの 2 度目・置いた task)を返すため。"
   (<- (submit-detached-task (slow-add 30.0 1) :needs ON-H :key "busy" :lease-seconds 5.0 :limits #((TaskLimit :group "probe")) :memory-mib 1024))
-  (<- (submit-detached-task (slow-add 1.0 2) :needs ON-H :key "guard" :lease-seconds 5.0 :limits #((TaskLimit :group "probe")) :memory-mib 1024))
+  (<- (submit-detached-task (slow-add 1.0 2) :needs ON-H :key "guard" :lease-seconds 5.0 :limits #((TaskLimit :group "probe")) :memory-mib 1024
+                            :notify NOTIFY :rerun True))
   (var waited 0.0)
   (while True
     (assert (< waited 20.0) "1 本目が 20 秒の内に置かれない")
@@ -175,7 +181,17 @@
     (<- (Delay 0.5))
     (:= waited (+ waited 0.5)))
   (<- listed DetachedTasks (ReadDetachedTasks ""))
-  {"queued" queued "moved" moved "again" again "kept" kept "listed" listed})
+  ;; 替えた task の終わりまで待ち、知らせ先の出口の行(終わりの行と走らせ直しの行)を読む。
+  (:= waited 0.0)
+  (while True
+    (assert (< waited 20.0) "替えた 2 本目が 20 秒の内に終わらない")
+    (<- ended (AwaitDetached "guard" :timeout-seconds 0.0))
+    (when (not (isinstance ended DetachedPending))
+      (break))
+    (<- (Delay 0.5))
+    (:= waited (+ waited 0.5)))
+  (<- outbox DetachedOutbox (AwaitDetachedOutbox NOTIFY 0.0 :kinds #(OUTBOX-ENDED OUTBOX-RERAN)))
+  {"queued" queued "moved" moved "again" again "kept" kept "listed" listed "ended" ended "outbox" outbox})
 
 
 (deftest test-the-sim-client-retargets-a-queued-task-to-the-other-machine
@@ -192,4 +208,8 @@
   (val kept (get state "kept"))
   (assert (and (not kept.moved) (= kept.phase "assigned")) kept)
   (val guard (next (gfor row (. (get state "listed") tasks) :if (= row.key "guard") row)))
-  (assert (= guard.worker "w-z") (get state "listed")))
+  (assert (= guard.worker "w-z") (get state "listed"))
+  ;; 替えは走らせ直しでない: 替えた task は 1 回だけ走って値を返し、知らせ先の出口には終わりの行がちょうど 1 つ・走らせ直しの行は 0。
+  (assert (= (get state "ended") (DetachedSucceeded 102)) (get state "ended"))
+  (val rows (. (get state "outbox") entries))
+  (assert (= (tuple (gfor row rows #(row.key row.kind row.phase))) #(#("guard" OUTBOX-ENDED "finished"))) rows))
