@@ -286,11 +286,11 @@
 
 
 (deftest test-the-tasks-under-a-key-prefix-are-listed-with-their-phases-on-sim
-  ;; 送り手が前の process の送った key を知らずに、同じ前置きの task を phase と共に読める: 置かれた 1 本目は assigned・上限で待つ 2 本目は
-  ;; queued(key の順)。前置きの当たらない読みは空の一覧(届かないのとは別)。
+  ;; 送り手が前の process の送った key を知らずに、同じ前置きの task を phase と共に読める: 置かれた 1 本目は assigned(担い手 w1)・上限で待つ
+  ;; 2 本目は queued(担い手なし — key の順)。どちらも名乗った組 probe を持つ。前置きの当たらない読みは空の一覧(届かないのとは別)。
   (<- state dict (sim-cluster :notice-broker (MemoryBroker) :timing (ClusterTiming) SYSTEM (listed-tasks-scenario)
                               :workers #((SimWorker :name "w1" :provides LOCAL))))
-  (assert (= (get state "listed") (DetachedTasks :tasks #((DetachedTaskPhase :key "probe-1" :phase "assigned")
-                                                          (DetachedTaskPhase :key "probe-2" :phase "queued"))))
+  (assert (= (get state "listed") (DetachedTasks :tasks #((DetachedTaskPhase :key "probe-1" :phase "assigned" :worker "w1" :groups #("probe"))
+                                                          (DetachedTaskPhase :key "probe-2" :phase "queued" :groups #("probe")))))
           (get state "listed"))
   (assert (= (get state "none") (DetachedTasks :tasks #())) (get state "none")))

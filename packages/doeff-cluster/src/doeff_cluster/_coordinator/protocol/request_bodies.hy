@@ -8,7 +8,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ServiceBody LegacyJobRow LegacyJobs])
 (import doeff_cluster._coordinator.core.cluster_policy [job-from-json])
 (import doeff_cluster._coordinator.core.cluster_rules [required-field])
-(import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed BodyUnreadable ReadBody RequestBody])
+(import doeff_cluster._coordinator.intent.request_bodies [LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWireBody BoardWrite HeartbeatBody ResourceBody TaskBody RetargetBody WarmBody LegacyJobsBody BodyMalformed BodyUnreadable ReadBody RequestBody])
 (import doeff_cluster._coordinator.core.api_policy [respond])
 (import doeff_cluster._coordinator.protocol.replies [reply-json])
 
@@ -29,6 +29,7 @@
     (and (= method "POST") (= (len parts) 2) (= (get parts 0) "resources")) ResourceBody
     (and (= method "POST") (= parts #("tasks"))) TaskBody
     (and (= method "PUT") (= (len parts) 2) (= (get parts 0) "detached")) TaskBody
+    (and (= method "POST") (= (len parts) 3) (= (get parts 0) "detached") (= (get parts 2) "retarget")) RetargetBody
     (and (= method "POST") (= parts #("warm"))) WarmBody
     (and (= method "PUT") (= parts #("jobs"))) LegacyJobsBody
     (and (= method "PUT") (= (len parts) 3) (= (get parts 0) "resources")) ResourceBody

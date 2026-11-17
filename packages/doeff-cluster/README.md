@@ -483,6 +483,7 @@ worker が無い・コードを準備できない)・`DetachedUnknown`(知らな
 | `PUT /detached/<key>` | 送る `{program(sha) revision needs name leaseSeconds retainSeconds format runtimeEnv?}` → `{key task created phase}` |
 | `GET /detached/<key>` | 読む(lease に触らない)→ `{key phase detail result worker}`。知らない key は `phase` = `unknown` |
 | `POST /detached/<key>/cancel` | 取り消す → `{key cancelled phase}` |
+| `POST /detached/<key>/retarget` | 待っている(queued の)task の置き先を替える `{away toward reason}`(needs から away を外し toward を足す)→ `{key moved phase needs detail}`。置いた後・終わった task・away を持たない task・新しい needs で置けない替えは替えず `moved` = false と訳。試行の番号と積んだ刻は変えない |
 | `DELETE /detached/<key>` | 終わった task の保持を解く → `{key released}`。まだ終わっていなければ 409 |
 
 ## Rollout

@@ -1194,6 +1194,16 @@
   (#^ str phase))
 
 
+(defrecord DetachedRetargeted
+  "POST /detached/<key>/retarget の答え(detached_policy.retarget-detached — 2026-11-17): moved = この頼みで置き先を替えたか・phase = いまの段
+   (行が無ければ unknown)・needs = 答えの刻の needs(名の順 — 行が無ければ空)・detail = 替えなかった訳の 1 句(替えた時は空)。"
+  (#^ str key)
+  (#^ bool moved)
+  (#^ str phase)
+  (#^ (get tuple #(str ...)) needs)
+  (#^ str detail))
+
+
 (defrecord TargetView
   "Rollout の相手 1 つの観測(api_policy.target-view が作り rollout_policy.rollout-step が読む — #2614): ready = Ready | NotReady | Unknown・
    stopped = 止まっているか(観測が無い・古い時は None)・spec-replicas = 宣言の台数(知らなければ None)・reason = 人が読む理由。"

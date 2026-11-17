@@ -14,7 +14,7 @@
                                                        ServiceObserved UnplacedView WorkerObserved TaskObserved RolloutObserved ResourceView ResourceList VersionVerdict ErrorReply RowConflict
                                                        BoardUsage BoardRead BoardRow BoardWritten BoardConflict BoardRefused
                                                        TaskRecord TaskUnplacedKind TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
-                                                       DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
+                                                       DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted
                                                        ProgramRow ProgramStored DeploymentSeen DeploymentUnreadable ReadinessReport])
 (import doeff_cluster._shared.intent.warm_model [WarmState])
 (import doeff_cluster._shared.core.warm_rules [warm-state->json])
@@ -441,8 +441,8 @@
     True {"dropped" True}))
 
 
-(defk detached-answer-json [#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased) answer]
-  {:pre [(: answer (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+(defk detached-answer-json [#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted) answer]
+  {:pre [(: answer (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted))] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "切り離した task の口の答え → JSON の形(#2614 の前に detached_policy が組んでいた形と同じ)。"
   (cond
     (isinstance answer DetachedSubmitted) {"key" answer.key "task" answer.id "created" answer.created "phase" answer.phase}
@@ -452,13 +452,15 @@
     (isinstance answer DetachedUnknown) {"key" answer.key "phase" "unknown"}
     (isinstance answer DetachedWarming) {"key" answer.key "phase" answer.phase "error" answer.reason}
     (isinstance answer DetachedCancelled) {"key" answer.key "cancelled" answer.cancelled "phase" answer.phase}
+    (isinstance answer DetachedRetargeted)
+      {"key" answer.key "moved" answer.moved "phase" answer.phase "needs" (list answer.needs) "detail" answer.detail}
     True {"key" answer.key "released" answer.released}))
 
 
 (defk reply-json [body]
   {:pre [(: body (| EventsView StateReply HeartbeatReply WorkerDrainView ErrorReply BoardRead BoardWritten BoardConflict BoardRefused
                     LeaseAnswer WarmState ProgramStored ProgramRow TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped
-                    DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased
+                    DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted
                     DetachedOutbox DetachedOutboxAcked ResourceView
                     ResourceList PlainText dict list tuple str int float bool None))]
    :post [(: % (| PlainText dict list tuple str int float bool None))] :tags {:context "coordinator" :role "protocol" :spells "json"}}
@@ -481,7 +483,7 @@
     (isinstance body ProgramStored) {"program" body.sha}
     (isinstance body ProgramRow) {"blob" body.blob "versions" body.versions}
     (isinstance body #(TaskAccepted TaskProgress TaskMissing TaskResultTaken TaskDropped)) (! (task-answer-json body))
-    (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased)) (! (detached-answer-json body))
+    (isinstance body #(DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted)) (! (detached-answer-json body))
     ;; 切り離した task の終わりの出口(読み手の DetachedOutboxWire と同じ形)。
     (isinstance body DetachedOutbox) {"entries" (lfor e body.entries (ended-to-json e))}
     (isinstance body DetachedOutboxAcked) {"id" body.id "acked" body.acked}

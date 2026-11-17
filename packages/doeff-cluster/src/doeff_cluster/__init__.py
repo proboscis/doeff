@@ -184,6 +184,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.detached_model import ReadRunners as ReadRunners
     from doeff_cluster._shared.intent.detached_model import ReadServices as ReadServices
     from doeff_cluster._shared.intent.detached_model import ReleaseDetached as ReleaseDetached
+    from doeff_cluster._shared.intent.detached_model import RetargetDetached as RetargetDetached
     from doeff_cluster._shared.intent.detached_model import SubmitDetached as SubmitDetached
     from doeff_cluster._shared.intent.kube_service_model import (
         EnsureKubeIngress as EnsureKubeIngress,
@@ -531,6 +532,10 @@ if TYPE_CHECKING:
         DetachedQueueReason as DetachedQueueReason,
     )
     from doeff_cluster._shared.intent.detached_model import DetachedRefused as DetachedRefused
+    from doeff_cluster._shared.intent.detached_model import DetachedRetarget as DetachedRetarget
+    from doeff_cluster._shared.intent.detached_model import (
+        DetachedRetargetAnswer as DetachedRetargetAnswer,
+    )
     from doeff_cluster._shared.intent.detached_model import (
         DetachedSubmitAnswer as DetachedSubmitAnswer,
     )
@@ -1038,6 +1043,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "Redeclare": "doeff_cluster._shared.intent.cluster_control",
     "RelabelNode": "doeff_cluster._sim.local",
     "ReleaseDetached": "doeff_cluster._shared.intent.detached_model",
+    "RetargetDetached": "doeff_cluster._shared.intent.detached_model",
     "ReleaseLeases": "doeff_cluster._worker.intent.worker_model",
     "ReleaseRequest": "doeff_cluster._sim.local",
     "RemoteJob": "doeff_cluster._shared.intent.remote_model",
@@ -1414,6 +1420,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "DetachedQueueGroup": "doeff_cluster._shared.intent.detached_model",
     "DetachedQueueReason": "doeff_cluster._shared.intent.detached_model",
     "DetachedRefused": "doeff_cluster._shared.intent.detached_model",
+    "DetachedRetarget": "doeff_cluster._shared.intent.detached_model",
+    "DetachedRetargetAnswer": "doeff_cluster._shared.intent.detached_model",
     "DetachedSubmitAnswer": "doeff_cluster._shared.intent.detached_model",
     "DetachedSubmitted": "doeff_cluster._shared.intent.detached_model",
     "DetachedSucceeded": "doeff_cluster._shared.intent.detached_model",

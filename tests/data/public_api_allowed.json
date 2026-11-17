@@ -165,6 +165,20 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "DetachedRetarget",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedRetargetAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "DetachedTaskPhase",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"

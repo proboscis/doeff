@@ -390,6 +390,45 @@
 (setv DetachedSubmitAnswer (| DetachedSubmitted DetachedUnreachable))
 
 
+(defrecord DetachedRetarget
+  "RetargetDetached の答え: key・moved = この頼みで置き先を替えたか・phase = 答えの刻の coordinator の phase(行が無ければ unknown)・
+   needs = 答えの刻の needs(名の順 — 替えた時は新しい needs・行が無ければ空)・detail = 替えなかった訳の 1 句(替えた時は空)。"
+  {:tags {:context "doeff-cluster" :role "intent"}}
+  (#^ str key)
+  (#^ bool moved)
+  (#^ str phase)
+  (#^ (get tuple #(str ...)) needs)
+  (setv #^ str detail ""))
+
+
+(defwire DetachedRetargetWire
+  "coordinator の POST /detached/<key>/retarget の返事(DetachedRetarget の綴り — 欄の名は camel)。"
+  {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
+  (#^ str key)
+  (#^ bool moved)
+  (#^ str phase)
+  (setv #^ (get tuple #(str ...)) needs #())
+  (setv #^ str detail ""))
+
+
+(val DetachedRetargetAnswer (| DetachedRetarget DetachedUnreachable))
+
+
+(defeffect RetargetDetached
+  "待っている(phase queued の)切り離した task 1 つの置き先を替える(2026-11-17): needs から away の能力を外し、toward の
+   能力を足す。task の作業場が送った後に別の機体へ移る呼び手(上に載る系で、task の作業場の書き手が機体を移った呼び手)が、まだ走り出していない task を
+   新しい機体で走り出させるための口。away のどれも needs に無い task・置いた後(preparing・assigned)と終わった task は替えない(走り出した試行の
+   置き先はその試行の物)。新しい needs を満たす生きた worker が無い・要りが新しい needs の合うどの worker にも入らない時も替えない(替えると
+   置き先が無いまま終わる)。試行の番号・走らせ直しの回数・積んだ刻(待ちの順と待ちの期限)は変えない。reason = 替える訳の 1 行(task の detail に
+   残す — 次に置き先が待つ訳を書くまで)。答え = DetachedRetarget(moved = 替えたか)か DetachedUnreachable(届かない — 替えたかは分からない。
+   同じ頼みは何度送っても同じ結果なので送り直してよい)。"
+  {:fields [(: key str) (: away (get frozenset str)) (: toward (get frozenset str)) (: reason str "")]
+   :pre [(: key str) (: away frozenset) (: toward frozenset) (: reason str)
+         (and away toward (all (gfor m (| away toward) (and (isinstance m str) m))))]
+   :answer DetachedRetargetAnswer
+   :tags {:context "doeff-cluster" :role "intent"}})
+
+
 ;; --- task の時刻(ReadDetachedTiming)----------------------------------------------------------
 ;; DetachedTiming = 切り離した task 1 つの、いまの phase と行の時刻(epoch ミリ秒): submitted-ms = 積まれた刻・started-ms = worker に置かれた
 ;;   刻(phase queued の間は None。置いた後に実行環境の準備の失敗や worker の止まり始めで待ちへ戻った task も、置き直されるまで None。
@@ -530,14 +569,17 @@
 ;; --- key の前置きが同じ task の一覧(ReadDetachedTasks)------------------------------
 ;; key が同じ前置きで始まる切り離した task を、いまの phase と共に列挙する。送り手が、前の process の送った key(中身の印が違う)を知らずに、
 ;; 自分の送りに置き換わった未着手の task を見つけて取り下げる時の読み(ReadDetachedTiming と ReadDetachedQueue は key 1 つを引く)。読む先は
-;; coordinator の GET /state の tasks の行の key と phase(返事は大きい — 呼び手は拍ごとでなく判断の時だけ読む)。置き場を失って起きた直後の
+;; coordinator の GET /state の tasks の行の key・phase・worker・limits(返事は大きい — 呼び手は拍ごとでなく判断の時だけ読む)。置き場を失って起きた直後の
 ;; coordinator は走っている task の行をまだ持たないことがあるので、一覧に無い key を「無い」と決める判断には使わない(在る行を読む物)。
 
 (defwire DetachedPhaseRowWire
-  "coordinator の GET /state の tasks の行のうち ReadDetachedTasks が読む欄: key(切り離した task だけが持つ — RemoteJob の task の行は無い)・phase。"
+  "coordinator の GET /state の tasks の行のうち ReadDetachedTasks が読む欄: key(切り離した task だけが持つ — RemoteJob の task の行は無い)・phase・
+   worker(置いた worker — 待っている行は None)・limits(名乗った組 — 無い行は空)。"
   {:tags {:context "doeff-cluster" :role "type"} :names :camel :unknown :ignore}
   (setv #^ (| str None) key None)
-  (#^ str phase))
+  (#^ str phase)
+  (setv #^ (| str None) worker None)
+  (setv #^ (get tuple #(DetachedLimitWire ...)) limits #()))
 
 
 (defwire StatePhasesWire
@@ -547,10 +589,15 @@
 
 
 (defrecord DetachedTaskPhase
-  "ReadDetachedTasks の答えの 1 行: key = task のキー・phase = いまの coordinator の phase(queued | preparing | assigned | 終わりの phase)。"
+  "ReadDetachedTasks の答えの 1 行: key = task のキー・phase = いまの coordinator の phase(queued | preparing | assigned | 終わりの phase)・
+   worker = 置いた worker の名(待っている行・欄の無い前の版の coordinator は None)・groups = 名乗った同時数の上限の組の名(名の順 — 名乗らなければ空)。
+   呼び手は worker で走り出した試行の担い手を、groups で task の置き方の種類を読む(RetargetDetached で替えてよい task かを呼び手が決める —
+   2026-11-17)。"
   {:tags {:context "doeff-cluster" :role "intent"}}
   (#^ str key)
-  (#^ str phase))
+  (#^ str phase)
+  (setv #^ (| str None) worker None)
+  (setv #^ (get tuple #(str ...)) groups #()))
 
 
 (defrecord DetachedTasks
@@ -562,7 +609,7 @@
 (val DetachedTasksAnswer (| DetachedTasks DetachedUnreachable))
 
 (defeffect ReadDetachedTasks
-  "key が prefix で始まる切り離した task の行を、終わりを待たずにいまのまま読む(coordinator の GET /state の tasks の行の key と phase)。
+  "key が prefix で始まる切り離した task の行を、終わりを待たずにいまのまま読む(coordinator の GET /state の tasks の行の key・phase・worker・limits の組の名)。
    答え = DetachedTasks(当たる行が無ければ空)・DetachedUnreachable(coordinator に届かない・形の違う返事 — task の在否は分からない)。
    lease に触らない。"
   {:fields [(: prefix str)]

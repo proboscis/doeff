@@ -10,6 +10,7 @@
 ;;;   HeartbeatBody   POST /heartbeat             worker の生存・能力・版・状態の報告・実行環境の root の名乗り
 ;;;   ResourceBody    POST /resources/<種類>・PUT /resources/<種類>/<名>   資源の宣言の包み(name・spec・resourceVersion)
 ;;;   TaskBody        POST /tasks・PUT /detached/<key>   task と切り離した task の頼み
+;;;   RetargetBody    POST /detached/<key>/retarget   待っている切り離した task の置き先の替え(2026-11-17)
 ;;;   WarmBody        POST /warm                  温める表の行
 ;;;   LegacyJobsBody  PUT /jobs                   旧い宣言の口(jobs の行の列と送り手)
 ;;;   BoardWrite      PUT /board/<鍵>             盤の行 1 つの compare-and-set(本文の型 BoardWireBody と、欄が在ったかの印)
@@ -394,6 +395,15 @@
   (setv #^ object format 1))
 
 
+(defwire RetargetBody
+  "POST /detached/<key>/retarget の本文(2026-11-17 — 待っている切り離した task の置き先の替え): away = needs から外す能力の名の列・toward = 足す
+   能力の名の列・reason = 替える訳の 1 行。名の規則と空の列の断りは判断が読む(detached_policy.retarget-detached)。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ object away None)
+  (setv #^ object toward None)
+  (setv #^ str reason ""))
+
+
 (defwire WarmBody
   "POST /warm の本文: runtime-env = 温める実行環境の宣言・ttl-seconds = 行の期限・needs(と旧い requires)= 要る能力・holder = 頼み手
    (None = 送り手)・urgent = 急ぎの名乗り(shared/intent/warm_model の WarmRuntimeEnv の urgent — 欄の無い本文は偽)。中身の規則は
@@ -429,7 +439,7 @@
 
 
 ;; 道の本文の答えの型の和(ReadBody の答え・判断 respond が受ける本文 — まだ型にしていない道は JSON の object)。
-(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody TaskBody WarmBody LegacyJobsBody BodyMalformed (get dict #(str object))))
+(setv RequestBody (| LeaseBody TaskResultBody DrainBody ReadinessBody MetricsBody ProgramBody BoardWrite HeartbeatBody ResourceBody TaskBody RetargetBody WarmBody LegacyJobsBody BodyMalformed (get dict #(str object))))
 
 
 (defclass [(dataclass :frozen True)] ReadBody [EffectBase]

@@ -27,7 +27,7 @@
 ;;;                        cluster_policy.absorb-task-result。終わった task には何もしない・届かなければ heartbeat が運ぶ)
 ;;;   PUT /programs/<sha> {"blob" "versions"} · GET /programs/<sha>
 ;;;                        詰めた Program の置き場(2026-09-27 — program_policy。宣言の行と heartbeat の返事は sha だけを運ぶ)
-;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
+;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · POST /detached/<key>/retarget · DELETE /detached/<key>
 ;;;                        切り離した task(呼び手と寿命を切り離した task — 送る・読む・取り消す・保持を解く・終わりの出口を読む・受領する。detached_policy)
 ;;; 書きには header X-Actor(依頼の主体の id・作業係の名・worker の名)が要る。盤と task は無ければ送り元の番地で記録する。
 ;;; 旧い口(PUT /jobs・/heartbeat・/board・/tasks)は残す。PUT /jobs は資源ごとの compare-and-set に写す(resource_policy)。
@@ -56,7 +56,7 @@
 (import doeff_cluster._coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster._coordinator.intent.cluster_model [HandoffPhase])
 (import doeff_hy._table [TableWrite draft-of])
-(import doeff_cluster._coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached release-detached outbox-read outbox-ack])
+(import doeff_cluster._coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached retarget-detached release-detached outbox-read outbox-ack])
 (import doeff_cluster._shared.intent.detached_model [OUTBOX-ENDED])
 (import doeff_cluster._coordinator.core.rollout_policy [rollout-step rollout-targets target-key deployment-owners drift-status action-due shift-clocks TERMINAL-PHASES])
 (import doeff_cluster._coordinator.core.warm_policy [warm-write warm-read])
@@ -651,6 +651,9 @@
       (! (detached-reply state (detached-read state (get parts 1) now timing) request now timing))
     (and (= method "POST") (= head "detached") (= (len parts) 3) (= (get parts 2) "cancel"))
       (! (detached-reply state (cancel-detached state (get parts 1) now) request now timing))
+    ;; 待っている task の置き先の替え(2026-11-17 — 本文は RetargetBody)。
+    (and (= method "POST") (= head "detached") (= (len parts) 3) (= (get parts 2) "retarget"))
+      (! (detached-reply state (retarget-detached state (get parts 1) body now timing) request now timing))
     (and (= method "DELETE") (= head "detached") (= (len parts) 2))
       (! (detached-reply state (release-detached state (get parts 1)) request now timing))
     ;; --- 切り離した task の終わりの出口(2026-10-21 — detached_policy の出口の節)---

@@ -36,7 +36,7 @@
 ;;;   - 宿の答え(host-answers — process ごと)= host_contract.HOST-CONTRACT の 3 つ(run-context・Program の path・宣言の environ の名の
 ;;;     Ask — environ は本番の土台の os-environ-reader と同じ答え方の host_contract.environ-table-reader を子の spec.environ の上に並べる:
 ;;;     値は字面どおり)と ReportReady・ReportMetrics。クラスタの約束の答え(coordinator-answers — 送り手の口 SimLink ごと)= ReadShared / WriteShared・
-;;;     LeaseOp・AwaitLeaseFree・AwaitLeaseVacated・RemoteJob・SubmitDetached / AwaitDetached / ReadDetachedTiming / CancelDetached / ReleaseDetached / ReadRunners / ReadServices / AwaitRunnersChange・WarmRuntimeEnv /
+;;;     LeaseOp・AwaitLeaseFree・AwaitLeaseVacated・RemoteJob・SubmitDetached / AwaitDetached / ReadDetachedTiming / CancelDetached / ReleaseDetached / RetargetDetached / ReadRunners / ReadServices / AwaitRunnersChange・WarmRuntimeEnv /
 ;;;     ReadWarmState。
 ;;;     本番では土台の HTTP の handler が coordinator へ送る物で、要求の形は本番の送り手と同じ関数(service_report.report-request・
 ;;;     shared_handlers.board-*-request / lease-request・remote.task-submit-body / outcome-of / settled-value・detached.detached-path /
@@ -212,13 +212,15 @@
 (import doeff_cluster._shared.protocol.detached [detached-path detached-submit-body detached-refusal submit-unreachable awaited-answer runner-facts-of-view
                    runners-unreachable warm-request-body warm-path absent-warm-state SERVER-ERROR warm-unconnected
                    warm-server-failure runners-change-of watch-query service-ready-of service-facts-of-json services-unreachable
-                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state detached-tasks-of-state outbox-answer outbox-ack-answer outbox-path outbox-query])
+                   detached-timing-of-state unknown-timing-confirmed detached-queue-of-state detached-tasks-of-state outbox-answer outbox-ack-answer outbox-path outbox-query
+                   retarget-body retarget-answer])
 (import doeff_cluster._shared.core.capabilities [env-mapping])
 (import doeff_cluster._shared.core.detached_rules [task-placing-json task-notify-json task-rerun-json task-ungated-json task-preemptible-json task-queue-limit-json])
 (import doeff_cluster._shared.intent.detached_model [SubmitDetached AwaitDetached CancelDetached ReleaseDetached ReadRunners DetachedSubmitted
                          DetachedSubmitAnswer DetachedAwaited RunnersUnreachable WARMING-PHASE AwaitRunnersChange RunnersChangeAnswer
                          AwaitServiceReady ServiceReady RunnersChange RunnersWatchMissing ReadServices ServiceFact ServicesUnreachable
                          ReadDetachedTiming DetachedTimingAnswer DetachedUnknown ReadDetachedQueue DetachedQueueAnswer ReadDetachedTasks DetachedTasksAnswer
+                         RetargetDetached DetachedRetargetAnswer
                          AwaitDetachedOutbox AckDetachedOutbox DetachedOutbox DetachedOutboxAnswer DetachedAckAnswer])
 (import doeff_cluster._worker.core.drain_client [DRAIN-DEADLINE-SECONDS DRAIN-TTL-MARGIN-SECONDS])
 (import doeff_cluster._worker.core.launch [outlives-worker orphan-seconds-of])
@@ -2048,6 +2050,11 @@
   (CancelDetached [key]
     (<- answer tuple (send-resent link "POST" (detached-path key "/cancel") {} None))
     (resume (get (refused-or-object answer "取り消せない") "cancelled")))
+  (RetargetDetached [key away toward reason]
+    ;; 本番の detached-retargeted と同じ要求(POST /detached/<key>/retarget)を同じ送り直しで送り、同じ読み(retarget-answer)で答える。
+    (<- answer tuple (send-resent link "POST" (detached-path key "/retarget") {} (retarget-body away toward reason)))
+    (<- retargeted DetachedRetargetAnswer (retarget-answer key (outbox-read-of answer)))
+    (resume retargeted))
   (ReleaseDetached [key]
     (<- answer tuple (send-resent link "DELETE" (detached-path key "") {} None))
     (resume (get (refused-or-object answer "保持を解けない") "released")))

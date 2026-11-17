@@ -19,8 +19,9 @@
 ;;;   PUT    /board/<鍵>     {"value": …, "expect"?: …, "expectVersion"?: …} compare-and-set。合わなければ 409
 ;;;   POST   /tasks · GET /tasks/<id> · DELETE /tasks/<id>   task を出す・問い合わせる(lease を延ばす)・落とす
 ;;;   POST   /tasks/<id>/result   task の子 process が終わる前に直に届ける結果(届かなければ worker の heartbeat が運ぶ — #1387)
-;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · DELETE /detached/<key>
-;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・保持を解く(detached_policy)
+;;;   PUT /detached/<key> · GET /detached/<key> · POST /detached/<key>/cancel · POST /detached/<key>/retarget · DELETE /detached/<key>
+;;;                           切り離した task を送る(job id で冪等)・読む(lease に触らない)・取り消す・待っている task の置き先を替える・
+;;;                           保持を解く(detached_policy)
 ;;;   GET    /livez · /readyz   k8s の probe。調停ループを通さず、HTTP の受付(handler)が受付の箱の待ちの様子だけで答える
 ;;;                             (probe-verdict — 待つと定めた刻までの待ちは止まりと数えない・#3865)。fsync・k8s の API の読みで
 ;;;                             ループが数秒遅れても落ちない(2026-09-25)。

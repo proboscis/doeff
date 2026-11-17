@@ -13,6 +13,8 @@
 ;;;   - Service の一覧(ReadServices)= coordinator の Service の宣言の台数と、置き先の担い手が報告した落ちた事実(#3479)
 ;;;   - task の時刻(ReadDetachedTiming)= 積まれた刻・worker に置かれた刻・終わった刻(epoch ミリ秒)。終わったかどうかを待たず、「ある刻に始まって
 ;;;     いたか」を読んだ今の phase でなく刻で決める呼び手のための読み
+;;;   - 置き先の替え(RetargetDetached — 2026-11-17)= 待っている(queued の)task の needs の away を toward に替える。置いた後と終わった task・
+;;;     away を持たない task・新しい needs を満たす生きた worker の無い替えは替えない(moved = False と訳)。試行の番号と積んだ刻は変えない
 ;;;
 ;;; 2026-09-28: 同じ VM の scheduler の task で走らせる模擬(detached-local・置き場 DetachedLocalStore・模擬の担い手)を消した。呼び手の
 ;;; 外側の handler を継ぎ、Program に足りない handler を黙って補っていた(ADR-DOE-CLUSTER-001 R1・R2 に反する)。模擬の担い手の筋書き
@@ -48,6 +50,7 @@
                          ReadDetachedTiming DetachedTiming StateTasksWire DetachedTimingAnswer
                          ReadDetachedQueue DetachedQueueReason DetachedQueueGroup DetachedQueueAnswer StateQueueWire DetachedGroupWire DetachedLimitWire
                          ReadDetachedTasks DetachedTasks DetachedTaskPhase DetachedTasksAnswer StatePhasesWire
+                         RetargetDetached DetachedRetarget DetachedRetargetWire DetachedRetargetAnswer
                          AwaitDetachedOutbox AckDetachedOutbox DetachedEnded DetachedOutbox DetachedOutboxWire DetachedOutboxAnswer
                          DetachedOutboxAcked DetachedAckAnswer])
 (import doeff_hy._wire [Malformed parse])
@@ -240,8 +243,43 @@
       (DetachedUnreachable :detail (.format "coordinator の GET /state の返事を読めない(task の行の key か phase の欄の形が違う): {}"
                                             (.join "・" (gfor f fields (+ f.field " " f.reason)))))
     _ (DetachedTasks :tasks (tuple (sorted (gfor r wire.tasks :if (and (is-not r.key None) (.startswith r.key prefix))
-                                                 (DetachedTaskPhase :key r.key :phase r.phase))
+                                                 (DetachedTaskPhase :key r.key :phase r.phase :worker r.worker
+                                                                    :groups (tuple (sorted (sfor claim r.limits claim.group)))))
                                            :key (fn [row] row.key))))))
+
+
+;; --- 待っている task の置き先の替え(RetargetDetached — 2026-11-17)----------------------------------
+
+(deff retarget-body [#^ frozenset away #^ frozenset toward #^ str reason]  ; cannot be a defk: 本番の client と sim の宿が同じ形を作る純粋な判断
+  {:pre [(: away frozenset) (: toward frozenset) (: reason str)] :post [(: % dict)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "POST /detached/<key>/retarget の本文を作るため(外す能力・足す能力は名の順・替える訳の 1 行)。"
+  {"away" (sorted away) "toward" (sorted toward) "reason" reason})
+
+
+(defk retarget-answer [key read]
+  {:pre [(: key str) (: read (| dict str))] :post [(: % DetachedRetargetAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "POST /detached/<key>/retarget の返事 read(本文の JSON の object か、届かなかった・断られた理由の文 — 口を知らない前の版の coordinator の
+   404 を含む)を RetargetDetached の答えにするため。替えたかが分からない返事は DetachedUnreachable(呼び手は替わっていないと読んで送り直せる)。
+   本番の client と sim の宿が同じ判断を読む。"
+  (when (isinstance read str)
+    (return (DetachedUnreachable :detail (.format "coordinator へ task {} の置き先の替えを届けられない: {}" key read))))
+  (<- wire (| DetachedRetargetWire Malformed) (parse DetachedRetargetWire read))
+  (if (isinstance wire Malformed)
+      (DetachedUnreachable :detail (.format "coordinator の置き先の替えの返事を読めない: {}"
+                                            (.join "・" (gfor f wire.fields (+ (or f.field "本文") " " f.reason)))))
+      (DetachedRetarget :key wire.key :moved wire.moved :phase wire.phase :needs (tuple wire.needs) :detail wire.detail)))
+
+
+(defk detached-retargeted [cell options sender key away toward reason]
+  {:pre [(: cell RouteCell) (: options RouteOptions) (: sender DetachedSender) (: key str) (: away frozenset) (: toward frozenset) (: reason str)]
+   :post [(: % DetachedRetargetAnswer)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "待っている task 1 つの置き先を替えるため(RetargetDetached の本番の答え)。同じ頼みは何度送っても同じ結果(替えた後の needs は away を
+   持たないので 2 度目は替えない)なので期限まで送り直す。"
+  (<- sent (resent-answer cell options "POST" (detached-path key "/retarget") None (retarget-body away toward reason) sender.deadline-seconds))
+  ;; 返事の読みは出口の口と同じ(届かない・200 でない・object でない本文は理由の文)。
+  (<- read (| dict str) (outbox-response sent))
+  (<- answer DetachedRetargetAnswer (retarget-answer key read))
+  answer)
 
 
 (defk detached-tasks-read [cell options sender prefix]
@@ -774,6 +812,9 @@
   (ReadDetachedTasks [prefix]
     (<- tasks (detached-tasks-read cell options sender prefix))
     (resume tasks))
+  (RetargetDetached [key away toward reason]
+    (<- retargeted DetachedRetargetAnswer (detached-retargeted cell options sender key away toward reason))
+    (resume retargeted))
   (ReadRunners []
     (<- runners (runners-read cell options sender))
     (resume runners))

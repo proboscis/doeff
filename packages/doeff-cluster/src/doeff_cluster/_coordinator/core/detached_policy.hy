@@ -6,6 +6,9 @@
 ;;;   GET    /detached/<key>          読む(lease に触らない)→ {"key" "phase" "detail" "result" "worker"}。知らない key は phase = unknown
 ;;;                                   (coordinator が起きた直後の猶予の内は 503・phase = warming — detached-read)
 ;;;   POST   /detached/<key>/cancel   取り消す → {"key" "cancelled" "phase"}(終わっていれば cancelled = false・結果は保持)
+;;;   POST   /detached/<key>/retarget 待っている task の置き先を替える {away toward reason} → {"key" "moved" "phase" "needs" "detail"}
+;;;                                   (queued の task の needs から away を外して toward を足す。置いた後・終わった task・away を持たない task・
+;;;                                   新しい needs で置けない替えは替えず moved = false と訳 — 2026-11-17)
 ;;;   DELETE /detached/<key>          終わった task の保持を解く → {"key" "released"}。まだ終わっていなければ 409
 ;;;   GET    /outbox?prefix=<頭>[&kinds=<種類,…>]  出口の行を読む(知らせ先の頭と行の種類で選ぶ — 種類の既定は ended だけ・外さない)
 ;;;                                   → {"entries" [{id key notify phase detail failureKind finishedMs kind}]}
@@ -20,13 +23,13 @@
 (import doeff_hy._table [TableWrite])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming])
 (import doeff [run])
-(import doeff_cluster._shared.core.capabilities [environ-pairs])
+(import doeff_cluster._shared.core.capabilities [capabilities-of environ-pairs])
 (import doeff_cluster._shared.core.detached_rules [task-priority-refusal task-limits-refusal task-limits-of task-notify-refusal task-rerun-refusal task-memory-required-refusal task-shape-refusal task-family-refusal task-ungated-refusal task-room-claim-refusal task-preemptible-refusal task-queue-limit-refusal])
-(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ShapeFamily ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased])
+(import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskRecord ShapeFamily ErrorReply DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted])
 (import doeff_cluster._coordinator.core.cluster_rules [format-version-refusal])
-(import doeff_cluster._coordinator.intent.request_bodies [TaskBody])
+(import doeff_cluster._coordinator.intent.request_bodies [TaskBody RetargetBody])
 (import doeff_cluster._coordinator.core.cluster_policy [DETACHED-TERMINAL TASK-MAX-OPEN end-detached rerun-id runtime-env-value-refusal task-id task-body-refusal needs-named program-versions
-                                                     limits-undeclared-refusal scan-rows memory-need-refusal])
+                                                     limits-undeclared-refusal scan-rows memory-need-refusal alive can-run-task])
 (import doeff_cluster._shared.intent.detached_model [DETACHED-DEFAULT-LEASE-SECONDS DETACHED-DEFAULT-RETAIN-SECONDS OPEN-PHASES WARMING-PHASE
                                                     DetachedEnded DetachedOutbox DetachedOutboxAcked OUTBOX-ENDED OUTBOX-QUEUED-OVERDUE OUTBOX-RERAN])
 
@@ -41,8 +44,8 @@
    (答えの型の値 — JSON は coordinator/protocol/replies が綴る・#2614)。"
   (#^ ClusterState state)
   (#^ int status)
-  (#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedOutbox DetachedOutboxAcked
-         ErrorReply) body))
+  (#^ (| DetachedSubmitted DetachedProgress DetachedUnknown DetachedWarming DetachedCancelled DetachedReleased DetachedRetargeted DetachedOutbox
+         DetachedOutboxAcked ErrorReply) body))
 
 
 (defn #^ (| TaskRecord None) task-by-key [#^ ClusterState state #^ str key]
@@ -173,6 +176,44 @@
     (in task.phase DETACHED-TERMINAL) (Reply state 200 (DetachedCancelled :key key :cancelled False :phase task.phase))
     True (Reply (replace state :tasks (.with-writes state.tasks #((TableWrite task.id (end-detached task "cancelled" now "取り消された")))))
                 200 (DetachedCancelled :key key :cancelled True :phase "cancelled"))))
+
+
+(defn #^ Reply retarget-detached [#^ ClusterState state #^ str key #^ RetargetBody body #^ int now #^ ClusterTiming timing]
+  "POST /detached/<key>/retarget: 待っている(queued の)task の置き先を替えるため(2026-11-17 — 送った後に作業場が別の機体へ移った呼び手が、
+   まだ走り出していない task を新しい機体で走り出させる)。needs から away の能力を外し toward の能力を足す。替えないのは: 行が無い・置いた後
+   (preparing・assigned — 走り出した試行の置き先はその試行の物)か終わった・needs が away のどれも持たない(同じ頼みの 2 度目もここ)・新しい
+   needs を満たす生きた worker が無い(替えると place-tasks が置き先の無い task として終える)・要りが新しい needs の合うどの worker の区画にも
+   入らない(送りの memory-need-refusal と同じ判断)。どれも status 200 で moved = false と訳。替えた行は試行の番号・走らせ直しの回数・積んだ刻を
+   変えず(待ちの順と待ちの期限は送った時のまま)、置けない訳の種類を外し、detail に替えた訳を書く(次の拍に置き先が待つ訳を書き直すまで)。
+   away・toward が能力の名の空でない列でなければ 400。"
+  (setv refusal (key-refusal key))
+  (when refusal (return (Reply state 400 (ErrorReply :message refusal))))
+  (setv away (capabilities-of body.away "retarget の away")
+        toward (capabilities-of body.toward "retarget の toward"))
+  (when (not (and away toward))
+    (return (Reply state 400 (ErrorReply :message "retarget の away と toward は能力の名の空でない列"))))
+  (setv task (task-by-key state key))
+  (when (is task None)
+    (return (Reply state 200 (DetachedRetargeted :key key :moved False :phase "unknown" :needs #() :detail "その key の task は無い"))))
+  (setv needs (tuple (sorted (| (- (set task.needs) (set away)) (set toward))))
+        moved (replace task :needs needs)
+        ;; 替えない訳(None = 替える)。
+        kept (cond
+               (!= task.phase "queued")
+                 (.format "phase {} の task の置き先は替えない(走り出した試行の置き先はその試行の物)" task.phase)
+               (not (& (set task.needs) (set away)))
+                 (.format "needs {} は away {} のどれも持たない" (list task.needs) (list away))
+               (not (any (gfor w (.rows state.workers) (and (alive now w timing.lease-ms) (can-run-task moved w)))))
+                 (.format "新しい needs {} を満たす生きた worker が無い" (list needs))
+               True (run (memory-need-refusal state needs task.memory-mib task.shape task.ungated))))
+  (if kept
+      (Reply state 200 (DetachedRetargeted :key key :moved False :phase task.phase :needs task.needs :detail kept))
+      (Reply (replace state :tasks (.with-writes state.tasks
+                                                 #((TableWrite task.id (replace moved :unplaced-kind None
+                                                                                :detail (.format "置き先を needs {} から {} へ替えた: {}"
+                                                                                                 (list task.needs) (list needs)
+                                                                                                 (or body.reason "訳の名乗り無し")))))))
+             200 (DetachedRetargeted :key key :moved True :phase task.phase :needs needs :detail ""))))
 
 
 (defn #^ Reply release-detached [#^ ClusterState state #^ str key]
