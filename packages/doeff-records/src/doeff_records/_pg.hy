@@ -17,9 +17,10 @@
 ;;; 変更の列に積む前に番号の錠も取る。
 ;;; 版の繰り上げだけが置き場全体を排他 — writer-locks)。本番の組み立て(handler の gated)では、書きは接続を借りる前に同じ process の同じ
 ;;; 単位の書きと 1 本ずつに並び(writer-gates)、並んだ秒と錠を持った秒を操作・単位ごとに計器に積む(locked-transaction)。
-;;; transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に読んで渡す)。版の繰り上げ・回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
+;;; transaction の中では SqlQuery / SqlBatch と純粋な計算だけを出す(時刻は前に読んで渡す)。版の繰り上げ・出来事の回収・刈り取りの transaction は既定の形(文 1 つずつ — writing)のまま。
 ;;; 書きの往復(#3605 — 記録の service と DB が別の機体に在ると、DB への往復 1 回が書き 1 回の待ちに乗る): PutRow・PutRows・AppendEvent・
-;;; AppendEvents だけが往復をまとめる transaction(SqlTransaction の batched — batched-writing)を選び、DB へ 2 往復で書く(AppendEvents は束の
+;;; AppendEvents と行の回収(remove-expired-rows — 番号の錠を持つ間の往復を無くす)が往復をまとめる transaction(SqlTransaction の batched —
+;;; batched-writing)を選び、DB へ 2 往復で書く(AppendEvents は束の
 ;;; 追記の数に依らず 2 往復 — 追記ごとの読みと書きを同じ往復に並べる)。1 往復目 = 判じるための読みの束
 ;;; (置き場の頭・錠つきの行 | 冪等キーの引き・鍵の覚え・組の期限を過ぎた出来事 —
 ;;; BEGIN と書きの錠は答え手が同じ往復の先頭に流す)、2 往復目 = 書きの束(片付け・行の書きと変更の列 | 出来事の書き — 合図と COMMIT も同じ
@@ -182,6 +183,13 @@
 ;; 回収(purge-expired)が書きの錠の transaction 1 つで捨てる出来事の数の上限(錠の外で読む候補の数 — 錠を持つ間に触る行をこの数で縛る)。
 ;; これより多く期限を過ぎた列は、錠を取り直して続きを捨てる(錠と錠の間に他の書きが入れる)。
 (val EXPIRE-BATCH 500)
+;; 行の回収(purge-expired)が書きの錠の transaction 1 つで消す行の数の上限(錠の外で読んだ候補を、この数ずつ錠の中で読み直して消す)。
+;; 変更の列に「消えた」を積む文はこの数で、番号の錠を持つ間(2 往復目の変更の文と COMMIT)に流れる文の数をこの数で縛る — 本番で変更の
+;; 文 500〜560 個の往復が番号の錠を 0.3〜0.6 秒持ったので、その 1/5 の大きさ。
+(val SWEEP-ROWS-BATCH 100)
+;; 行の書きの冪等キーの覚えの外し(forget-write-keys)が番号の錠の transaction 1 つで外す覚えの数の上限。2026-11-17 の本番で EXPIRE-BATCH
+;; 個の外しが番号の錠の中で WAL の書きを待って 3.5 秒持ったので、錠を持つ間に触る行をその 1/5 に縛る。
+(val FORGET-WRITE-KEYS-BATCH 100)
 ;; 変更の列の刈り(pruned-changes — pg_sql の頭の註の「変更の列の刈り」)が書きの錠の transaction 1 つで消す変更の数の上限と、1 周の境を
 ;; 読む変更の数。本番の変更 1 つは本文を含めて約 3 KB(TOAST に出る)で、50 個の DELETE が触る page は約 550 回(索引の根を行ごとに数える上からの見積もり)— 冷えた cache で 1 page を
 ;; 10 ms で読んでも PRUNE-STATEMENT-MILLISECONDS に収まる大きさ。
@@ -500,7 +508,7 @@
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
   "program を錠の単位 units(空 = 置き場全体)の書きの錠の transaction で流し、同じ transaction で名 topics(None = 全部に関わる)の書きの
-   合図を出すため(_pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
+   合図を出すため(_pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(出来事の回収・刈り取り・版の繰り上げ)。"
   (<- answer (locked-transaction store gated operation units (signalled store topics program) False))
   answer)
 
@@ -509,7 +517,7 @@
   {:pre [(: store PreparedStore) (: gated bool) (: operation str) (: units tuple) (: topics tuple) (: program Program)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)の program を、往復をまとめる(batched)書きの錠の transaction(錠の単位 units)で流し、
+  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)と行の回収の program を、往復をまとめる(batched)書きの錠の transaction(錠の単位 units)で流し、
    同じ transaction で書きが触る名 topics の合図を出すため(頭の註の「書きの往復」— 錠は writing と同じ locked-transaction)。"
   (<- answer (locked-transaction store gated operation units (signalled-ahead store topics program) True))
   answer)
@@ -1132,7 +1140,7 @@
   {:pre [(: store PreparedStore) (: table str) (: text str) (: version int) (: now-ms int) (: epoch int)] :post [(: % RowSteps)]
    :tags {:context "records" :role "foundation"}}
   "保持の期限を過ぎた行 1 つ(版 version)を消す文と、変更の列に「消えた」を積む文を作るため(回収 remove-expired-rows と、期限を過ぎた行へ
-   書く書きの片付け locked-row が同じ 2 文を使う — 消す文は番号の錠の前・積む文は後に流す)。"
+   書く書きの片付けが、共に locked-row から同じ 2 文を使う — 消す文は番号の錠の前・積む文は後に流す)。"
   (<- delete (delete-row-statement store.prefix table text version))
   (<- change (append-change-statement store.prefix table text version None now-ms epoch))
   (RowSteps :rows #(delete) :changes #(change)))
@@ -1159,21 +1167,29 @@
   (+ steps.rows #(lock) steps.changes after))
 
 
-(defk remove-expired-rows [store now-ms]
-  {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
+(defk remove-expired-rows [store chosen now-ms]
+  {:pre [(: store PreparedStore) (: chosen tuple) (<= (len chosen) SWEEP-ROWS-BATCH) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "書きの錠の transaction の中で、期限を過ぎた行を読み直して消し、変更の列に「消えた」を積むため(消す文を全部流してから番号の錠を取って
-   積む — numbered-statements)。答え = 消した行の数。"
-  (<- head (store-head store))
-  (<- expired (expired-rows store now-ms))
-  (var steps #())
-  (for [row expired]
-    (<- one (removed-row-statements store row.table (get row.record 0) (int (get row.record 2)) now-ms head.epoch))
-    (:= steps (+ steps #(one))))
-  (<- joined (joined-steps steps))
-  (<- statements (numbered-statements store joined #()))
-  (<- (run-statements store.database statements))
-  (len expired))
+  "往復をまとめる書きの錠の transaction の中で、錠の外で読んだ回収の候補 chosen(ExpiredRow の並び)を、行の書き(PutRows)と同じ 2 往復で
+   消すため: 1 往復目に置き場の頭と候補の行を行の錠(FOR UPDATE)つきで読み直し、今も期限を過ぎた行だけを(書きの片付けと同じ判定と文 —
+   locked-row)、2 往復目に消す文 → 番号の錠 → 変更の列に「消えた」を積む文を COMMIT と同じ往復で流す(numbered-statements)。番号の錠を
+   持つのは 2 往復目の変更の文と COMMIT の間だけ(前の形は文 1 つずつの transaction で、番号の錠を取った後も変更の文 1 つごとに記録の
+   service との往復を待ち、錠を 9 秒以上持った)。答え = 消した行の数。"
+  (<- head-statement (store-head-statement store.prefix))
+  (var reads #(head-statement))
+  (for [row chosen]
+    (<- lock-statement (lock-row-statement store.prefix row.table (get row.record 0)))
+    (:= reads (+ reads #(lock-statement))))
+  (<- read (batch-rows store.database reads False))
+  (<- head (head-of (get read 0)))
+  (var found #())
+  (for [#(row records) (zip chosen (cut read 1 None) :strict True)]
+    (<- one (locked-row store (store.schema.table row.table) (get row.record 0) records now-ms head.epoch))
+    (:= found (+ found #(one))))
+  (<- cleanup (joined-steps (tuple (gfor one found one.cleanup))))
+  (<- statements (numbered-statements store cleanup #()))
+  (<- (batch-rows store.database statements True))
+  (len cleanup.changes))
 
 
 (defk retired-keys [stream removed]
@@ -1259,19 +1275,18 @@
    :tags {:context "records" :role "foundation"}}
   "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため(SweepExpired の掃除 — 読みは
    回収を待たずに期限を自分で見て、書きは自分が触る物だけを片付ける・頭の註)。候補が無ければ錠を取らない(行も出来事も、候補の読み 1 文の
-   後に、候補が在る時だけ書きの錠の transaction を開く — 出来事は列ごとに retire-stream)。答え = 消した行の数。"
+   後に、候補が在る時だけ書きの錠の transaction を開く — 行は SWEEP-ROWS-BATCH 行ずつ remove-expired-rows・出来事は列ごとに
+   retire-stream)。答え = 消した行の数。"
   (<- candidates (expired-rows store now-ms))
   (var removed 0)
-  (when candidates
-    ;; 合図の名と錠の単位 = 行を消し得る表(期限と終端の語の在る表 — 消す行は transaction の中で読み直すので、候補の表でなく、読み直しが
-    ;; 読む表の全部)。
-    (val tables (tuple (gfor #(name decl) (sorted (.items store.schema.tables))
-                             :if (and (isinstance decl.retention KeepFor) decl.terminal)
-                             name)))
+  (for [start (range 0 (len candidates) SWEEP-ROWS-BATCH)]
+    (val chosen (tuple (cut candidates start (+ start SWEEP-ROWS-BATCH))))
+    ;; 合図の名と錠の単位 = 候補の行の表(錠の中で読み直して消すのは候補の行だけ — 候補を読んだ後に期限を過ぎた行は次の回収が消す)。
+    (val tables (tuple (sorted (sfor row chosen row.table))))
     (<- row-topics (notice-topics tables #()))
     (<- units (table-units tables))
-    (<- count (writing store gated "sweep-rows" units row-topics (remove-expired-rows store now-ms)))
-    (:= removed count))
+    (<- count (batched-writing store gated "sweep-rows" units row-topics (remove-expired-rows store chosen now-ms)))
+    (:= removed (+ removed count)))
   ;; 送ってから外す列は回収しない — 外すのは手入れの送りが確かめた出来事だけ(頭の註の「出来事を送ってから外す」)。
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (<- expiry (event-expiry decl now-ms))
@@ -2343,16 +2358,17 @@
 (defk forget-write-keys [store gated now-ms]
   {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
-  "覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを、EXPIRE-BATCH 個ずつ番号の単位の書きの錠の transaction を
-   分けて外すため(SweepExpired — 頭の註の「行の書きの冪等キー」。行の書きが覚えを入れる時に持つ番号の錠と同じ錠の単位)。上限より少なく外した回で
-   終える。合図は名の無い待ち手だけに関わる(覚えの外しは読みと待ちの答えを変えない — 名の空の並び)。答え = 外した覚えの数。"
-  (<- statement (forget-write-keys-statement store.prefix (- now-ms (int (* 1000 WRITE-KEY-MEMORY-SECONDS))) EXPIRE-BATCH))
+  "覚えた刻から values.WRITE-KEY-MEMORY-SECONDS を過ぎた行の書きの冪等キーの覚えを、FORGET-WRITE-KEYS-BATCH 個ずつ番号の単位の書きの錠の
+   transaction を分けて外すため(SweepExpired — 頭の註の「行の書きの冪等キー」。行の書きが覚えを入れる時に持つ番号の錠と同じ錠の単位 — 番号の錠は
+   全部の表の行の書きが待つので、錠を持つ間に触る行を EXPIRE-BATCH より小さく縛る)。上限より少なく外した回で終える。合図は名の無い待ち手だけに
+   関わる(覚えの外しは読みと待ちの答えを変えない — 名の空の並び)。答え = 外した覚えの数。"
+  (<- statement (forget-write-keys-statement store.prefix (- now-ms (int (* 1000 WRITE-KEY-MEMORY-SECONDS))) FORGET-WRITE-KEYS-BATCH))
   (var total 0)
   (var going True)
   (while going
     (<- rows (writing store gated "forget-write-keys" #(ROWS-UNIT) #() (query-rows store.database statement)))
     (:= total (+ total (int (get rows 0 0))))
-    (:= going (= (int (get rows 0 0)) EXPIRE-BATCH)))
+    (:= going (= (int (get rows 0 0)) FORGET-WRITE-KEYS-BATCH)))
   total)
 
 
