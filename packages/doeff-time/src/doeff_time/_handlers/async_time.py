@@ -7,9 +7,9 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
-from doeff_core_effects import Await, Cancel, Race, Spawn, TaskPriority
+from doeff_core_effects import Await, Cancel, Race, Spawn, TaskPriority, Wait
 
-from doeff import Pass, Transfer, do
+from doeff import Pass, Pure, Transfer, do
 from doeff import handler as _program_handler
 from doeff.program import ProgramHandler
 from doeff_time._effects import (
@@ -58,6 +58,21 @@ def _clock_wait(sleep: Callable[[float], Awaitable[Any]], seconds: float) -> Awa
     return Await(sleep(seconds), deadline=time.monotonic() + seconds)
 
 
+@do
+def _turn_given():
+    """A zero delay: give the turn to every task that is ready now, and to every one an external completion that has
+    already come wakes, before the caller goes on — the turn comes back by a task spawned behind them, whose end
+    the caller waits for (the scheduler drains the external completions at the ``Spawn`` and picks the ready tasks
+    in order).
+
+    Not an ``Await`` of ``sleep(0)``: the bridge's event loop runs on another thread and may answer it before the
+    caller reaches its ``Wait``, which then answers at once without a switch — the tasks the completions woke ran
+    only at the caller's next real wait (agora's turn-dispatcher, 2026-11-17: an input whose notice had come during
+    a reaction of 1.4 to 3 s reached its queue one or two reactions later)."""
+    back = yield Spawn(Pure(None))
+    yield Wait(back)
+
+
 class AsyncTimeRuntime:
     """Runtime container for async wall-clock time effects."""
 
@@ -103,7 +118,10 @@ class AsyncTimeRuntime:
         # Task handle and defeating the scheduler's terminal-entry sweep
         # (ADR-DOE-CORE-EFFECTS-002).
         if isinstance(effect, DelayEffect):
-            yield _clock_wait(self._sleep, max(0.0, effect.seconds))
+            if effect.seconds > 0:
+                yield _clock_wait(self._sleep, effect.seconds)
+            else:
+                yield _turn_given()
             return (yield Transfer(k, None))
         if isinstance(effect, WaitUntilEffect):
             wait_seconds = max(0.0, (effect.target - self._now()).total_seconds())

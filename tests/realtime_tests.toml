@@ -25,6 +25,8 @@
 [tests]
 "packages/doeff-cluster/tests/test_job_log_ship.py" = "Waits, with a deadline, for a real child process, the log shipper, and HTTP /livez (real wall-clock time of an external process)"
 "packages/doeff-cluster/tests/test_line_stamp.py::test_a_stalled_log_file_stops_neither_the_event_loop_nor_the_requests_it_answers" = "Measures with a wall-clock timeout the asyncio loop heartbeat of a real shim and job process, and the HTTP request answers while the log file is stalled"
+"packages/doeff-events/tests/test_redis_kept_reaches_the_bus_at_the_next_wait.py" = "Holds the scheduler's thread for a reaction (time.sleep) while the await bridge's real asyncio loop reads a fake broker, and checks what reached the bus at the next zero Delay"
+"packages/doeff-time/tests/test_async_zero_delay_gives_the_turn.py" = "A waiter parks behind a real sleep on the await bridge's asyncio loop before a zero Delay under async_time_handler is checked to give it the turn"
 "packages/doeff-events/tests/test_file_watch.py::test_os_watch_closed_by_another_task_during_a_wait_ends_the_wait_without_a_panic" = "Another task closes, after real time passes, a wait on a real OS file-watch library"
 "tests/effects/test_effect_combinations.py::TestGatherStoreSharingLaw::test_async_gather_parallel_execution" = "Measures, in elapsed wall-clock time, that tasks spawned by Gather overlap on a real asyncio loop"
 "tests/test_idle_job_sweeps_terminal_rows.py" = "Covers the cleanup when the scheduler stops while waiting on the real asyncio loop thread of the await bridge: a simulated sleep is given 2 ms of real time to create a wait in which the scheduler has nothing runnable"
