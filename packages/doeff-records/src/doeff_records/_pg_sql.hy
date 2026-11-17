@@ -183,7 +183,8 @@
 ;;; 待つ)と新しい版の同じ行への書き(行の錠を持って番号の錠を待つ)が deadlock(40P01 — PostgreSQL が片方を戻す)になり得る。新しい版
 ;;; どうしでは、番号の錠を持つ書き(行の書きの終わり・変更の刈り取り・冪等キーの覚えの外し)は他の錠と行の錠を待たないので輪にならない。
 ;;; 単位ごとの書きと錠の単位:
-;;;   PutRow・PutRows・行の回収(SweepExpired の行)= 触る表の単位(束は触る表の全部・回収は期限と終端の語の在る表の全部)+ 番号の錠
+;;;   PutRow・PutRows・行の回収(SweepExpired の行)= 触る表の単位(束は触る表の全部・回収は表 1 つ — 表ごと・鍵の順の窓ごとに
+;;;   transaction を分ける。前は期限と終端の語の在る表の全部の単位を 1 つの transaction で持った — #2830 の回収の割り)+ 番号の錠
 ;;;   変更の刈り取り(PruneChanges — 変更の列と床だけを触る)・冪等キーの覚えの外し = 番号の単位
 ;;;   AppendEvent・AppendEvents・出来事の回収(SweepExpired の列ごと)= 触る列の単位(束は触る列の全部)
 ;;;   版の繰り上げ(AdvanceStoreEpoch — 全部の行の版と変更の列を変える)= 置き場全体を排他
@@ -1373,8 +1374,9 @@
              :params (+ (! (params-of (+ ledger-pairs floor-pairs))) filter.params unexpired.params)))
 
 
-(defk terminal-rows-statement [prefix table state-field terminal scoped before-at]
-  {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0) (: scoped bool) (: before-at int)]
+(defk terminal-rows-statement [prefix table state-field terminal scoped before-at [after None] [limit None]]
+  {:pre [(: prefix str) (: table str) (: state-field str) (: terminal tuple) (> (len terminal) 0) (: scoped bool) (: before-at int)
+         (: after (| str None)) (: limit (| int None)) (or (is limit None) (> limit 0))]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "保持の期限を過ぎた終端の状態の行(回収の候補 — 期限の判断は admission.row-expired?)を読む文を作るため(terminal が空なら呼ばない)。状態の欄の条件は
@@ -1382,21 +1384,27 @@
    added-indexes が作る)なら表の欄の式の IN だけ・無ければ前の形(ledger = :ledger と欄の式の IN — 旧い形の索引か前の部分索引が引く)。
    最後に書いた刻の条件(updated_at ≦ 境の刻 before-at — 読みの文の expired-row-part と同じ境)で、期限の前の終端の行を返さない: 前の形は
    表の終端の行を全部、値ごと返し、記録の service が回収のたびに全部の値を解いてから期限を判じた(本番で回収 1 回が SQL の thread と
-   scheduler の thread をそれぞれ 5〜9 秒塞ぎ、その間の要求が全部待った)。"
+   scheduler の thread をそれぞれ 5〜9 秒塞ぎ、その間の要求が全部待った)。
+   after と limit は回収の窓(鍵の綴りの順に after より後ろの limit 行まで — None = 縛らない): 回収 1 回が表の期限を過ぎた行の全部を
+   1 つの書きの錠の transaction で消すと、本番で表の単位と番号の錠を平均 7.8 秒持った(#2830 の回収の割り)。"
   (<- words (terminal-words terminal))
-  (<- bound (params-of #(#("before_at" before-at))))
+  (<- bound (params-of (+ #(#("before_at" before-at))
+                          (if (is after None) #() #(#("after" after)))
+                          (if (is limit None) #() #(#("limit" limit))))))
+  (val window (if (is after None) "" " AND key COLLATE \"C\" > :after"))
+  (val tail (if (is limit None) "" " LIMIT :limit"))
   (<- payload (stored-payload-expression True))
   (if scoped
       (do (<- expression (table-field-expression "" table state-field))
           (<- states (field-in-condition expression "t" words))
           (Statement :text (.format "SELECT key, {v}, version, updated_at FROM {p}state_rows
-                       WHERE {s} AND updated_at <= :before_at ORDER BY key COLLATE \"C\""
-                                    :p prefix :v payload :s states.text)
+                       WHERE {s} AND updated_at <= :before_at{w} ORDER BY key COLLATE \"C\"{l}"
+                                    :p prefix :v payload :s states.text :w window :l tail)
                      :params (+ states.params bound)))
       (do (<- states (terminal-state-condition "payload" state-field "t" terminal))
           (Statement :text (.format "SELECT key, {v}, version, updated_at FROM {p}state_rows
-                       WHERE ledger = :ledger AND {s} AND updated_at <= :before_at ORDER BY key COLLATE \"C\""
-                                    :p prefix :v payload :s states.text)
+                       WHERE ledger = :ledger AND {s} AND updated_at <= :before_at{w} ORDER BY key COLLATE \"C\"{l}"
+                                    :p prefix :v payload :s states.text :w window :l tail)
                      :params (+ (! (params-of #(#("ledger" table)))) states.params bound)))))
 
 

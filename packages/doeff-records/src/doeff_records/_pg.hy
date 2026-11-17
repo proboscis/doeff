@@ -182,6 +182,11 @@
 ;; 回収(purge-expired)が書きの錠の transaction 1 つで捨てる出来事の数の上限(錠の外で読む候補の数 — 錠を持つ間に触る行をこの数で縛る)。
 ;; これより多く期限を過ぎた列は、錠を取り直して続きを捨てる(錠と錠の間に他の書きが入れる)。
 (val EXPIRE-BATCH 500)
+;; 行の回収(sweep-table)の窓 1 つの行の数の上限 — 書きの錠の transaction 1 つ(表の単位 1 つ・番号の錠)で消す行の数を縛る。前は期限と
+;; 終端の語の在る表の全部の単位を 1 つの transaction で持って全部の期限を過ぎた行を消し、本番で錠を平均 7.8 秒持った(#2830)。窓 1 つは
+;; 読み直し 1 文と、消す文・積む文の 1 往復(行ごとに主鍵の DELETE 1 つと変更の INSERT 1 つ)で、PRUNE-BATCH と同じ見積もりで冷えた
+;; cache でも 1 秒に収まる大きさ。
+(val SWEEP-ROW-BATCH 50)
 ;; 変更の列の刈り(pruned-changes — pg_sql の頭の註の「変更の列の刈り」)が書きの錠の transaction 1 つで消す変更の数の上限と、1 周の境を
 ;; 読む変更の数。本番の変更 1 つは本文を含めて約 3 KB(TOAST に出る)で、50 個の DELETE が触る page は約 550 回(索引の根を行ごとに数える上からの見積もり)— 冷えた cache で 1 page を
 ;; 10 ms で読んでも PRUNE-STATEMENT-MILLISECONDS に収まる大きさ。
@@ -287,6 +292,14 @@
   "保持の期限を過ぎた行 1 つ: table = 表の名 / record = state_rows の行(key payload version updated_ms)。"
   (#^ str table)
   (#^ tuple record))
+
+
+(defrecord ExpiredWindow
+  "回収の窓 1 つの読み(expired-window): read = 窓で読んだ候補の行の数 / last = 読んだ最後の鍵の綴り(読まなければ窓の前の鍵 — 次の窓の
+   after)/ rows = そのうち期限を過ぎた行(ExpiredRow の並び・鍵の順)。"
+  (#^ int read)
+  (#^ (| str None) last)
+  (#^ tuple rows))
 
 
 (defrecord RowSteps
@@ -500,7 +513,7 @@
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
   "program を錠の単位 units(空 = 置き場全体)の書きの錠の transaction で流し、同じ transaction で名 topics(None = 全部に関わる)の書きの
-   合図を出すため(_pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(回収・刈り取り・版の繰り上げ)。"
+   合図を出すため(_pg_sql.hy の頭の註の「書きの錠」— locked-transaction)。文 1 つずつの transaction(出来事の回収・刈り取り・版の繰り上げ)。"
   (<- answer (locked-transaction store gated operation units (signalled store topics program) False))
   answer)
 
@@ -509,7 +522,8 @@
   {:pre [(: store PreparedStore) (: gated bool) (: operation str) (: units tuple) (: topics tuple) (: program Program)]
    :post [(: % "program の答え") (not (isinstance % #(SqlFailed SqlUnreachable)))]
    :tags {:context "records" :role "foundation"}}
-  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)の program を、往復をまとめる(batched)書きの錠の transaction(錠の単位 units)で流し、
+  "書きの効果(PutRow・PutRows・AppendEvent・AppendEvents)と行の回収の窓(remove-expired-rows)の program を、往復をまとめる(batched)書きの錠の
+   transaction(錠の単位 units)で流し、
    同じ transaction で書きが触る名 topics の合図を出すため(頭の註の「書きの往復」— 錠は writing と同じ locked-transaction)。"
   (<- answer (locked-transaction store gated operation units (signalled-ahead store topics program) True))
   answer)
@@ -1108,24 +1122,30 @@
                    :remembered (and decl.archive-before-retire (is-not separator None)))))
 
 
-(defk expired-rows [store now-ms]
-  {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % tuple)]
+(defk sweep-tables [store]
+  {:pre [(: store PreparedStore)] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
-  "期限を過ぎた行(ExpiredRow)の列(表の名の順・鍵の順)を読むため。判断は admission.row-expired?(文も同じ境 retention-cutoff-ms で
-   期限の前の終端の行を返さない — 読んで値を解くのは期限を過ぎた行だけ・pg_sql.terminal-rows-statement)。
-   終端の語が空の表は文を流さない(`IN ()` は文にできない — 宣言は KeepFor の表に終端の語を求めるので、今は起きない)。"
-  (var found [])
-  (for [#(name decl) (sorted (.items store.schema.tables))]
-    (when (and (isinstance decl.retention KeepFor) decl.terminal)
-      (val scoped (in decl.state-field (.scoped-fields store.indexes name)))
-      (<- statement (terminal-rows-statement store.prefix name decl.state-field decl.terminal scoped
-                                             (retention-cutoff-ms decl now-ms)))
-      (<- records (query-rows store.database statement))
-      (for [record records]
-        (val value (decoded-value (get record 1)))
-        (when (row-expired? decl value (int (get record 3)) now-ms)
-          (.append found (ExpiredRow :table name :record (tuple record)))))))
-  (tuple found))
+  "行を回収し得る表(期限と終端の語の在る表)の宣言を表の名の順に並べるため。終端の語が空の表は入れない(`IN ()` は文にできない —
+   宣言は KeepFor の表に終端の語を求めるので、今は起きない)。"
+  (tuple (gfor #(name decl) (sorted (.items store.schema.tables))
+               :if (and (isinstance decl.retention KeepFor) decl.terminal)
+               decl)))
+
+
+(defk expired-window [store decl now-ms after]
+  {:pre [(: store PreparedStore) (: decl TableDecl) (: now-ms int) (: after (| str None))] :post [(: % ExpiredWindow)]
+   :tags {:context "records" :role "foundation"}}
+  "表 decl の回収の窓(鍵の綴りの順に after より後ろの SWEEP-ROW-BATCH 行まで — None = 頭から)の候補を読み、期限を過ぎた行を選ぶため。
+   判断は admission.row-expired?(文も同じ境 retention-cutoff-ms で期限の前の終端の行を返さない — 読んで値を解くのは期限を過ぎた行
+   だけ・pg_sql.terminal-rows-statement)。書きの錠の外の候補の読みと、錠の中の読み直し(remove-expired-rows)が同じこの 1 つを使う。"
+  (val scoped (in decl.state-field (.scoped-fields store.indexes decl.name)))
+  (<- statement (terminal-rows-statement store.prefix decl.name decl.state-field decl.terminal scoped (retention-cutoff-ms decl now-ms)
+                                         :after after :limit SWEEP-ROW-BATCH))
+  (<- records (query-rows store.database statement))
+  (val expired (tuple (gfor record records
+                            :if (row-expired? decl (decoded-value (get record 1)) (int (get record 3)) now-ms)
+                            (ExpiredRow :table decl.name :record (tuple record)))))
+  (ExpiredWindow :read (len records) :last (if records (get (get records -1) 0) after) :rows expired))
 
 
 (defk removed-row-statements [store table text version now-ms epoch]
@@ -1159,21 +1179,47 @@
   (+ steps.rows #(lock) steps.changes after))
 
 
-(defk remove-expired-rows [store now-ms]
-  {:pre [(: store PreparedStore) (: now-ms int)] :post [(: % int)]
+(defk remove-expired-rows [store decl now-ms after]
+  {:pre [(: store PreparedStore) (: decl TableDecl) (: now-ms int) (: after (| str None))] :post [(: % ExpiredWindow)]
    :tags {:context "records" :role "foundation"}}
-  "書きの錠の transaction の中で、期限を過ぎた行を読み直して消し、変更の列に「消えた」を積むため(消す文を全部流してから番号の錠を取って
-   積む — numbered-statements)。答え = 消した行の数。"
+  "表 decl の書きの錠の batched の transaction の中で、回収の窓(after の後ろ — expired-window)を読み直し、期限を過ぎた行を消して変更の
+   列に「消えた」を積むため。消す文・番号の錠・積む文・COMMIT を 1 往復で流す(numbered-statements — 番号の錠を持つのはこの窓の分の
+   積みと COMMIT の間だけ)。答え = 錠の中で読んだ窓(rows = 消した行)。"
   (<- head (store-head store))
-  (<- expired (expired-rows store now-ms))
+  (<- window (expired-window store decl now-ms after))
   (var steps #())
-  (for [row expired]
+  (for [row window.rows]
     (<- one (removed-row-statements store row.table (get row.record 0) (int (get row.record 2)) now-ms head.epoch))
     (:= steps (+ steps #(one))))
   (<- joined (joined-steps steps))
   (<- statements (numbered-statements store joined #()))
-  (<- (run-statements store.database statements))
-  (len expired))
+  (<- (batch-rows store.database statements True))
+  window)
+
+
+(defk sweep-table [store gated decl now-ms]
+  {:pre [(: store PreparedStore) (: gated bool) (: decl TableDecl) (: now-ms int)] :post [(: % int)]
+   :tags {:context "records" :role "foundation"}}
+  "表 decl の期限を過ぎた行を、回収の窓(SWEEP-ROW-BATCH 行)ごとに、その表の単位だけの書きの錠の transaction を分けて消すため(#2830 の
+   回収の割り — 錠を持つ間に触る行を窓で縛り、他の表の書きと番号の錠を待つ書きを窓 1 つの分しか待たせない)。窓の候補を錠の外で読み、
+   期限を過ぎた行の在る窓だけ錠の中で読み直して消す(無ければ錠を取らずに次の窓へ)。窓が上限より少ない行を読んだ回で終える。
+   答え = 消した行の数。"
+  (<- topics (notice-topics #(decl.name) #()))
+  (<- units (table-units #(decl.name)))
+  (var after None)
+  (var removed 0)
+  (var going True)
+  (var window None)
+  (while going
+    (<- seen (expired-window store decl now-ms after))
+    (:= window seen)
+    (when seen.rows
+      (<- swept (batched-writing store gated "sweep-rows" units topics (remove-expired-rows store decl now-ms after)))
+      (:= removed (+ removed (len swept.rows)))
+      (:= window swept))
+    (:= after window.last)
+    (:= going (= window.read SWEEP-ROW-BATCH)))
+  removed)
 
 
 (defk retired-keys [stream removed]
@@ -1258,20 +1304,14 @@
   {:pre [(: store PreparedStore) (: gated bool) (: now-ms int)] :post [(: % int)]
    :tags {:context "records" :role "foundation"}}
   "期限を過ぎた行を消して変更の列に「消えた」を積み、期限を過ぎた出来事を捨てて冪等キーの覚えへ移すため(SweepExpired の掃除 — 読みは
-   回収を待たずに期限を自分で見て、書きは自分が触る物だけを片付ける・頭の註)。候補が無ければ錠を取らない(行も出来事も、候補の読み 1 文の
-   後に、候補が在る時だけ書きの錠の transaction を開く — 出来事は列ごとに retire-stream)。答え = 消した行の数。"
-  (<- candidates (expired-rows store now-ms))
+   回収を待たずに期限を自分で見て、書きは自分が触る物だけを片付ける・頭の註)。候補が無ければ錠を取らない(行も出来事も、候補の読みの
+   後に、候補が在る時だけ書きの錠の transaction を開く — 行は表ごと・窓ごとに sweep-table、出来事は列ごとに retire-stream)。
+   答え = 消した行の数。"
+  (<- tables (sweep-tables store))
   (var removed 0)
-  (when candidates
-    ;; 合図の名と錠の単位 = 行を消し得る表(期限と終端の語の在る表 — 消す行は transaction の中で読み直すので、候補の表でなく、読み直しが
-    ;; 読む表の全部)。
-    (val tables (tuple (gfor #(name decl) (sorted (.items store.schema.tables))
-                             :if (and (isinstance decl.retention KeepFor) decl.terminal)
-                             name)))
-    (<- row-topics (notice-topics tables #()))
-    (<- units (table-units tables))
-    (<- count (writing store gated "sweep-rows" units row-topics (remove-expired-rows store now-ms)))
-    (:= removed count))
+  (for [decl tables]
+    (<- count (sweep-table store gated decl now-ms))
+    (:= removed (+ removed count)))
   ;; 送ってから外す列は回収しない — 外すのは手入れの送りが確かめた出来事だけ(頭の註の「出来事を送ってから外す」)。
   (for [#(name decl) (sorted (.items store.schema.streams))]
     (<- expiry (event-expiry decl now-ms))
