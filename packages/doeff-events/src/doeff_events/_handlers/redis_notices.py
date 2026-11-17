@@ -82,11 +82,21 @@ How it talks to Redis:
   reactions of about a second took a kept entry 2 to 3 asks after its ``XADD`` (1.3 to 3.6 s measured; an idle
   reader of the same stream took it within 0.25 s). An entry handed out more than ``_LATE_KEPT_SECONDS`` after
   its ``XADD`` is logged with the time from the ``XADD`` to the read and from the read to the hand-out.
+- The hand-out at the next wait: a ``NextAnnouncement`` of a subscription that reads kept channels is answered
+  without an ``Await`` from what the reads in flight already hold — the Pub/Sub read once it has answered, and the
+  read ahead's entries — and only when they hold nothing does it ``Await`` the next read. The reads run on
+  ``await_handler``'s bridge (another thread) while a subscriber reacts on the scheduler's; its source task runs
+  only when the subscriber waits, and a reaction's Pub/Sub traffic has answered the source's ask by then. Before,
+  the source published that answer and asked again with one more ``Await``, whose answer came after the
+  subscriber's own wait had ended (a zero ``Delay`` is one ``Await`` too): an entry added during the reaction
+  reached the bus one or two waits later (agora's turn-dispatcher, 2026-11-17: 4.0 to 5.7 s after its ``XADD``,
+  with reactions of 1.4 to 3 s). Now the source puts everything that came before the wait on the bus within it.
 """
 
 import asyncio
 import json
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -250,12 +260,18 @@ class _Listening:
     between two ``NextAnnouncement``s of a subscription that reads kept channels — the Pub/Sub read and the kept
     streams' read ahead, with the entries it took and has not handed out (``mut_ahead`` — oldest first; the module's
     notes on the read ahead) — and the notices the last read took that are not handed out yet (``mut_taken`` — oldest
-    first). Matched by identity."""
+    first). Matched by identity.
+
+    The reads run on the event loop of ``await_handler``'s bridge (another thread), and the handler hands out what
+    they already hold on the scheduler's thread (``held_now``): the read ahead's store is changed under a lock, and
+    its events are set on the loop."""
 
     __slots__ = (
+        "_lock",
         "came",
         "drained",
         "mut_ahead",
+        "mut_loop",
         "mut_pubsub_read",
         "mut_stream_read",
         "mut_taken",
@@ -273,7 +289,10 @@ class _Listening:
         self.reader: Final = reader
         self.mut_pubsub_read: asyncio.Task[tuple[Announcement, ...]] | None = None
         self.mut_stream_read: asyncio.Task[None] | None = None
+        # The loop the reads run on (set by the first ask that starts them).
+        self.mut_loop: asyncio.AbstractEventLoop | None = None
         self.mut_ahead: tuple[_ReadAhead, ...] = ()
+        self._lock: Final = threading.Lock()
         # ``came`` is set while ``mut_ahead`` holds entries (a waiting ask wakes on it); ``drained`` is set by each
         # hand-out (a read ahead that holds ``_READ_BATCH`` entries waits for it).
         self.came: Final = asyncio.Event()
@@ -283,17 +302,55 @@ class _Listening:
     def took_ahead(self, entries: tuple[Announcement, ...]) -> None:
         """Keep the entries one ``XREAD`` of the read ahead took, with when they came (the read ahead's side)."""
         at = time.time()
-        self.mut_ahead = (*self.mut_ahead, *(_ReadAhead(entry, at) for entry in entries))
+        with self._lock:
+            self.mut_ahead = (*self.mut_ahead, *(_ReadAhead(entry, at) for entry in entries))
         self.came.set()
 
     def hand_ahead(self) -> tuple[Announcement, ...]:
-        """Take every entry the read ahead holds, to hand out now (empty when it holds none); a late one is logged."""
-        ahead, self.mut_ahead = self.mut_ahead, ()
-        self.came.clear()
-        self.drained.set()
+        """Take every entry the read ahead holds, to hand out now (empty when it holds none); a late one is logged
+        (on the loop's thread)."""
+        ahead = self._taken_ahead()
+        self._handed_out()
+        return ahead
+
+    def held_now(self) -> tuple[Announcement, ...]:
+        """What the reads in flight already hold, taken without waiting — on the scheduler's thread, so that a
+        ``NextAnnouncement`` asked after a reaction is answered without an ``Await`` (the module's notes on the hand-out
+        at the next wait): the Pub/Sub read's notices when it has answered, then every entry the read ahead holds,
+        handed out now. Empty when they hold nothing, or when a read failed (the next
+        ``Await`` raises its lost connection) or none has started."""
+        reader = self.reader
+        loop = self.mut_loop
+        stream = self.mut_stream_read
+        if reader is None or loop is None or stream is None or stream.done():
+            return ()
+        notices: tuple[Announcement, ...] = ()
+        pubsub = self.mut_pubsub_read
+        if pubsub is not None and pubsub.done() and not pubsub.cancelled() and pubsub.exception() is None:
+            self.mut_pubsub_read = None
+            notices = pubsub.result()
+        entries = self._taken_ahead()
+        if entries:
+            reader.positions = {**reader.positions, **{entry.channel: entry.receipt for entry in entries}}
+            notices = (*notices, *reader.hand_all(entries, loop.time()))
+            loop.call_soon_threadsafe(self._handed_out)
+        return notices
+
+    def _taken_ahead(self) -> tuple[Announcement, ...]:
+        """Take every entry the read ahead holds (empty when it holds none); a late one is logged."""
+        with self._lock:
+            ahead, self.mut_ahead = self.mut_ahead, ()
         if ahead:
             _log_late(ahead, time.time())
         return tuple(read.notice for read in ahead)
+
+    def _handed_out(self) -> None:
+        """After a hand-out (on the loop's thread): a waiting ask no longer wakes for what was taken, and a full read
+        ahead reads again."""
+        with self._lock:
+            if not self.mut_ahead:
+                self.came.clear()
+        self.drained.set()
 
     def handed_from_taken(self) -> Announcement | None:
         """The oldest notice the last read took and has not handed out yet (it is handed out now), or ``None``."""
@@ -315,7 +372,8 @@ class _Listening:
                 read.cancel()
         self.mut_pubsub_read = None
         self.mut_stream_read = None
-        self.mut_ahead = ()
+        with self._lock:
+            self.mut_ahead = ()
         self.mut_taken = ()
 
 
@@ -612,6 +670,7 @@ async def _next_with_kept(
         if listening.pubsub is not None and listening.mut_pubsub_read is None:
             listening.mut_pubsub_read = asyncio.ensure_future(_next_notices(listening.pubsub, silence_seconds))
         if listening.mut_stream_read is None:
+            listening.mut_loop = loop
             listening.mut_stream_read = asyncio.ensure_future(_read_ahead(receiving, listening, silence_seconds))
         if not listening.mut_ahead and not listening.mut_stream_read.done():
             came = asyncio.ensure_future(listening.came.wait())
@@ -753,6 +812,28 @@ def _reading(
     return _Listening(subscription, pubsub, reader)
 
 
+@do
+def _next_of(
+    receiving: "Redis", known: _Listening, silence_seconds: float, redeliver_seconds: float
+) -> "EffectGenerator[Announcement | _Failed]":
+    """The answer of one ``NextAnnouncement`` of ``known``: what the last read took first, then what the reads in
+    flight already hold — both without an ``Await`` (the module's notes on one read and on the hand-out at the next
+    wait) — and only then the next read."""
+    taken = known.handed_from_taken()
+    if taken is not None:
+        return taken
+    held = known.held_now()
+    if held:
+        return known.took(held)
+    if known.reader is not None:
+        read = yield Await(_attempt(partial(_next_with_kept, receiving, known, silence_seconds, redeliver_seconds)))
+    elif known.pubsub is not None:
+        read = yield Await(_attempt(partial(_next_notices, known.pubsub, silence_seconds)))
+    else:
+        raise LookupError(f"{known.subscription!r} reads no channel")
+    return read if isinstance(read, _Failed) else known.took(read)
+
+
 def _broker_handler(
     sending: "Redis", receiving: "Redis", timeout_seconds: float, silence_seconds: float, redeliver_seconds: float
 ) -> "ProgramHandler":
@@ -787,18 +868,7 @@ def _broker_handler(
                 known = next((entry for entry in listening if entry.subscription is wanted), None)
                 if known is None:
                     raise LookupError(f"{wanted!r} was not made by this handler, or was closed")
-                # What the last read took is handed out first, without an Await (the module's notes on one read).
-                answer = known.handed_from_taken()
-                if answer is None:
-                    if known.reader is not None:
-                        read = yield Await(
-                            _attempt(partial(_next_with_kept, receiving, known, silence_seconds, redeliver_seconds))
-                        )
-                    elif known.pubsub is not None:
-                        read = yield Await(_attempt(partial(_next_notices, known.pubsub, silence_seconds)))
-                    else:
-                        raise LookupError(f"{wanted!r} reads no channel")
-                    answer = read if isinstance(read, _Failed) else known.took(read)
+                answer = yield _next_of(receiving, known, silence_seconds, redeliver_seconds)
             case AckAnnouncement(subscription=acked, notice=notice):
                 # Kept by the handler only: nothing is sent to the server.
                 acking = readers.of(acked)
