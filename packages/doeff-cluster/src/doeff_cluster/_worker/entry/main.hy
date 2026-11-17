@@ -30,7 +30,7 @@
 (import doeff_core_effects [process-exit-handler])
 (import doeff_core_effects [os-random-handler])
 (import doeff_core_effects [os-signal-stop-handler])
-(import doeff_core_effects [EnvEntry ReadEnvironment])
+(import doeff_core_effects [EnvEntry ReadEnvironment ReadMachineName])
 (import doeff_core_effects [RandomBytes])
 (import doeff_core_effects [scheduled Spawn])
 (import doeff_time [GetMonotonic async-time-handler sync-time-handler])
@@ -84,7 +84,9 @@
 (import doeff_cluster._worker.protocol.status_file [status-file])
 (import doeff_cluster._foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster._shared.core.run_context_rules [worker-context-environ])
-(import doeff_cluster._worker.entry.line_stamp [WORKER-LOG-ENV-NAMES worker-log-plan process-lines])
+(import doeff_cluster._worker.entry.line_stamp [WORKER-LOG-ENV-NAMES worker-log-plan process-lines JOB-LOG-OTLP-VAR JOB-LOG-ATTRIBUTES-VAR
+                                                 LOGS-PATH JobLogRefused endpoint-usable extra-attributes])
+(import doeff_cluster._worker.core.task_record [TaskRecordTarget task-record-target])
 
 
 ;; この process の世代を書く Pod の中の file の名(無ければ書かない — readinessProbe が読む)。
@@ -98,8 +100,9 @@
 (val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
 ;; 常駐の job の CPU の取り分の名と重み(空白で並べた「<名>=<重み>」— 無ければ services の層を分けない・worker/core/job_cgroup の「取り分」)。
 (val SERVICE-SHARES-VAR "DOEFF_WORKER_SERVICE_SHARES")
-;; task の終わりの行(task 1 本ごとの CPU 秒と memory の山)を足す dir(無い・空なら書かない・worker/core/task_record)。
-(val TASK-RECORD-DIR-VAR "DOEFF_WORKER_TASK_RECORD_DIR")
+;; task の終わりの行(task 1 本ごとの CPU 秒と memory の山)の resource の service.name(無い・空なら送らない・worker/core/task_record)。
+;; 送り先は job の log と同じ(DOEFF_JOB_LOG_OTLP の基の URL + /v1/logs・属性 DOEFF_JOB_LOG_ATTRIBUTES)。
+(val TASK-RECORD-SERVICE-VAR "DOEFF_WORKER_TASK_RECORD_SERVICE")
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
@@ -487,6 +490,39 @@
   (if (is cgroup-dir None) {} {CGROUP-DIR-VAR cgroup-dir}))
 
 
+(defk machine-name-of [node]
+  {:pre [(: node str)] :post [(: % str)] :tags {:context "worker" :role "main"}}
+  "task の終わりの行が名乗る機体の名(resource の host.name と欄 node — worker/core/task_record)を決めるため: 起動の引数 --node(k8s の
+   node の名・機体の配備が置く NODE_NAME)が在ればそれ、無ければ OS の host の名(ReadMachineName — 答え手は入口が並べる subprocess-handler)。"
+  (when node
+    (return node))
+  (<- name str (ReadMachineName))
+  name)
+
+
+(defk task-record-target-of [machine-env node]
+  {:pre [(: machine-env dict) (: node str)] :post [(: % (| TaskRecordTarget str None))] :tags {:context "worker" :role "main"}}
+  "task の終わりの行の送り先を、機体の env から 1 度だけ決めるため(worker/core/task_record): 行の service.name(TASK-RECORD-SERVICE-VAR)が
+   無い・空なら送らない(None)。在るのに job の log の送り先の基の URL(DOEFF_JOB_LOG_OTLP)が無い・URL の形でない・配備の属性
+   (DOEFF_JOB_LOG_ATTRIBUTES)の並べ方が崩れている時は、送らずに訳の文を返す(入口が起動の時に 1 行で名乗る — 値そのものは文に出さない)。
+   node = 起動の引数 --node(空なら OS の host の名 — machine-name-of)。"
+  (val service (.strip (.get machine-env TASK-RECORD-SERVICE-VAR "")))
+  (when (not service)
+    (return None))
+  (val base (.strip (.get machine-env JOB-LOG-OTLP-VAR "")))
+  (when (not base)
+    (return (.format "{} が在るのに {} が無い" TASK-RECORD-SERVICE-VAR JOB-LOG-OTLP-VAR)))
+  (val endpoint (+ (.rstrip base "/") LOGS-PATH))
+  (when (not (endpoint-usable endpoint))
+    (return (.format "{} が http か https の絶対の URL でない" JOB-LOG-OTLP-VAR)))
+  (val extra (extra-attributes (.get machine-env JOB-LOG-ATTRIBUTES-VAR "")))
+  (when (isinstance extra JobLogRefused)
+    (return extra.reason))
+  (<- machine str (machine-name-of node))
+  (<- target TaskRecordTarget (task-record-target endpoint (tuple (gfor a extra #(a.key a.value))) service machine))
+  target)
+
+
 (defk pass-env-names [names]
   {:pre [(: names str)] :post [(: % tuple)] :tags {:context "worker" :role "main"}}
   "起動の引数 --pass-env(名を `,` で並べる)を、子 process へ渡す環境変数の名の列にするため。"
@@ -744,7 +780,7 @@
                                                    #(BOOT-FILE-VAR BOOT-STARTED-VAR BOOT-EXEC-VAR JOB-CGROUP-VAR SERVICE-CGROUP-VAR SERVICE-SHARES-VAR CGROUP-DIR-VAR
                                                      CGROUP-HOST-VAR CGROUP-LAYOUT-VAR WARM-SERVICES-VAR WARM-TABLE-CHILDREN-VAR POD-UID-VAR PREPARE-CGROUP-VAR
                                                      PREPARE-ROOM-FILE-VAR VERSION-FILE-VAR RETIRED-FILE-VAR EVICTION-MARGIN-VAR CLI-CEILING-VAR JOBS-CEILING-VAR
-                                                     CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR TASK-RECORD-DIR-VAR commit-var)
+                                                     CLI-TURN-BYTES-VAR CLI-TURN-SLOTS-VAR LAYER-FLOORS-VAR TASK-RECORD-SERVICE-VAR commit-var)
                                                    WORKER-LOG-ENV-NAMES))))
         ;; service も待ちの子から分けるか(機体の配備が WARM-SERVICES-VAR か枠の file の自分の行の warmServices で
         ;; 入れる・無ければ今までどおり)。
@@ -788,6 +824,8 @@
         shared-procs (run (with-handlers [os-file-handler] (job-shared-placed job-procs)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
+        ;; task の終わりの行の送り先(worker/core/task_record — 送らない時は None・使えない値の時は訳の文で、下で 1 行名乗る)。
+        task-record (run (with-handlers [subprocess-handler] (task-record-target-of machine-env args.node)))
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
         host (HostSettings :log-dir places.logs :generation places.generation :jobs-dir places.jobs
                            :program-dir places.programs :python interpreter :hy-command hy-command
@@ -795,8 +833,8 @@
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs
                            :service-layer service-layer :service-shares service-shares
-                           ;; task の終わりの行の dir(機体の配備が渡した時だけ)。
-                           :task-record-dir (or (.get machine-env TASK-RECORD-DIR-VAR) None))
+                           ;; task の終わりの行の送り先(機体の配備が service.name を渡した時だけ)。
+                           :task-record (if (isinstance task-record TaskRecordTarget) task-record None))
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv
                            ;; service だけが分かれる root の待ちの子を置く cgroup(版の切り替えの道を task の層の CPU の枠に置かない)。
@@ -829,6 +867,9 @@
   ;; 1 本にまとめる — coordinator の入口と同じ merged)。fd 1・2 は替えない — 子孫は元の file を継ぐ。
   ;; 終わりは process の終わり — 下の断りの traceback も送る。
   (process-lines (worker-log-plan machine-env args.name boot) :merged (in POD-UID-VAR machine-env))
+  ;; task の終わりの行の service.name が在るのに送り先の値が使えなければ、送らない訳を 1 行名乗る(worker は止めない)。
+  (when (isinstance task-record str)
+    (print (.format "worker: task の終わりの行を送らない — {}" task-record) :file sys.stderr :flush True))
   ;; 時間の不変条件 C4(#2806)と shim の期限(#2940)を破る起動は、job を走らせる前に名指しで断る。
   (run (timing-checked (int (* args.fence 1000)) policy (ClusterTiming)))
   ;; coordinator への口(worker/protocol/coordinator_link — #2427)。拍から拍へ持ち越す値は入れ物 link に、宛先の状態は heartbeat と

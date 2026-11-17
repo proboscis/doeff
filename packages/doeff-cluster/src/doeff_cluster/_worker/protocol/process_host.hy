@@ -25,9 +25,10 @@
 (import pathlib [Path])
 (import posixpath)
 (import doeff_core_effects [slog])
-(import doeff_core_effects [AppendText FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText]
+(import doeff_core_effects [FileFailed ListDirectory MakeDirectory PathKind PathStat ReadText RemoveTree RenamePath StatPath WriteText]
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
+(import doeff_core_effects [HttpRequest HttpResponse HttpFailed])
 (import doeff_time [WaitWithin])
 (import doeff_core_effects [EnvEntry ProcessOutcome ReadEnvironment ReadInterpreter RunProcess StartProcess PollProcess StopProcess SignalProcess ProcessSignal ProcessStarted ProcessNotStarted ProcessRunning ProcessExited ProcessNotChild ProcessSignalRefused WriteProcessInput ProcessInputWritten])
 (import doeff_cluster._worker.intent.worker_model [NoticeJob])
@@ -48,7 +49,8 @@
 (import doeff_core_effects [ForkFromWarm PollWarmChild SignalWarmChild WriteWarmChildInput WarmRefused WarmRunning WarmExited WarmLost])
 (import doeff_cluster._worker.core.warm_rules [WarmPlace warm-place])
 (import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
-(import doeff_cluster._worker.core.task_record [TaskUsage cpu-seconds-of day-file-name expired-day-files peak-mib-of task-record-line])
+(import doeff_cluster._worker.core.task_record [TaskEnd TaskRecordTarget TaskUsage cpu-seconds-of peak-mib-of task-record-body
+                                                task-record-refusal])
 (import doeff_cluster._worker.intent.worker_model [Outcome])
 
 
@@ -87,8 +89,9 @@
   ;; service-procs は層の共有の子。
   (setv #^ (| str None) service-layer None)
   (setv #^ (get tuple #((get tuple #(str int)) ...)) service-shares #())
-  ;; task の終わりの行を足す dir(worker/core/task_record・入口 main が DOEFF_WORKER_TASK_RECORD_DIR から 1 度だけ決める)。None = 書かない。
-  (setv #^ (| str None) task-record-dir None))
+  ;; task の終わりの行の送り先(worker/core/task_record・入口 main が DOEFF_WORKER_TASK_RECORD_SERVICE と job の log の送り先から 1 度だけ
+  ;; 決める)。None = 送らない。
+  (setv #^ (| TaskRecordTarget None) task-record None))
 
 
 (defrecord ForkedFrom
@@ -141,8 +144,10 @@
 (val JOB-CGROUP-IO-LOG "worker: job の cgroup の読み書き")
 ;; 掃きを走らせられなかった行の名(名 + 欄 detail)。task はそのまま起こす(消し残しは次の掃きが拾う)。
 (val JOB-CGROUP-SWEEP-FAILED-LOG "worker: job の cgroup の掃きが走らない")
-;; task の終わりの行を書けなかった時の行の名(worker/core/task_record — 名 + 欄 job・path・detail)。回収はそのまま進む。
-(val TASK-RECORD-FAILED-LOG "worker: task の終わりの行を書けない")
+;; task の終わりの行を送れなかった時の行の名(worker/core/task_record の取りこぼし — 名 + 欄 job・detail)。回収と task はそのまま進む。
+(val TASK-RECORD-FAILED-LOG "worker: task の終わりの行を送れない")
+;; task の終わりの行の 1 回の POST の秒の上限(送りは拍の外の task — 上限が縛るのは送りの task の残る長さだけ)。
+(val TASK-RECORD-TIMEOUT-SECONDS 5.0)
 ;; 掃きの秒の上限(sh の rmdir と cat だけ — 越えたら諦めて次の掃きに回す)。
 (val SWEEP-TIMEOUT-SECONDS 10.0)
 ;; services の層の取り分を整えた時の行の名(worker/core/job_cgroup の「取り分」— 欄 state = on〔cpu を掛けて重みを書いた〕・deferred〔層に
@@ -441,31 +446,53 @@
   (TaskUsage :cpu-seconds cpu :peak-mib mib))
 
 
+(defk task-stop-word [outcome stop]
+  {:pre [(: outcome Outcome) (: stop (| StopAsked None))] :post [(: % (| str None))] :tags {:context "worker" :role "protocol"}}
+  "worker が止めを求めて終わった task の、終わりの行の止めた訳の語を決めるため(worker/core/task_record の欄 stopped — 機体の memory の
+   訳が無い時に使う): 止めを求めずに終わった task は None・止めの合図の記録が在ればその訳の語(stop-reason-word)・記録の無い止めは
+   outcome の語 stopped。"
+  (cond (!= outcome Outcome.STOPPED) None
+        (is stop None) Outcome.STOPPED.value
+        True (! (stop-reason-word stop.reason))))
+
+
+(defk sent-task-record [request job]
+  {:pre [(: request HttpRequest) (: job str)] :post [(: % None)] :tags {:context "worker" :role "protocol"}}
+  "task の終わりの行の POST request を 1 回出し、届かなかった・断られた時に job の名を名指した行を 1 つ出すため(拍の外の task —
+   worker/core/task_record の取りこぼし)。撃ち直さない。答え手が何を投げても行にする(task も worker も止めない)。"
+  (var refusal None)
+  (try
+    (<- answer (| HttpResponse HttpFailed) request)
+    (:= refusal (match answer
+                  (HttpFailed) answer.detail
+                  (HttpResponse) (! (task-record-refusal answer.status answer.text))
+                  _ (.format "HTTP の答えでない: {!r}" answer)))
+    (except [error Exception]
+      (:= refusal (.format "{}: {}" (. (type error) __name__) error))))
+  (when (is-not refusal None)
+    (<- (slog TASK-RECORD-FAILED-LOG :level "warning" :job job :detail refusal)))
+  None)
+
+
 (defk recorded-task-end [settings started outcome exit-code stop-reason]
   {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: exit-code int) (: stop-reason (| str None))] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
-  "回収する task の終わりの行を、設定の dir の日の file に足すため(worker/core/task_record — 常駐の job と、dir の無い worker は書かない)。
-   日の file を初めて作る時は、先に dir を作り、残す日数より古い日の file を消す。書けなければ行を 1 つ出して進む(回収を止めない)。"
-  (val dir settings.task-record-dir)
+  "回収する task の終わりの行を、設定の送り先へ拍の外の task で 1 回送るため(worker/core/task_record — 常駐の job と、送り先の無い worker は
+   送らない)。拍は送りの終わりを待たない — 送り先が遅い・届かない時も、回収と次の job の起動と状態の報告を止めない。"
+  (val target settings.task-record)
   (val view started.view)
-  (when (or (is dir None) (not view.spec.once))
+  (when (or (is target None) (not view.spec.once))
     (return None))
   (<- now int (now-epoch-ms))
   (<- usage TaskUsage (task-group-usage started.group))
-  (<- line str (task-record-line view.name view.spec.task-name view.attempt view.started-ms now outcome.value exit-code usage stop-reason))
-  (<- day str (day-file-name now))
-  (val path (posixpath.join dir day))
-  (<- seen (| PathStat FileFailed) (StatPath path))
-  (when (or (isinstance seen FileFailed) (= seen.kind PathKind.MISSING))
-    (<- _made (| FileFailed None) (MakeDirectory dir))  ; 作れない断りは下の足しが名乗る
-    (<- entries (| tuple FileFailed) (ListDirectory dir))
-    (when (not (isinstance entries FileFailed))
-      (<- expired tuple (expired-day-files (tuple (gfor entry entries entry.name)) now))
-      (for [old expired]
-        (<- _gone (| FileFailed None) (RemoveTree (posixpath.join dir old))))))  ; 消せなかった file は次の日の最初の行が消し直す
-  (<- appended (| FileFailed None) (AppendText path line))
-  (when (isinstance appended FileFailed)
-    (<- (slog TASK-RECORD-FAILED-LOG :level "warning" :job view.name :path path :detail appended.detail)))
+  ;; 止めた訳: 機体の memory の訳(stop-reason)が先、無ければ worker が止めを求めた訳の語。
+  (<- asked (| str None) (task-stop-word outcome started.stop))
+  (val end (TaskEnd :job view.name :kind view.spec.task-name :attempt view.attempt :started-ms view.started-ms :ended-ms now
+                    :exit-code exit-code :usage usage :stopped (if (is stop-reason None) asked stop-reason)))
+  (<- body dict (task-record-body target end))
+  (val request (HttpRequest "POST" target.endpoint :headers {"Content-Type" "application/json"} :body body
+                            :timeout-seconds TASK-RECORD-TIMEOUT-SECONDS :max-retries 0 :failures-as-values True))
+  (<- (Spawn (sent-task-record request view.name) :daemon True))
   None)
 
 
