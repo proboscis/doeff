@@ -142,3 +142,21 @@ def test_c_the_venv_python_keeps_the_standard_library_beside_its_source(tmp_path
     _run([str(root.python), "-I", "-c", "import json, sys; sys.path.insert(0, sys.argv[1]); import pkg.first", str(root.tree)],
          _environ(root))
     assert not (root.place / str(Path(os.__file__).parent).lstrip("/")).exists()
+
+
+@pytest.mark.parametrize("flags", [[], ["-I"]])
+def test_d_the_venv_python_keeps_a_source_outside_the_root_beside_its_source(tmp_path: Path, flags: list[str]) -> None:
+    """口が置き場を使うのは root の下の source だけ: root の venv の python が root の外の checkout の module を import すると、その .pyc は
+    source の隣の __pycache__ に在り、root の置き場には無い(root の木の module の .pyc は置き場に在る)。
+    直す前は、root の外の source の .pyc も root の置き場に書いた — root の版が替わるたびに同じ source を新しい root の置き場へ書き直す。"""
+    root = _root(tmp_path / "root", placed=True)
+    outside = tmp_path / "elsewhere"
+    (outside / "ext").mkdir(parents=True)
+    (outside / "ext" / "__init__.py").write_text("")
+    (outside / "ext" / "mod.py").write_text("value = 3\n")
+    code = "import sys; sys.path[:0] = sys.argv[1:3]; import pkg.first, ext.mod"
+    _run([str(root.python), *flags, "-c", code, str(root.tree), str(outside)], _environ(root))
+    assert sorted(p.name.split(".")[0] for p in (outside / "ext" / "__pycache__").glob("*.pyc")) == ["__init__", "mod"]
+    assert not (root.place / str(outside).lstrip("/")).exists()
+    assert _tree_pycache(root.tree) == []
+    assert _placed(root.place, root.tree) == ["__init__", "first"]

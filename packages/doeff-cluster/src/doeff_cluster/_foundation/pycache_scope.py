@@ -12,8 +12,14 @@ PYCACHE-SCOPE-LINE)。
 
 ただ Python の prefix は process の全部の source に効くので、そのままでは標準 library(sys.base_prefix の下)と venv に入れた package
 (sys.prefix の下 — uv sync の --compile-bytecode が隣の __pycache__ に焼いた物)の .pyc も置き場で探し、見つからずに起動のたびに compile
-し直す(#3695 — 起動の秒の過半)。この口は importlib の cache_from_source を包み、interpreter と venv の prefix の下の source だけを隣の
-__pycache__ に戻す(置き場を使うのはそれ以外 — root の木の source)。
+し直す(#3695 — 起動の秒の過半)。この口は importlib の cache_from_source を包み、interpreter と venv の prefix の下の source を隣の
+__pycache__ に戻す。
+
+置き場を使うのは root の下の source(root の木)だけ。root の外の source(root の venv の python が import する別の checkout・別の木)も
+隣の __pycache__ に戻す — Python の標準の置き方で、source の版ごとに 1 回だけ書かれる。root の外の source まで root の置き場に書くと、
+root の版が替わるたびに同じ source の .pyc を新しい root の置き場へ全部 書き直す(2026-11-18 の本番の root 1 つで、置き場の 767 MB の
+うち 545 MB・約 13,800 file が root の外の source の .pyc で、写し元の root から引き継がれない)。root = 置き場の親の dir
+(置き場は root の直下 — env_marker_model の ROOT-PYCACHE)。
 
 置き方: worker の準備が root の venv の site-packages へこの file を _doeff_pycache_scope.py として写し、`import` の 1 行の .pth
 (env_prepare_model の PYCACHE-SCOPE-PTH — 名の順で venv のほかの .pth より先)と空の PREFIX_FILE を置き(env_translation の
@@ -46,14 +52,21 @@ def kept_dirs() -> tuple[str, ...]:
     return tuple(sorted({os.path.join(os.path.abspath(p), "") for p in (*prefixes, shared) if p}))
 
 
-def scoped(prefixed: Callable[..., str], kept: tuple[str, ...]) -> Callable[..., str]:
-    """置き場の在る cache_from_source(prefixed)を、kept の下の source だけ隣の __pycache__ の path に戻す関数にするため(.pyc の名 —
-    cache の印と最適化の段 — は prefixed の答えの名をそのまま使う)。"""
+def owned_dir(prefix: str) -> str:
+    """置き場を使う source の dir の頭(末尾の / 付き): 置き場の親の dir = root(頭の註 — root の木はこの下に在る)。"""
+    return os.path.join(os.path.dirname(os.path.abspath(prefix)), "")
+
+
+def scoped(prefixed: Callable[..., str], kept: tuple[str, ...], owned: str | None = None) -> Callable[..., str]:
+    """置き場の在る cache_from_source(prefixed)を、owned の下で kept の外の source だけが置き場を使い、ほかの source は隣の
+    __pycache__ の path に戻す関数にするため(.pyc の名 — cache の印と最適化の段 — は prefixed の答えの名をそのまま使う)。
+    owned が None の時は kept の外の全部が置き場を使う。"""
 
     def cache_from_source(path: str | os.PathLike[str], debug_override: bool | None = None, *, optimization: object = None) -> str:
         cached = prefixed(path, debug_override, optimization=optimization)
         source = os.fspath(path)
-        if not os.path.abspath(source).startswith(kept):
+        absolute = os.path.abspath(source)
+        if (owned is None or absolute.startswith(owned)) and not absolute.startswith(kept):
             return cached
         return os.path.join(os.path.dirname(source), "__pycache__", os.path.basename(cached))
 
@@ -79,7 +92,7 @@ def install() -> None:
     sys.pycache_prefix = venv_prefix(os.path.dirname(os.path.abspath(__file__)))
     if not sys.pycache_prefix or getattr(external.cache_from_source, "doeff_pycache_scope", False):
         return
-    wrapped = scoped(external.cache_from_source, kept_dirs())
+    wrapped = scoped(external.cache_from_source, kept_dirs(), owned_dir(sys.pycache_prefix))
     wrapped.doeff_pycache_scope = True
     external.cache_from_source = wrapped
     importlib.util.cache_from_source = wrapped
