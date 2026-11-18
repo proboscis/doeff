@@ -210,6 +210,7 @@
 ;; 手入れの effect の組 = この module の effect の全部。記録の handler の組(memory・PostgreSQL)はどれにも答える。使い手の閉じの検は、
 ;; 実行時に選ぶ手入れの係の handler(解析器が読めない)が答える effect をこの組から組み、手で写さない(手入れの effect を足すと、写しが
 ;; ずれて使い手の閉じの検が赤になった — MoveBulkFields)。組と module の effect・handler の答えの一致は tests/test_maintenance_effects.py が縛る。
+;; 組は入口(doeff_records)から出さない — 公開 API は effect と handler だけ(ADR-DOE-API-001)。使い手は効果そのものを入口から読む。
 (val MAINTENANCE-EFFECTS #(SweepExpired PruneChanges ReadChangeLog ReadExpiredEvents RetireArchivedEvents MoveBulkFields))
 
 

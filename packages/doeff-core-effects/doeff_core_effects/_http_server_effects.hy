@@ -307,6 +307,13 @@
   (#^ str reason))
 
 
+(defrecord HttpShortcutCarried
+  "The answer of a request entry's answer that answers on the spot and still hands a value to the main body (header comment): answer = sent on the spot, carried = the value put in the field
+   carried of the request's event HttpRequestArrived, which lines up as an already answered request (no command, no body read)."
+  (#^ HttpProbeAnswer answer)
+  (#^ object carried))
+
+
 (defrecord HttpShortcut
   "One request entry that the answerer answers on the spot (header comment): method and path = matches a request with that method and path (excluding the query) that does not ask for a ws
    Upgrade, answer = a function that receives the whole body's bytes and returns a closed Program answering HttpProbeAnswer (sent on the spot - the request never reaches the main body),
@@ -314,14 +321,7 @@
    answerer runs it in its own run for each request, one request at a time."
   (#^ str method)
   (#^ str path)
-  (#^ (get Callable #([bytes] Program)) answer))
-
-
-(defrecord HttpShortcutCarried
-  "The answer of a request entry's answer that answers on the spot and still hands a value to the main body (header comment): answer = sent on the spot, carried = the value put in the field
-   carried of the request's event HttpRequestArrived, which lines up as an already answered request (no command, no body read)."
-  (#^ HttpProbeAnswer answer)
-  (#^ object carried))
+  (#^ (get Callable #([bytes] (get Program #((| HttpProbeAnswer HttpShortcutCarried None) object)))) answer))
 
 
 (defrecord HttpShortcutFailed
