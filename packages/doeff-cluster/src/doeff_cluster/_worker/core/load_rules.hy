@@ -18,6 +18,10 @@
 ;;;                          worker だけが読む(LoadPaths の task-cpu-pressure)。機体の PSI の some は、優先度を下げた process の実行の待ちでも
 ;;;                          立つ(2026-11-05 の node-h: 優先度を下げた命令が nice 19 core を使う間、機体の some 76%・task の層の some 5.6%)。
 ;;;                          task の層の値は、置いた task 自身が実行を待つかを測る。
+;;;   <会話の CLI の層>/cpu.pressure  会話の CLI とその子を置く cgroup の層(層の宣言の名 clis)の CPU の PSI の some の avg10(%)。層の在る
+;;;                          worker だけが読む(LoadPaths の cli-cpu-pressure)。worker 自身はこの値で何も決めず、名乗るだけ — 上に載る系の
+;;;                          会話の置き先が、CLI の層に CPU が残っているかを読む(2026-11-18 の node-h: 層に cpu.idle を掛けた機体の CPU が
+;;;                          常駐の job で埋まり、CLI の起動が 6 倍に伸びた)。
 ;;; PSI の file の無い機体(PSI を切った kernel)は PSI の欄を None にし、/proc/stat か /proc/meminfo の読めない機体は測りを名乗らない。
 ;;;
 ;;; 会話のターンに残す線(2026-11-08): 機体の memory を、作り直せない会話のターンと作り直せる task が分け合う機体(node-h)では、
@@ -98,21 +102,24 @@
 
 (defrecord LoadPaths
   "測りの読む file の置き場(頭の註): stat・meminfo・cpu-pressure・memory-pressure。既定は機体の /proc。task-cpu-pressure = task を
-   置く cgroup の層の cpu.pressure(None = 層の無い worker — 読まない)。"
+   置く cgroup の層の cpu.pressure(None = 層の無い worker — 読まない)。cli-cpu-pressure = 会話の CLI の層の cpu.pressure(頭の註 —
+   None = 層の無い worker・読まない)。"
   (setv #^ str stat "/proc/stat")
   (setv #^ str meminfo "/proc/meminfo")
   (setv #^ str cpu-pressure "/proc/pressure/cpu")
   (setv #^ str memory-pressure "/proc/pressure/memory")
-  (setv #^ (| str None) task-cpu-pressure None))
+  (setv #^ (| str None) task-cpu-pressure None)
+  (setv #^ (| str None) cli-cpu-pressure None))
 
 
-(defk load-paths-under [root task-cpu-pressure]
-  {:pre [(: root str) (: task-cpu-pressure (| str None))] :post [(: % LoadPaths)] :tags {:context "worker" :role "judgment"}}
+(defk load-paths-under [root task-cpu-pressure [cli-cpu-pressure None]]
+  {:pre [(: root str) (: task-cpu-pressure (| str None)) (: cli-cpu-pressure (| str None))] :post [(: % LoadPaths)]
+   :tags {:context "worker" :role "judgment"}}
   "測りの読む file を、/proc と同じ並びの dir root の下に置くため(root = /proc なら既定の LoadPaths と同じ)。入口が環境変数で受けた
    代わりの dir を渡す — 手元の 1 台の cluster(sim/machine の QuietMachine)が、混んだ機体の上でも静かな機体の測りを worker に読ませる。
-   task-cpu-pressure は LoadPaths と同じ(task の層の cpu.pressure・None = 読まない)。"
+   task-cpu-pressure と cli-cpu-pressure は LoadPaths と同じ(層の cpu.pressure・None = 読まない)。"
   (LoadPaths :stat (+ root "/stat") :meminfo (+ root "/meminfo") :cpu-pressure (+ root "/pressure/cpu")
-             :memory-pressure (+ root "/pressure/memory") :task-cpu-pressure task-cpu-pressure))
+             :memory-pressure (+ root "/pressure/memory") :task-cpu-pressure task-cpu-pressure :cli-cpu-pressure cli-cpu-pressure))
 
 
 (defrecord HostLoad
@@ -151,7 +158,8 @@
    前の読みからの CPU の使いの割合(0〜1 — 初めての読みと、刻みの進まない読みは None)・memory-total-mib / memory-available-mib =
    MemTotal / MemAvailable(MiB — 切り捨て)・cpu-some-avg10 / cpu-full-avg10 / memory-some-avg10 / memory-full-avg10 = PSI の avg10(%)
    (PSI の file の無い機体と、full の行の無い kernel の cpu は None)・cpu-nice = cpu-busy の内の nice の分(0〜1 — cpu-busy と同じ読みで
-   None)・task-cpu-some-avg10 = task の層の CPU の PSI の some の avg10(%— 層の無い・読めない worker は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
+   None)・task-cpu-some-avg10 = task の層の CPU の PSI の some の avg10(%— 層の無い・読めない worker は None)・cli-cpu-some-avg10 = 会話の CLI の
+   層の CPU の PSI の some の avg10(%— 頭の註。層の無い・読めない worker は None)・task-uses = 走っている task ごとの memory の今の使い(TaskMemory
    の tuple — task-uses-of。None = 名乗らない〔見張りの読みが無いか古い〕— coordinator の置き先は名乗られない task の要りの全部を
    予約する・2026-11-02)・task-peaks = task ごとの memory の山(TaskMemory の tuple — mib = 見張りの読みの走り出しからの最大で、終わった
    task も終わりから暫く名乗る〔worker/protocol/memory_watch の頭の註の task ごとの山〕。None = 名乗らない〔task-uses と同じ古さの決め〕—
@@ -173,7 +181,8 @@
            (or (is lend-available-mib None) (>= memory-total-mib lend-available-mib memory-available-mib))
            (or (is reclaim-mib None) (> reclaim-mib 0)) (or (is reclaim-mib None) (is lend-available-mib None))
            (or (is cpu-nice None) (and (is-not cpu-busy None) (<= 0 cpu-nice cpu-busy)))
-           (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0)) (or (is prepare-wait-mib None) (> prepare-wait-mib 0))
+           (or (is task-cpu-some-avg10 None) (>= task-cpu-some-avg10 0)) (or (is cli-cpu-some-avg10 None) (>= cli-cpu-some-avg10 0))
+           (or (is prepare-wait-mib None) (> prepare-wait-mib 0))
            (= (is job-meters None) (is job-meters-at-ms None))]}
   (#^ int at-ms)
   (#^ int cpus)
@@ -186,6 +195,7 @@
   (#^ (| float None) memory-full-avg10)
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
+  (setv #^ (| float None) cli-cpu-some-avg10 None)
   (setv #^ (| (get tuple #(TaskMemory ...)) None) task-uses None)
   (setv #^ (| (get tuple #(TaskMemory ...)) None) task-peaks None)
   (setv #^ (| int None) jobs-room-mib None)
@@ -430,15 +440,16 @@
 
 
 (defk machine-load-of [stat meminfo cpu-pressure memory-pressure before at-ms [line None] [task-cpu-pressure None] [keep-line None]
-                       [lend-line None] [reclaim-mark None]]
+                       [lend-line None] [reclaim-mark None] [cli-cpu-pressure None]]
   {:pre [(: stat str) (: meminfo str) (: cpu-pressure (| str None)) (: memory-pressure (| str None)) (: before (| CpuTicks None)) (: at-ms int)
          (: line (| EvictionLine None)) (: task-cpu-pressure (| str None)) (: keep-line (| str None)) (: lend-line (| str None))
-         (: reclaim-mark (| str None))]
+         (: reclaim-mark (| str None)) (: cli-cpu-pressure (| str None))]
    :post [(: % LoadReading)] :tags {:context "worker" :role "judgment"}}
   "/proc/stat・/proc/meminfo・PSI の 2 つの file の中身(読めない PSI の file は None)と前の /proc/stat の読み before を、機体の測った
    空きにするため。line = 機体の memory の見張りが最後に数えた追い出しの線(worker/core/eviction_rules — None = 線が無いか古い)。
    線が在れば memory の総量と空きは線の大きさと追い出しまでの空き(見張りの DANGER と同じ量 — coordinator はこの空きで task を置く)、
-   無ければ MemTotal と MemAvailable。task-cpu-pressure = task の層の cpu.pressure の中身(None = 層が無いか読めない)。keep-line = 会話の
+   無ければ MemTotal と MemAvailable。task-cpu-pressure = task の層の cpu.pressure の中身(None = 層が無いか読めない)。
+   cli-cpu-pressure = 会話の CLI の層の cpu.pressure の中身(None = 層が無いか読めない)。keep-line = 会話の
    ターンに残す線の file の中身(頭の註 — None = 読まない・読めない。読めれば空きを MemAvailable − 線の上に絞る — kept-memory)。
    lend-line / reclaim-mark = 線の内を貸す下の線の file と取り返しの印の file の中身(頭の註の線の内の貸し — None = 読まない・読めない。
    lent-room)。形の違う中身は ValueError(読みの訳 — 呼び手が名乗りを外す)。"
@@ -460,6 +471,10 @@
   (when (is-not task-cpu-pressure None)
     (<- read Pressure (pressure-of task-cpu-pressure "task の層の cpu.pressure"))
     (:= task-cpu read))
+  (var cli-cpu None)
+  (when (is-not cli-cpu-pressure None)
+    (<- read Pressure (pressure-of cli-cpu-pressure "会話の CLI の層の cpu.pressure"))
+    (:= cli-cpu read))
   (LoadReading :load (MachineLoad :at-ms at-ms :cpus ticks.cpus :cpu-busy busy
                                   :memory-total-mib (// memory.total-bytes MIB) :memory-available-mib (// memory.available-bytes MIB)
                                   :cpu-some-avg10 (if (is cpu None) None cpu.some-avg10)
@@ -467,6 +482,7 @@
                                   :memory-some-avg10 memory.some-avg10 :memory-full-avg10 memory.full-avg10
                                   :cpu-nice (if (is nice None) None (min nice busy))
                                   :task-cpu-some-avg10 (if (is task-cpu None) None task-cpu.some-avg10)
+                                  :cli-cpu-some-avg10 (if (is cli-cpu None) None cli-cpu.some-avg10)
                                   ;; 急ぎの task の空き(頭の註): 線が空きを縮めた時だけ、線を外した空きも名乗る。
                                   :urgent-available-mib (if (< memory.available-bytes by-line.available-bytes)
                                                             (// by-line.available-bytes MIB) None)

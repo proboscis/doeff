@@ -217,7 +217,9 @@
    空き、それ以外は MemTotal / MemAvailable(MiB — worker/core/eviction_rules の line-memory)・cpu-some-avg10 / cpu-full-avg10 /
    memory-some-avg10 / memory-full-avg10 = PSI の avg10(%— None = PSI の無い機体・full の行の無い kernel の cpu)・cpu-nice = cpu-busy の
    内の nice > 0 の process の分(0〜1 — None = 名乗らない〔測りの前の版の worker・数えられない読み〕)・task-cpu-some-avg10 = task を
-   置く cgroup の層の CPU の PSI の some の avg10(%— None = 層の無い・読めない・前の版の worker)・task-memory-MiB =
+   置く cgroup の層の CPU の PSI の some の avg10(%— None = 層の無い・読めない・前の版の worker)・cli-cpu-some-avg10 = 上に載る系の
+   会話の CLI を置く cgroup の層(clis)の CPU の PSI の some の avg10(%— None = 層の無い・読めない・前の版の worker。task の置き先は
+   読まない — 上に載る系の会話の置き先が GET /state で読む)・task-memory-MiB =
    走っている task ごとの memory の今の使い(task の id → MiB — 見張りの最後の読みの task の木の rss の和。None = 名乗らない〔見張りの
    読みが古い・測りの前の版の worker〕— 置き先は名乗られない task の要りの全部を予約する)・task-peak-MiB = task ごとの memory の山
    (task の id → MiB — 見張りの 5 秒ごとの読みの task の木の rss の和の、走り出しからの最大。worker の log の「job の memory の最大」と同じ値で、
@@ -241,7 +243,8 @@
    この値から数え(core/measured_room)、GET /state の worker の行に写す。"
   {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
    :check [(> cpus 0) (or (is cpu-busy None) (<= 0 cpu-busy 1)) (>= memory-total-MiB memory-available-MiB 0)
-           (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10 task-cpu-some-avg10) (or (is v None) (>= v 0))))
+           (all (gfor v #(cpu-some-avg10 cpu-full-avg10 memory-some-avg10 memory-full-avg10 task-cpu-some-avg10 cli-cpu-some-avg10)
+                      (or (is v None) (>= v 0))))
            (or (is cpu-nice None) (<= 0 cpu-nice 1)) (or (is prepare-wait-MiB None) (>= prepare-wait-MiB 0))
            (or (is reclaim-MiB None) (> reclaim-MiB 0)) (or (is hosted-lend-MiB None) (>= hosted-lend-MiB 0))
            (all (gfor told #(task-memory-MiB task-peak-MiB)
@@ -259,6 +262,7 @@
   (setv #^ (| float None) memory-full-avg10 None)
   (setv #^ (| float None) cpu-nice None)
   (setv #^ (| float None) task-cpu-some-avg10 None)
+  (setv #^ (| float None) cli-cpu-some-avg10 None)
   (setv #^ (| dict None) task-memory-MiB None)
   (setv #^ (| dict None) task-peak-MiB None)
   (setv #^ (| int None) jobs-room-MiB None)

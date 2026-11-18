@@ -115,6 +115,8 @@
    ;; nice の分と task の層の CPU の PSI(名乗る時だけ — 2026-11-05。無い欄は前の版の worker と同じに読まれる)。
    #** (if (is load.cpu-nice None) {} {"cpuNice" load.cpu-nice})
    #** (if (is load.task-cpu-some-avg10 None) {} {"taskCpuSomeAvg10" load.task-cpu-some-avg10})
+   ;; 会話の CLI の層の CPU の PSI(名乗る時だけ — worker/core/load_rules の頭の註。coordinator は名簿の測りに写すだけ)。
+   #** (if (is load.cli-cpu-some-avg10 None) {} {"cliCpuSomeAvg10" load.cli-cpu-some-avg10})
    ;; task の層の今の空き(名乗る時だけ — 2026-11-09)。
    #** (if (is load.jobs-room-mib None) {} {"jobsRoomMiB" load.jobs-room-mib})
    ;; 会話のターンに残す線を外した急ぎの task の空き(線が空きを縮めた時だけ — 2026-11-10・worker/core/load_rules の頭の註)。

@@ -1008,7 +1008,7 @@
          (: lend-line-file str) (: reclaim-file str)]
    :post [(: % (| LoadReading str))]}
   "機体の /proc の file(paths)を読み、測りの 1 回の読みにするため。答え = 読めた時は LoadReading、/proc/stat か /proc/meminfo を
-   読めない・形の違う読みは訳の str。PSI の file を読めない機体は PSI の欄を None で名乗る(task の層の cpu.pressure も
+   読めない・形の違う読みは訳の str。PSI の file を読めない機体は PSI の欄を None で名乗る(task の層と会話の CLI の層の cpu.pressure も
    同じ — 層の無い worker は読まない)。before = 前に読めた刻み(CPU の使いの起点)・line = 見張りの新しい追い出しの線(None = 無いか古い)。
    keep-line-file = 会話のターンに残す線の file(worker/core/load_rules の頭の註 — 空 = 読まない。読めない間は線が無いと読む)。
    lend-line-file / reclaim-file = 線の内を貸す下の線の file と取り返しの印の file(worker/core/load_rules の頭の註の線の内の貸し — 空 =
@@ -1021,6 +1021,10 @@
   (when (is-not paths.task-cpu-pressure None)
     (<- read (| str FileFailed) (ReadText paths.task-cpu-pressure))
     (:= task-cpu-pressure read))
+  (var cli-cpu-pressure None)
+  (when (is-not paths.cli-cpu-pressure None)
+    (<- read (| str FileFailed) (ReadText paths.cli-cpu-pressure))
+    (:= cli-cpu-pressure read))
   (var keep-line None)
   (when keep-line-file
     (<- read (| str FileFailed) (ReadText keep-line-file))
@@ -1043,7 +1047,8 @@
                                                     (if (isinstance task-cpu-pressure str) task-cpu-pressure None)
                                                     :keep-line (if (isinstance keep-line str) keep-line None)
                                                     :lend-line (if (isinstance lend-line str) lend-line None)
-                                                    :reclaim-mark (if (isinstance reclaim-mark str) reclaim-mark None)))
+                                                    :reclaim-mark (if (isinstance reclaim-mark str) reclaim-mark None)
+                                                    :cli-cpu-pressure (if (isinstance cli-cpu-pressure str) cli-cpu-pressure None)))
            reading
            (except [error ValueError]
              (str error)))))

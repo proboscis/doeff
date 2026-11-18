@@ -319,12 +319,16 @@
   "coordinator の GET /state の workers(名 → {provides exclusive live draining taskRoom node …})を名簿の断面(RunnerFact の tuple・名の順)に
    するため。taskRoom(#3489)と node(Worker の資源の spec.node — 空 = k8s の外・#3747)は coordinator が必ず書く欄 — 無い
    答えは KeyError で落とす(既定の値で埋めない)。機体の CPU の使い cpu-busy は測りを名乗る担い手の measured だけが持つ欄で、measured の
-   無い担い手と cpuBusy が null の読み(初めの読み)は None。"
+   無い担い手と cpuBusy が null の読み(初めの読み)は None。会話の CLI の層の CPU の PSI cli-cpu-some-avg10 も同じく measured の
+   cliCpuSomeAvg10 だけから読み、層の無い担い手は None。"
   (tuple (gfor #(name w) (sorted (.items workers))
-               :setv busy (.get (or (.get w "measured") {}) "cpuBusy")
+               :setv measured (or (.get w "measured") {})
+               :setv busy (.get measured "cpuBusy")
+               :setv cli-cpu (.get measured "cliCpuSomeAvg10")
                (RunnerFact :name name :provides (tuple (sorted (.get w "provides" []))) :exclusive (tuple (sorted (.get w "exclusive" [])))
                            :live (bool (get w "live")) :draining (bool (get w "draining")) :task-room (int (get w "taskRoom"))
-                           :node (str (get w "node")) :cpu-busy (if (is busy None) None (float busy))))))
+                           :node (str (get w "node")) :cpu-busy (if (is busy None) None (float busy))
+                           :cli-cpu-some-avg10 (if (is cli-cpu None) None (float cli-cpu))))))
 
 
 (deff runners-change-of [#^ (| int None) status #^ (| dict list str int float bool None) body]  ; cannot be a defk: 本番の client と sim の宿が同じ読みを使う純粋な判断

@@ -253,7 +253,10 @@
 ;;   物理の機体を知るため・#3747)。足すだけの欄なので既定は空(作り手が名乗らない担い手と同じ値)。cpu-busy = 担い手が heartbeat で名乗った
 ;;   機体の CPU の使いの割合(GET /state の measured.cpuBusy の写し — 0〜1・nice の分も含む機体の全体の値。task-room は nice の分を空きに
 ;;   数えるので、優先度を下げた仕事で埋まった機体も task-room では空いて見える。使い手が自分の仕事〔nice で走る会話の手番など〕の置き先を
-;;   CPU の埋まりで決めるため)。測りを名乗らない担い手と、まだ数えられない読みは None(0 と倒さない)。
+;;   CPU の埋まりで決めるため)。測りを名乗らない担い手と、まだ数えられない読みは None(0 と倒さない)。cli-cpu-some-avg10 = 担い手が
+;;   heartbeat で名乗った、会話の CLI を置く cgroup の層(clis)の CPU の PSI の some の avg10(GET /state の measured.cliCpuSomeAvg10 の写し —
+;;   %。使い手が会話の CLI を起こす置き先を、その層の実行の待ちで決めるため — 機体の CPU の使いは譲る層の分も使いに数えるので、層に CPU が
+;;   残るかは層の PSI で読む)。層の無い・測りを名乗らない担い手は None。
 ;; RunnersUnreachable = coordinator に届かず名簿を読めなかった(担い手の生死は分からない — 死んだとみなさない)。
 
 (defrecord RunnerFact
@@ -264,7 +267,8 @@
   #^ bool draining
   #^ int task-room
   (setv #^ str node ""
-        #^ (| float None) cpu-busy None))
+        #^ (| float None) cpu-busy None
+        #^ (| float None) cli-cpu-some-avg10 None))
 
 (defrecord RunnersUnreachable
   #^ str detail)

@@ -262,6 +262,18 @@
                     :turn-room-bytes turn-room :turn-bytes turn :layers layers :kept-file kept-file))
 
 
+(defk cli-layer-cpu-pressure [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % (| str None))] :tags {:context "worker" :role "main"}}
+  "機体の測りが会話の CLI の層の CPU の PSI を読む file を決めるため(worker/core/load_rules の頭の註 — 名乗るだけで worker は使わない):
+   層の宣言 CGROUP-LAYOUT-VAR に CLI-LAYER が在り、層の親 CGROUP-DIR-VAR が在る機体は <層の親>/clis/cpu.pressure。どちらかが無い機体は
+   None(読まない)。天井の宣言(CLI-CEILING-VAR)の有無に依らない — 層を床の静的な上限のまま置く機体でも CLI はこの層で走る。"
+  (val cgroup-dir (.get machine-env CGROUP-DIR-VAR ""))
+  (<- names tuple (layout-layer-names (.get machine-env CGROUP-LAYOUT-VAR "")))
+  (if (and cgroup-dir (in CLI-LAYER names))
+      (+ cgroup-dir "/" CLI-LAYER "/cpu.pressure")
+      None))
+
+
 (defk cli-kept-file-of [machine-env]
   {:pre [(: machine-env dict)] :post [(: % str)] :tags {:context "worker" :role "main"}}
   "上に載る系が clis に残させる余白の file の宣言(CLI-KEPT-FILE-VAR の註)を読むため(\"\" = 宣言が無い)。絶対の path でない宣言は起動を断る
@@ -905,10 +917,12 @@
                         ;; 機体の空き(/proc の CPU の使い・memory の空き・PSI)を測って heartbeat で名乗る。/proc の無い macOS の機体は
                         ;; OS の口(印 HostLoad — 答え手 os-host-counters)で CPU と memory を測って名乗る(PSI は無い)。
                         ;; task の層が在れば、その層の CPU の PSI も名乗る(優先度を下げた process の待ちを除いた、task 自身の待ち)。
+                        ;; 会話の CLI の層が在れば、その層の CPU の PSI も名乗る(上に載る系の会話の置き先が読む)。
                         :load-paths (if (.startswith (current-platform) "darwin-")
                                         (HostLoad :os "macOS")
                                         (run (load-paths-under (.get machine-env LOAD-DIR-VAR "/proc")
-                                                               (if (is job-procs None) None (run (layer-cpu-pressure job-procs))))))
+                                                               (if (is job-procs None) None (run (layer-cpu-pressure job-procs)))
+                                                               :cli-cpu-pressure (run (cli-layer-cpu-pressure machine-env)))))
                         ;; kubelet の下の worker は、見張りの数えた追い出しまでの空きを memory の空きとして名乗る。
                         :eviction memory-cell.eviction
                         ;; job の子へ渡す環境変数の名を heartbeat で名乗る(上に載る系が宣言し直す前に job の読む名と照らす)。

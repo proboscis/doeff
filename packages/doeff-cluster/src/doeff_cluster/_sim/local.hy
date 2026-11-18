@@ -329,9 +329,11 @@
    送る刻に、走っている task の数から machine-load-of で今の空きを数えて名乗る(機体の真実 — 名乗りを偽る壊れた worker は SimWorker の
    claims-cpus)。service-mib = 常駐の job 1 つの木の rss と PSS(MiB — 在れば常駐の job ごとの CPU と memory を欄 jobUses で名乗る・本番の
    見張りの読みの代役・2026-11-10。None = 名乗らない — 前の版の worker)・service-cores = 常駐の job 1 つが使い続ける CPU(jobUses の
-   CPU の累計 = 起こしてからの秒 × service-cores)。"
+   CPU の累計 = 起こしてからの秒 × service-cores)。cli-cpu-some-avg10 = 会話の CLI の層の CPU の PSI の some の avg10(%— 在れば
+   その値のまま名乗る。層に優先度の譲りを掛け、常駐の job が CPU を埋めた機体の代役。None = 層の無い機体 — 名乗らない)。"
   {:check [(> cpus 0) (>= memory-mib base-mib 0) (>= base-cores 0) (> task-cores 0) (>= task-mib 0) (>= nice-cores 0)
-           (or (is service-mib None) (>= service-mib 0)) (>= service-cores 0)]}
+           (or (is service-mib None) (>= service-mib 0)) (>= service-cores 0)
+           (or (is cli-cpu-some-avg10 None) (>= cli-cpu-some-avg10 0))]}
   (#^ int cpus)
   (#^ int memory-mib)
   (setv #^ float base-cores 0.0)
@@ -340,7 +342,8 @@
   (setv #^ int task-mib 1024)
   (setv #^ float nice-cores 0.0)
   (setv #^ (| int None) service-mib None)
-  (setv #^ float service-cores 0.0))
+  (setv #^ float service-cores 0.0)
+  (setv #^ (| float None) cli-cpu-some-avg10 None))
 
 
 ;; SimWorker の既定の機体: 模擬の筋書きが task の空きを気にせず走るための広い機体(task の空きの数え — coordinator/core/measured_room —
@@ -359,7 +362,8 @@
    memory の PSI の some avg10 = 空きが全体の 5% を切ると 20(他は 0)。claims-cpus = 反例の世界だけの壊れた worker が名乗る CPU の数
    (None = 機体の真実 — 名乗った数で CPU の使いを割り、機体を大きく見せる)。task-ids = 走っている task の id(在れば task ごとの memory の
    今の使いを task-mib として名乗る — 本番の見張りの読みの代役・2026-11-02。None = 名乗らない)。services = 生きている常駐の job の
-   process(ProcessView の列 — 機体の service-mib が在れば job ごとの CPU と memory を名乗る。PSS の刻は at-ms)。"
+   process(ProcessView の列 — 機体の service-mib が在れば job ごとの CPU と memory を名乗る。PSS の刻は at-ms)。会話の CLI の層の CPU の
+   PSI は機体の cli-cpu-some-avg10 のまま。"
   (val cpus (if (is claims-cpus None) machine.cpus claims-cpus))
   (val demand (+ machine.base-cores machine.nice-cores (* running machine.task-cores)))
   (val busy (min 1.0 (/ demand cpus)))
@@ -369,6 +373,7 @@
                :memory-available-mib available
                :cpu-some-avg10 (if (> demand cpus) (* 100.0 (/ (- demand cpus) demand)) 0.0) :cpu-full-avg10 0.0
                :memory-some-avg10 (if (< (* available 20) machine.memory-mib) 20.0 0.0) :memory-full-avg10 0.0
+               :cli-cpu-some-avg10 machine.cli-cpu-some-avg10
                :task-uses (if (is task-ids None) None (tuple (gfor id task-ids (TaskMemory :id id :mib machine.task-mib))))
                :job-meters (if (is machine.service-mib None) None
                                (tuple (sorted (gfor p services
