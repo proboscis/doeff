@@ -16,7 +16,6 @@ from typing import TypeVar
 
 import hy  # noqa: F401  Hy の module を読むため
 import pytest
-from doeff_records import MAINTENANCE_EFFECTS
 from doeff_records import _maintenance as maintenance
 
 from doeff import EffectBase, run
@@ -44,8 +43,8 @@ def test_the_maintenance_effects_are_every_effect_of_the_maintenance_module() ->
         and issubclass(value, EffectBase)
         and value.__module__ == maintenance.__name__
     }
-    assert set(MAINTENANCE_EFFECTS) == defined
-    assert len(MAINTENANCE_EFFECTS) == len(defined)
+    assert set(maintenance.MAINTENANCE_EFFECTS) == defined
+    assert len(maintenance.MAINTENANCE_EFFECTS) == len(defined)
 
 
 @pytest.mark.parametrize(
@@ -55,4 +54,4 @@ def test_the_maintenance_effects_are_every_effect_of_the_maintenance_module() ->
 def test_the_records_handlers_answer_every_maintenance_effect(handler: str) -> None:
     read = _answered(AnalyzeHandler(handler))
     assert read.basis is Basis.CLAUSES, read.unresolved
-    assert set(MAINTENANCE_EFFECTS) - read.handled == set()
+    assert set(maintenance.MAINTENANCE_EFFECTS) - read.handled == set()

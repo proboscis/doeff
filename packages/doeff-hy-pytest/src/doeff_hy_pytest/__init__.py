@@ -14,8 +14,9 @@ Its hooks share names with the budget's, so it is registered as its own plugin t
 
 The public names are only the two per-test declarations (`declare_step_budget`, `declare_process_tree_cpu`) and the entry point
 (doeff-hy-pytest's share of the rule "the public API a doeff subpackage shows users is only effects and handlers").
-Hooks are picked up by pytest from module attributes (names starting with `pytest_`), and the startup step is imported under a private name,
-so every other name the module shows is one of the two declarations (no `__all__` -- DOEFF021). The measuring internals (`_budget`,
+Hooks are picked up by pytest from module attributes (names starting with `pytest_`, and `pytest_plugins`), so they are shown too and
+sit with the declarations in the allowed group "pytest plugin registration" (ADR-DOE-API-001 R10 -- names the pytest11 module shows).
+The startup step is imported under a private name, so no other name is shown (no `__all__` -- DOEFF021). The measuring internals (`_budget`,
 `_python_calls`, `_tree_cpu`) are internal; users read the summary lines the plugin prints.
 
 The reason this module lives in a distribution separate from doeff-hy is the note in pyproject.toml (pytest's assert-rewrite mark is
