@@ -116,7 +116,8 @@
                                         key existing.name (list existing.needs) (lfor #(k _) existing.environ k)))))))
   ;; needs の合うどの worker の tasks 区画よりも大きい申告は、待っても置けないので積まずに断る(ADR-DOE-CLUSTER-005 R8 — 今だけ和の
   ;; 足りない task は積んで待つ・門の外の task は断らない)。
-  (setv too-big (run (memory-need-refusal state needs body.memory-MiB (or body.shape "") (is body.ungated True))))
+  (setv too-big (run (memory-need-refusal state needs body.memory-MiB (or body.shape "") (is body.ungated True)
+                                          (task-limits-of body.limits))))
   (when too-big (return (Reply state 400 (ErrorReply :message too-big))))
   (setv open-count (len (lfor t (scan-rows state.tasks) :if (in t.phase OPEN-PHASES) t))
         detached-count (len (lfor t (.rows state.tasks) :if t.detached t)))
@@ -205,7 +206,7 @@
                  (.format "needs {} は away {} のどれも持たない" (list task.needs) (list away))
                (not (any (gfor w (.rows state.workers) (and (alive now w timing.lease-ms) (can-run-task moved w)))))
                  (.format "新しい needs {} を満たす生きた worker が無い" (list needs))
-               True (run (memory-need-refusal state needs task.memory-mib task.shape task.ungated))))
+               True (run (memory-need-refusal state needs task.memory-mib task.shape task.ungated task.limits))))
   (if kept
       (Reply state 200 (DetachedRetargeted :key key :moved False :phase task.phase :needs task.needs :detail kept))
       (Reply (replace state :tasks (.with-writes state.tasks

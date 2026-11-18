@@ -8,7 +8,10 @@
 ;;; の近い回の山で補う(task_table.family-peaks-of — 引く順は 形の山 → 族の近い回の山 → 送り手の見当)。命令の全体の digest を含む形は
 ;;; ほとんどの回が初めての形で、最も大きい共有の機体の 48 時間の 309 本のうち 278 本の申告が送り手の見当(中央の値 3,584 MiB — 測った山の
 ;;; 中央の値は 873 MiB)のままだった。
-;;; CPU の申告は全部の task で TASK-CORES core(task ごとの CPU の使いは記録していない)。
+;;; CPU の申告は task が名乗る組の宣言の値(GroupLimit の cpu-millis — 値を持つ組を幾つも名乗れば最も小さい値)で、値を持つ組を名乗らない
+;;; task は TASK-CORES core(task-cpu-of — task ごとの CPU の使いは記録していない)。外へ出すだけで CPU をほぼ使わない task の組が区画の
+;;; CPU を 1 core ずつ持ち、区画の CPU が 4 core の機体では 5 本目から置けなかった(2026-11-18)。置く判断(cluster_policy.place-tasks)・
+;;; 積む時の断り(memory-need-refusal)・申告の書き(claims-noted)と、申告の行の無い置いた task の数え(claim-cpu-of)が同じ task-cpu-of を読む。
 ;;;
 ;;; 固定する訳: 以前は置いた task の要りを拍ごとに数え直した(load-of)。同じ形の古い行が保持の外へ出た拍や、ほかの task の山が伸びた拍に、
 ;;; 走っている task の要りが動き、予約と worker が比べる量(heartbeat の返事の memoryMiB)が置いた時と違う値になる。worker が比べる量は
@@ -29,6 +32,7 @@
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState TaskClaim TaskRecord PLACED-PHASES])
+(import doeff_cluster._shared.intent.detached_model [GroupLimit TaskLimit])
 (import doeff_cluster._coordinator.core.measured_room [learned-need ShapePeak TASK-CORES])
 (import doeff_cluster._coordinator.core.cluster_rules [placeable])
 (import doeff_cluster._shared.core.compartment_rules [held-compartments])
@@ -94,11 +98,24 @@
   need)
 
 
-(defk claim-cpu-of [task claims]
-  {:pre [(: task TaskRecord) (: claims (get Table TaskClaim))] :post [(: % int)] :tags {:context "coordinator" :role "judgment"}}
-  "置いた task の CPU の申告(millicore)を知るため: 表 claims に行が在ればその cpu-millis、無ければ TASK-CPU-MILLIS。"
+(defk task-cpu-of [limits group-limits]
+  {:pre [(: limits (get tuple #(TaskLimit ...))) (: group-limits (get Table GroupLimit))] :post [(: % int) (>= % 1)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "組 limits を名乗る task 1 本の CPU の申告(millicore — 頭の註)を知るため: 名乗った組のうち、系の宣言 group-limits に在り CPU の申告の
+   値を持つ組の値の最小。そういう組が無ければ(組を名乗らない・宣言に無い組だけ・値を書いていない組だけ)TASK-CPU-MILLIS。"
+  (val declared (lfor l limits
+                      :setv g (.row group-limits l.group)
+                      :if (and (is-not g None) (is-not g.cpu-millis None))
+                      g.cpu-millis))
+  (if declared (min declared) TASK-CPU-MILLIS))
+
+
+(defk claim-cpu-of [task claims group-limits]
+  {:pre [(: task TaskRecord) (: claims (get Table TaskClaim)) (: group-limits (get Table GroupLimit))] :post [(: % int)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "置いた task の CPU の申告(millicore)を知るため: 表 claims に行が在ればその cpu-millis、無ければ今の宣言での task-cpu-of。"
   (val claim (.row claims task.id))
-  (if (is claim None) TASK-CPU-MILLIS claim.cpu-millis))
+  (if (is claim None) (! (task-cpu-of task.limits group-limits)) claim.cpu-millis))
 
 
 (defk offered-mib-of [task claims]
@@ -143,7 +160,8 @@
     (val compartments (tasks-compartments-of after))
     (for [t placed]
       (<- need int (task-need-of t (compartment-clamp after compartments t.needs) peaks))
-      (.append writes (TableWrite t.id (TaskClaim :task t.id :memory-mib need :cpu-millis TASK-CPU-MILLIS)))))
+      (<- cpu int (task-cpu-of t.limits after.group-limits))
+      (.append writes (TableWrite t.id (TaskClaim :task t.id :memory-mib need :cpu-millis cpu)))))
   (if writes
       (replace after :claims (.with-writes after.claims (tuple writes)))
       after))

@@ -42,14 +42,17 @@
    task は失敗にせず queued のまま待つ。system = 組を宣言した系の名(系の構成子 service_build.system-of が名の無い上限に付け、系を
    繋ぐ時は作った系の名を保つ — 書き手は書かない。空 = 持ち主の無い組 — 最初に宣言し直した系が持つ。1 つの組を宣言する系は 1 つで、
    coordinator の資源の口は別の系の書き直しを断る。2 つの系が同じ組を違う値で宣言すると、後に宣言した系の値が黙って勝ち、宣言の順で
-   同時数が変わった)。形の検めは
+   同時数が変わった)。cpu-millis = この組を名乗る task 1 本の CPU の申告(millicore — 1 以上。None = 書いていない組: task は既定の
+   task_claims.TASK-CPU-MILLIS で数える。task が値を持つ組を幾つも名乗れば最も小さい値 — task_claims.task-cpu-of。外へ出すだけで CPU を
+   ほぼ使わない task の組が、区画の CPU を 1 core ずつ持たないため — 2026-11-18)。形の検めは
    doeff_cluster._shared.core.detached_rules の group-limit-refusal。"
   {:tags {:context "doeff-cluster" :role "intent"}}
   (#^ str group)
   (#^ str scope)
   (#^ int limit)
   (setv #^ bool per-part False)
-  (setv #^ str system ""))
+  (setv #^ str system "")
+  (setv #^ (| int None) cpu-millis None))
 
 
 (defrecord TaskLimit

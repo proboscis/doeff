@@ -46,7 +46,7 @@
 (import doeff_cluster._coordinator.core.measured_room [measured-room unseen-since need-of reserved-mib-of memory-room-mib learned-need
                                                        keeps-room? KEEP-NOW-PRIORITY PEAK-STEP-MIB])
 (import doeff_cluster._coordinator.core.task_claims [shape-peaks-of task-need-of claim-mib-of claim-cpu-of offered-mib-of
-                                                     tasks-compartments-of compartment-clamp TASK-CPU-MILLIS])
+                                                     tasks-compartments-of compartment-clamp task-cpu-of])
 
 ;; 子の入口の名。子は `hy -m <名>` として起きるので、worker が子の起きる doeff で解ける置き場の名へ替えて検め・起こす
 ;; (worker/core/launch の child-entry-place と JobSpec.entry-at — 実行環境の job は root ごとの置き場で、_worker の無い古い版の root では
@@ -881,11 +881,12 @@
   (! (memory-room-mib worker.measured (. (get load worker.name) reserved-mib) :urgent urgent :lend lend)))
 
 
-(defk memory-need-refusal [state needs memory-mib shape ungated]
-  {:pre [(: state ClusterState) (: needs tuple) (: memory-mib (| int None)) (: shape str) (: ungated bool)] :post [(: % (| str None))]
+(defk memory-need-refusal [state needs memory-mib shape ungated limits]
+  {:pre [(: state ClusterState) (: needs tuple) (: memory-mib (| int None)) (: shape str) (: ungated bool) (: limits (get tuple #(TaskLimit ...)))]
+   :post [(: % (| str None))]
    :tags {:context "coordinator" :role "judgment"}}
   "積む時に、待っても置けない大きさの task を断る理由を知るため(None = 受ける — ADR-DOE-CLUSTER-005 R8): 門の内の task の申告(送り手の
-   見当 memory-mib と同じ形 shape の測った山から task_claims.task-need-of の決め方で数えた memory と、TASK-CPU-MILLIS)が、能力 needs の
+   見当 memory-mib と同じ形 shape の測った山から task_claims.task-need-of の決め方で数えた memory と、名乗った組 limits の task_claims.task-cpu-of)が、能力 needs の
    合う worker の持つどの tasks 区画よりも大きい。区画を持つ合う worker が 1 台も無い間は判じない(待たせる — 宣言を待つ)。門の外の
    task(ungated)は大きさで断らない(区画を越えて置かれる — R6)。今だけ区画の和の足りない task は断らずに queued で待つ(置き先が
    TASK-COMPARTMENT-FULL を名乗る)。"
@@ -904,14 +905,15 @@
   (val peak (if shape (.get peaks shape) None))
   ;; 申告の決め方は置く時と同じ(上限で切る前の見当を断りに使う — 上限で切った値は区画に入るので、切らずに越えるかを見る)。
   (<- need int (learned-need memory-mib None peak None))
+  (<- cpu int (task-cpu-of limits state.group-limits))
   (val names (.join "・" (gfor #(name _) matching name)))
   (cond
     (and (not (and (is-not peak None) peak.settled)) (> need clamp))
       (.format "memoryMiB {} は、能力 {} の合う worker({})の tasks 区画の memoryMiB の最大 {} MiB よりも大きい — 置ける worker が無い"
                need (list needs) names clamp)
-    (> TASK-CPU-MILLIS widest-cpu)
+    (> cpu widest-cpu)
       (.format "task の CPU の申告 {} millicore は、能力 {} の合う worker({})の tasks 区画の cpuMillis の最大 {} よりも大きい — 置ける worker が無い"
-               TASK-CPU-MILLIS (list needs) names widest-cpu)
+               cpu (list needs) names widest-cpu)
     True None))
 
 
@@ -1426,7 +1428,7 @@
   (var sums (dfor name (.keys state.workers) name NOTHING-CLAIMED))
   (for [t (scan-rows state.tasks) :if (and (in t.phase PLACED-PHASES) (in t.worker sums))]
     (<- memory int (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
-    (<- cpu int (claim-cpu-of t state.claims))
+    (<- cpu int (claim-cpu-of t state.claims state.group-limits))
     (<- added ClaimedSum (claimed-plus (get sums t.worker) memory cpu))
     (:= sums (| sums {t.worker added})))
   sums)
@@ -1501,7 +1503,7 @@
   (for [t tasks :if (and t.detached t.preemptible t.rerun (in t.phase PLACED-PHASES) (= t.worker worker.name)
                          (< t.priority task.priority) (not-in t.id taken))]
     (<- memory int (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
-    (<- cpu int (claim-cpu-of t state.claims))
+    (<- cpu int (claim-cpu-of t state.claims state.group-limits))
     (:= rows #(#* rows (YieldCandidate :task t :memory-mib memory :cpu-millis cpu))))
   (tuple (sorted rows :key (fn [c] #(c.task.priority (- c.memory-mib) c.task.id)))))
 
@@ -2129,7 +2131,7 @@
             able-now (lfor w able :if (and (not-in w.name draining) (env-room-on task w)) w))
       ;; この task の申告(R4 — 上限は要る能力の合う worker の tasks 区画の最大・置いた歩に claims-noted が同じ値を表に書く)。
       (<- need int (task-need-of task (compartment-clamp placed compartments task.needs) peaks))
-      (val cpu TASK-CPU-MILLIS)
+      (<- cpu int (task-cpu-of task.limits state.group-limits))
       ;; 門の外の task(ungated)は取っておきを見ない(R6)。
       (val seen-kept (if task.ungated unkept kept))
       ;; 入る worker(fits)と、入らない worker の理由(misfits)。門の外の task は組の上限の外の worker を、区画の有無によらず和を越えて

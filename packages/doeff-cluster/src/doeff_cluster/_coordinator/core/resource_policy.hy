@@ -4,7 +4,7 @@
 ;;;   generation も)、送り手・時刻・前後の版を出来事の記録へ足す。変化を起こした経路(API・heartbeat・調停・Rollout)を問わず
 ;;;   ここ 1 か所で付くので、版の付け忘れ・記録の漏れが起きない。
 ;;; - 書きの口: Service・Rollout・GroupLimit は資源 1 つずつの compare-and-set(PUT は resourceVersion 必須・古ければ 409)。
-;;;   GroupLimit(2026-10-12)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart? system?})。
+;;;   GroupLimit(2026-10-12)= 系が宣言した組の同時数の上限 1 つ(名 = 組の名・spec = {scope limit perPart? system? cpuMillis?})。
 ;;;   宣言の道具が書き、置き方はこの値で数える。spec の形は系の構成子と同じ規則(detached_rules.group-limit-refusal)で検める。
 ;;;   system = 組を宣言した系の名で、別の系からの書き直しは 409 で断る(組を宣言する系は 1 つ)。system は X-Actor と同じ信頼の水準の
 ;;;   名乗りで(照らす系の名簿は無い)、別の名の系が組を写した時(盲検 A)を止める物 — 同じ名を名乗る 2 つの宣言は区別しない。
