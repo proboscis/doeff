@@ -42,7 +42,8 @@
 ;;;   開く job の組(同じ口で受ける組)を、job の形から推し量らずに記述から引くため。
 ;;;   系の頭(説明の文の後・job の行の前)に `:task-limits {"<組>" {"scope" "worker" "limit" 6} …}` を置ける(2026-10-12)
 ;;;   — 系が宣言する組の同時数の上限(doeff-cluster の GroupLimit)。組の名は「/」を含まない文字列の literal、scope は
-;;;   "worker" か "cluster"、limit は 1 以上の整数の literal、"perPart" True は組を名乗る task が区分(part)ごとに数える組。task は組の名
+;;;   "worker" か "cluster"、limit は 1 以上の整数の literal、"perPart" True は組を名乗る task が区分(part)ごとに数える組、"cpuMillis" は
+;;;   組を名乗る task 1 本の CPU の申告(1 以上の整数の literal — 書かない組は既定の値で数える)。task は組の名
 ;;;   だけを名乗り、値はここが持つ。静的な記述の task_limits に載る。
 ;;; 値の意味(readiness の窓の形・environ の名の衝突など)は doeff-cluster の service_build.system-of が呼ばれた時に検める。
 (import collections.abc :as abc)
@@ -71,7 +72,7 @@
 (setv SYSTEM-KEYS #(":task-limits"))
 ;; 組の上限 1 つの欄(doeff-cluster の資源 GroupLimit の spec と同じ綴り)と、範囲の名(doeff-cluster の TASK-LIMIT-SCOPES と同じ —
 ;; 誤りの文に並べる順を持つので写しを持ち、規則との一致は tests/test_group_limits_owner.hy が検める)。
-(setv LIMIT-KEYS #("scope" "limit" "perPart"))
+(setv LIMIT-KEYS #("scope" "limit" "perPart" "cpuMillis"))
 (setv LIMIT-SCOPES #("worker" "cluster"))
 (setv CONSTANT-SYMBOLS #("True" "False" "None"))
 ;; :idle-budget の map の鍵 → 宣言の行の idleBudget の鍵(job_rules.IDLE-BUDGET-KEYS と同じ並び)。
@@ -257,7 +258,8 @@
 
 
 (defn #^ TaskLimit read-task-limit [#^ Object group #^ Object spec #^ str where]  ; cannot be a defk: macro の展開の時に呼ぶ関数
-  "`:task-limits` の組の上限 1 つ(組の名の form と上限の dict の form)を展開の時に検め、#(名 範囲 上限 区分ごとか) を返すため。"
+  "`:task-limits` の組の上限 1 つ(組の名の form と上限の dict の form)を展開の時に検め、#(名 範囲 上限 区分ごとか CPU の申告) を返すため
+   (CPU の申告は書かない組は None)。"
   (setv name (str group))
   (when (or (not name) (in "/" name))
     (raise (SyntaxError (.format "{}: 組の名は「/」を含まない空でない文字列: {}" where (hy.repr group)))))
@@ -266,7 +268,8 @@
         unknown (sorted (gfor k fields :if (not-in k LIMIT-KEYS) k))
         scope (.get fields "scope")
         limit (.get fields "limit")
-        per-part (.get fields "perPart" (Symbol "False")))
+        per-part (.get fields "perPart" (Symbol "False"))
+        cpu (.get fields "cpuMillis"))
   (when unknown
     (raise (SyntaxError (.format "{} の組 {}: 受けない欄 {} — 受ける欄は {}" where name unknown (.join " " LIMIT-KEYS)))))
   (when (not (and (isinstance scope String) (in (str scope) LIMIT-SCOPES)))
@@ -275,7 +278,9 @@
     (raise (SyntaxError (.format "{} の組 {}: \"limit\" は 1 以上の整数の literal: {}" where name (hy.repr limit)))))
   (when (not (and (isinstance per-part Symbol) (in (str per-part) #("True" "False"))))
     (raise (SyntaxError (.format "{} の組 {}: \"perPart\" は True か False: {}" where name (hy.repr per-part)))))
-  #(name (str scope) (int limit) (= (str per-part) "True")))
+  (when (and (is-not cpu None) (not (and (isinstance cpu Integer) (>= (int cpu) 1))))
+    (raise (SyntaxError (.format "{} の組 {}: \"cpuMillis\" は 1 以上の整数の literal: {}" where name (hy.repr cpu)))))
+  #(name (str scope) (int limit) (= (str per-part) "True") (if (is cpu None) None (int cpu))))
 
 
 (defn #^ (get tuple #((get list TaskLimit) (get dict #(str StaticRecord)))) read-task-limits [#^ Object form #^ str system]  ; cannot be a defk: macro の展開の時に呼ぶ関数
@@ -288,7 +293,8 @@
         twice (sorted (sfor n names :if (> (.count names n) 1) n)))
   (when twice
     (raise (SyntaxError (.format "{}: 組 {} が 2 回ある" where twice))))
-  #(groups (dfor #(name scope limit per-part) groups name {"scope" scope "limit" limit "perPart" per-part})))
+  #(groups (dfor #(name scope limit per-part cpu) groups
+                 name (| {"scope" scope "limit" limit "perPart" per-part} (if (is cpu None) {} {"cpuMillis" cpu})))))
 
 
 (defn #^ (get tuple #((get dict #(str Object)) (get list Object))) head-options [#^ (get list Object) rows #^ str system]  ; cannot be a defk: macro の展開の時に呼ぶ関数
@@ -385,9 +391,9 @@
                   (if limits-static {"task_limits" limits-static} {})))
   ;; 組の上限は GroupLimit(doeff-cluster の service_model が引き渡す型)の tuple にして system-of へ渡す(無ければ鍵を書かない)。
   (setv limit-forms
-        (lfor #(group scope limit per-part) limits
+        (lfor #(group scope limit per-part cpu) limits
               `(~(in-module DEFSYSTEM-MODEL "GroupLimit") :group ~(String group) :scope ~(String scope) :limit ~(Integer limit)
-                 :per-part ~(Symbol (str per-part)))))
+                 :per-part ~(Symbol (str per-part)) ~@(if (is cpu None) [] [(Keyword "cpu-millis") (Integer cpu)]))))
   ;; 静的な記述は setattr 1 回で置く(param_types も同じ式の中で足す)。置いた後に関数の属性 __doeff_system__ を読み直す文を
   ;; 展開に出さない — 関数の型は欄を持たず、型検査の展開で reportFunctionMemberAccess になり書き手に直せない(#2291)。
   ;; setattr の記帳は doeff-hy-check が型検査の展開から外す(static_check._bookkeeping_statement)。

@@ -355,13 +355,15 @@
 (defsystem land [foundation]
   \"着地の系\"
   :task-limits {\"heavy\" {\"scope\" \"worker\" \"limit\" 6}
-                \"heavy-caller\" {\"scope\" \"cluster\" \"limit\" 2 \"perPart\" True}}
+                \"heavy-caller\" {\"scope\" \"cluster\" \"limit\" 2 \"perPart\" True}
+                \"light\" {\"scope\" \"worker\" \"limit\" 32 \"cpuMillis\" 250}}
   (land-notice (notice foundation) :needs #{\"net\"} :replicas 1 :peak-mib 200 :settle-mib 100))
 "))
   (val land (get ns "land"))
   (assert (= (get land.__doeff_system__ "task_limits")
              {"heavy" {"scope" "worker" "limit" 6 "perPart" False}
-              "heavy-caller" {"scope" "cluster" "limit" 2 "perPart" True}})
+              "heavy-caller" {"scope" "cluster" "limit" 2 "perPart" True}
+              "light" {"scope" "worker" "limit" 32 "perPart" False "cpuMillis" 250}})
           land.__doeff_system__)
   (import doeff_cluster [GroupLimit])
   (import sys types)
@@ -371,7 +373,8 @@
   (setv (get sys.modules "defsystem_probe") module)
   (val system (try (land (get ns "notice")) (finally (.pop sys.modules "defsystem_probe" None))))
   (assert (= system.task-limits #((GroupLimit :group "heavy" :scope "worker" :limit 6 :system "land")
-                                  (GroupLimit :group "heavy-caller" :scope "cluster" :limit 2 :per-part True :system "land")))
+                                  (GroupLimit :group "heavy-caller" :scope "cluster" :limit 2 :per-part True :system "land")
+                                  (GroupLimit :group "light" :scope "worker" :limit 32 :system "land" :cpu-millis 250)))
           system.task-limits)
   (assert (= (len system.jobs) 1) system.jobs))
 
@@ -385,6 +388,8 @@
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" \"6\"}}" "\"limit\" は 1 以上の整数の literal")
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"max\" 2}}" "受けない欄 ['max']")
                         #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"system\" \"other\"}}" "受けない欄 ['system']")
+                        #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"cpuMillis\" 0}}" "\"cpuMillis\" は 1 以上の整数の literal")
+                        #("{\"g\" {\"scope\" \"worker\" \"limit\" 1 \"cpuMillis\" \"250\"}}" "\"cpuMillis\" は 1 以上の整数の literal")
                         #("{\"a/b\" {\"scope\" \"worker\" \"limit\" 1}}" "組の名は「/」を含まない")
                         #("[\"g\"]" ":task-limits は文字列の鍵の dict の literal")]]
     (<- message (refusal (.format "(defsystem s [foundation] :task-limits {} {})" limits job-row)))
