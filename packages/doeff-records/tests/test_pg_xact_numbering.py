@@ -153,7 +153,7 @@ def watched(store, cursor):
 def logged(store, after):
     """ReadChangeLog 1 回の変更の番号の並びを読むため。"""
     log = store.as_writer(ReadChangeLog(after, limit=100))
-    return tuple(item.sequence for item in log.items)
+    return tuple(item.sequence for item in log.changes)
 
 
 def test_an_earlier_number_committed_later_is_not_skipped(xact_store):
