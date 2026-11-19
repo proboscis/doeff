@@ -1283,16 +1283,7 @@
   },
   "doeff-time": {
    "scope": "in scope",
-   "names": {
-    "Violation — annotate the factory arguments or move inside": {
-     "doeff_time.handlers.async_time": [
-      "AsyncTimeRuntime"
-     ],
-     "doeff_time.handlers.sync_time": [
-      "SyncTimeRuntime"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-traverse": {
    "scope": "in scope",
