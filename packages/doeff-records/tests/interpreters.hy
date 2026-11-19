@@ -8,6 +8,9 @@
 ;;;           (psycopg は依存に無い — `uv run --with psycopg` で足す)。
 ;;;   pg-pooled
 ;;;           pg と同じ置き場で、SQL の effect の答え手だけを pooled-postgres-sql-handler(scheduler を塞がない版)にする。
+;;;   pg-xact
+;;;           pg と同じ組で、用意の直後に置き場の変更の列の番号の形を transaction の形('xact' — _pg_sql.hy の頭の註の「番号の形」)へ
+;;;           替える(番号の錠を取らない形でも、どの法も同じに答える事を確かめる)。
 ;;;   http-memory / http-pg
 ;;;           記録の service の HTTP の口越し(memory / PostgreSQL の置き場の上): 法の Program は client の handler(http-records-handler)で
 ;;;           公開 effect を撃ち、client の要求(HttpRequest の effect)は in-process-records-http が同じ scheduler の中で service の respond に
@@ -33,7 +36,8 @@
 (import doeff_records._laws [LAW-SCHEMA LawHarness])
 (import doeff_records [MemoryStore memory-records-handler])
 (import doeff_records [pg-records-handler]
-        doeff_records._pg [PreparedStore drop-records-tables prepare-records-store])
+        doeff_records._pg [PreparedStore drop-records-tables prepare-records-store switch-numbering]
+        doeff_records._pg_sql [NUMBERING-XACT])
 (import doeff_core_effects [state])
 ;; 束の読みの読み解きと綴りの Compute(ADR-DOE-RECORDS-002)を、仮想の時計の上でその場で回す(本番は thread の pool)。
 (import doeff_core_effects [inline-compute-handler])
@@ -50,7 +54,7 @@
 (import doeff_hy._frozen [FrozenMap])
 (import disposable_postgres [session-dsn session-postgres-skip-reason])
 
-(setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")
+(setv PLAIN "plain" MEMORY "memory" PG "pg" PG-POOLED "pg-pooled" PG-XACT "pg-xact" HTTP-MEMORY "http-memory" HTTP-PG "http-pg")
 (setv PG-DSN-VARIABLE "DOEFF_RECORDS_TEST_PG_DSN")
 ;; 検の置き場の database の名(SqlQuery に書く名 — 答え手の宣言と揃える)と、行に刻む機体の名。
 (setv DATABASE "records" ORIGIN-HOST "law-host")
@@ -78,7 +82,7 @@
 
 (defn skip-reason [#^ str name]
   (cond
-    (in name #(PG PG-POOLED HTTP-PG)) (pg-skip-reason)
+    (in name #(PG PG-POOLED PG-XACT HTTP-PG)) (pg-skip-reason)
     True ""))
 
 
@@ -109,13 +113,16 @@
   (run-sql connections (prepare-records-store DATABASE DATABASE schema prefix)))
 
 
-(defk prepared-fresh-store [aligned-epoch]
-  {:pre [(: aligned-epoch bool)] :post [(: % PreparedStore)]
+(defk prepared-fresh-store [aligned-epoch [numbering None]]
+  {:pre [(: aligned-epoch bool) (: numbering (| str None))] :post [(: % PreparedStore)]
    :tags {:context "records" :role "foundation"}}
-  "検ごとの接頭辞の置き場を用意して返すため。aligned-epoch なら、用意の直後に版の行を memory の置き場の初めの版 1 にする(頭の註)。"
+  "検ごとの接頭辞の置き場を用意して返すため。aligned-epoch なら、用意の直後に版の行を memory の置き場の初めの版 1 にする(頭の註)。
+   numbering が在れば、用意の直後に置き場の番号の形をそれへ替える(頭の註の pg-xact)。"
   (<- store (prepare-records-store DATABASE DATABASE LAW-SCHEMA (fresh-prefix)))
   (when aligned-epoch
     (<- (SqlQuery DATABASE (.format "UPDATE {}store_epoch SET epoch = 1 WHERE id = 1" store.prefix) #())))
+  (when (is-not numbering None)
+    (<- (switch-numbering store False numbering)))
   store)
 
 
@@ -186,6 +193,13 @@
     (= name PG)
       (do (setv connections (postgres-connections)
                 store (run-sql connections (prepared-fresh-store aligned-epoch)))
+          (defn close []
+            (run-sql connections (drop-records-tables store))
+            (.close connections))
+          (interpreter-over (harness-of (records-handler-for store)) [(postgres-sql-handler connections)] close))
+    (= name PG-XACT)
+      (do (setv connections (postgres-connections)
+                store (run-sql connections (prepared-fresh-store aligned-epoch NUMBERING-XACT)))
           (defn close []
             (run-sql connections (drop-records-tables store))
             (.close connections))
