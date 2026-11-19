@@ -651,6 +651,8 @@
   (if (is job-procs None) [] [(job-cgroup-placer job-procs)])
   [os-proc-table-handler
    process-exit-handler
+   ;; 預かりの process の宿が id の乱数を RandomBytes で求める(worker/protocol/hosted_host の launched)。
+   os-random-handler
    os-file-handler os-host-counters offloaded-tree-handler offloaded-file-handler worker-compute-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)]
   (if (is pod-labels None) [] [(pod-job-labels (get pod-labels 0) (get pod-labels 1))])
