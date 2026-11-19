@@ -69,7 +69,8 @@
 (import doeff_cluster._worker.core.memory_rules [MIB TASK-PREFIX MemoryLevel MemoryLimits NodeMemory ContainerMemory LayerMemory KillUnit JobUse
                                                 JobSteady UnitKind node-memory-of cgroup-bytes-of memory-level _job-walks _uses-of _units-of
                                                 largest-outside steady-sizes spared-steady victim-of swarm-of resident-walks job-meters-of
-                                                pss-bytes-of anonymous-bytes-of _JobWalk declared-roots spared-declared])
+                                                pss-bytes-of anonymous-bytes-of _JobWalk declared-roots spared-declared
+                                                WARM-LAUNCHER WARM-JOB-NAME warm-launcher? warm-members warm-meter-of JobMeter])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine line-memory line-name fresh-keep-room over-need-tasks urgent-jobs])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings EvictionCell eviction-noted jobs-oom-noted])
 
@@ -468,12 +469,11 @@
   None)
 
 
-(defk tree-pss [settings walk]
-  {:pre [(: settings MemoryWatchSettings) (: walk _JobWalk)] :post [(: % (| tuple None))] :tags {:context "worker" :role "protocol"}}
-  "job の木 1 本(walk = _JobWalk)の process の PSS の和と、PSS の最も大きい process(job の本体)の Anonymous を、/proc/<pid>/smaps_rollup を
-   1 本ずつ読んで数えるため(答え = #(PSS の和 本体の Anonymous) の byte)。1 本でも読めない(読む間に終わった・形が違う)か、木が
-   pss-process-limit 本を越えれば None(小さく欠けた和を作らない — 頭の註)。"
-  (val members walk.walk.members)
+(defk members-pss [settings members]
+  {:pre [(: settings MemoryWatchSettings) (: members tuple)] :post [(: % (| tuple None))] :tags {:context "worker" :role "protocol"}}
+  "プロセスの列 members の process の PSS の和と、PSS の最も大きい process(本体)の Anonymous を、/proc/<pid>/smaps_rollup を
+   1 本ずつ読んで数えるため(答え = #(PSS の和 本体の Anonymous) の byte)。1 本でも読めない(読む間に終わった・形が違う)か、
+   数が pss-process-limit 本を越えれば None(小さく欠けた和を作らない — 頭の註)。"
   (when (> (len members) settings.pss-process-limit)
     (return None))
   (var total 0)
@@ -492,12 +492,35 @@
   #(total (get body 1)))
 
 
-(defk noted-meters [settings cell walks now-ms]
-  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: walks tuple) (: now-ms int)] :post [(: % None)]
+(defk tree-pss [settings walk]
+  {:pre [(: settings MemoryWatchSettings) (: walk _JobWalk)] :post [(: % (| tuple None))] :tags {:context "worker" :role "protocol"}}
+  "job の木 1 本(walk = _JobWalk)の process の PSS の和と、PSS の最も大きい process(job の本体)の Anonymous を、/proc/<pid>/smaps_rollup を
+   1 本ずつ読んで数えるため(答え = #(PSS の和 本体の Anonymous) の byte)。1 本でも読めない(読む間に終わった・形が違う)か、木が
+   pss-process-limit 本を越えれば None(小さく欠けた和を作らない — 頭の註)。"
+  (<- sizes (| tuple None) (members-pss settings walk.walk.members))
+  sizes)
+
+
+(defk warm-launchers [settings rows]
+  {:pre [(: settings MemoryWatchSettings) (: rows tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
+  "表 rows から待ちの子の起こし手を拾うため(comm が WARM-LAUNCHER のプロセスについて /proc/<pid>/cmdline を読み warm-launcher? で判じる)。"
+  (var launchers #())
+  (for [r rows]
+    (when (= r.comm WARM-LAUNCHER)
+      (<- cmd (| str None) (text-or-none (.format "{}/{}/cmdline" settings.proc-dir r.pid)))
+      (when (and (is-not cmd None) (warm-launcher? cmd))
+        (:= launchers (+ launchers #(r))))))
+  launchers)
+
+
+(defk noted-meters [settings cell rows walks now-ms]
+  {:pre [(: settings MemoryWatchSettings) (: cell MemoryCell) (: rows tuple) (: walks tuple) (: now-ms int)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
   "常駐の job ごとの CPU と memory を数えて入れ物 eviction に置くため(頭の註 — heartbeat の測りが名乗る)。PSS は前に読んだ刻から
-   pss-seconds を過ぎた回(か壁の時計が戻った回)だけ読み直し、今の木に無い job の PSS は捨てる。"
+   pss-seconds を過ぎた回(か壁の時計が戻った回)だけ読み直し、今の木に無い job の PSS は捨てる。待ちの子が居れば WARM-JOB-NAME として添える。"
   (<- residents tuple (resident-walks walks))
+  (<- launchers tuple (warm-launchers settings rows))
+  (<- warm-procs tuple (warm-members rows launchers))
   (val read-ms cell.pss-read-ms)
   (when (or (is read-ms None) (< now-ms read-ms) (>= (- now-ms read-ms) (* settings.pss-seconds 1000)))
     (var read {})
@@ -505,8 +528,15 @@
       (<- sizes (| tuple None) (tree-pss settings w))
       (when (is-not sizes None)
         (:= read (| read {#(w.root.name w.root.pid) #((get sizes 0) now-ms (get sizes 1))}))))
+    (when warm-procs
+      (val warm-head (get warm-procs 0))
+      (<- warm-sizes (| tuple None) (members-pss settings warm-procs))
+      (when (is-not warm-sizes None)
+        (:= read (| read {#(WARM-JOB-NAME warm-head.pid) #((get warm-sizes 0) now-ms (get warm-sizes 1))}))))
     (setv cell.pss read cell.pss-read-ms now-ms))
-  (<- meters tuple (job-meters-of residents cell.pss))
+  (val warm-read (if warm-procs (.get cell.pss #(WARM-JOB-NAME (. (get warm-procs 0) pid))) None))
+  (<- warm-meter (| JobMeter None) (warm-meter-of warm-procs warm-read))
+  (<- meters tuple (job-meters-of residents cell.pss warm-meter))
   (setv cell.eviction.meters meters cell.eviction.meters-at-ms now-ms)
   None)
 
@@ -522,7 +552,7 @@
   (<- uses tuple (_uses-of walks))
   (setv cell.eviction.uses uses cell.eviction.uses-at-ms now-ms)
   (<- (noted-peaks cell uses roots now-ms))
-  (<- (noted-meters settings cell walks now-ms))
+  (<- (noted-meters settings cell rows walks now-ms))
   None)
 
 
@@ -575,7 +605,7 @@
   ;; 止めの後に最大の行の間を閉じる(今の読みで止めた job の最大を平常の大きさに残さない)。
   (<- (noted-window settings cell reading walks uses now-ms))
   ;; 常駐の job ごとの CPU と memory を heartbeat の測りへ渡す(頭の註 — 重い PSS の読みは止めの後に置き、止めを遅らせない)。
-  (<- (noted-meters settings cell walks now-ms))
+  (<- (noted-meters settings cell reading.rows walks now-ms))
   None)
 
 

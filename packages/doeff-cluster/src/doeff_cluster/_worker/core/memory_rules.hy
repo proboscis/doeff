@@ -73,6 +73,11 @@
 (val DOMINANT-SHARE 0.5)
 ;; task の名の頭(doeff-cluster の task の job の名 — task/<id>)。
 (val TASK-PREFIX "task/")
+;; 待機の process の名乗り: 起こし手の命令の名(comm または cmdline の頭)・待ちの子の入口の module の名の末尾
+;; (綴りの正本 = warm_rules.hy の warm-child-argv)・heartbeat の measured の欄 jobUses に名乗る予約の job の名。
+(val WARM-LAUNCHER "uv")
+(val WARM-ENTRY-SUFFIX ".warm_child")
+(val WARM-JOB-NAME "warm-child")
 ;; 急ぎの優先の下限(頭の註の急ぎの task — coordinator の measured_room.KEEP-NOW-PRIORITY と同じ値。置き先が heartbeat の返事の task の行の
 ;; priority で運ぶ優先がこの値以上の task を、見張りはほかの候補が残る間は止めない)。
 (val URGENT-PRIORITY 1)
@@ -458,19 +463,55 @@
   (tuple (gfor w walks :if (not (.startswith w.root.name TASK-PREFIX)) w)))
 
 
-(defk job-meters-of [walks pss]
-  {:pre [(: walks tuple) (: pss dict)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+(defk warm-launcher? [command]
+  {:pre [(: command str)] :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
+  "選ぶ決まり: cmdline の文 command が待ちの子の起こし手(頭の語の名が WARM-LAUNCHER で、名が WARM-ENTRY-SUFFIX で
+   終わる語 — 待ちの子の入口の module — を持つ)か。"
+  (val words (.split (.replace command "\x00" " ")))
+  (and (bool words)
+       (= (get (.rpartition (get words 0) "/") 2) WARM-LAUNCHER)
+       (any (gfor word words (.endswith word WARM-ENTRY-SUFFIX)))))
+
+
+(defk warm-members [rows launchers]
+  {:pre [(: rows tuple) (: launchers tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "待機の process に数えるプロセスを、表 rows から起こし手 launchers とその直の子(待ちの子の python)として拾うため(起こし手を先に)。
+   待ちの子が fork した子とその子孫は数えない(job の木は job の行が数える)。"
+  (val heads (frozenset (gfor r launchers r.pid)))
+  (+ launchers (tuple (gfor r rows :if (and (in r.ppid heads) (not-in r.pid heads)) r))))
+
+
+(defk warm-meter-of [members pss-read]
+  {:pre [(: members tuple) (: pss-read (| tuple None))] :post [(: % (| JobMeter None))] :tags {:context "worker" :role "judgment"}}
+  "待ちの子のメンバー members(起こし手と直の子)の CPU の累計と RSS の和、PSS から JobMeter(job = WARM-JOB-NAME)を作るため。
+   members が無ければ None。pid は起こし手の pid(無ければ先頭の pid)。"
+  (when (not members)
+    (return None))
+  (val head (get members 0))
+  (val cpu-ms (sum (gfor m members m.cpu-ms)))
+  (val rss-bytes (sum (gfor m members m.rss-bytes)))
+  (val processes (len members))
+  (JobMeter :job WARM-JOB-NAME :pid head.pid :cpu-ms cpu-ms :rss-bytes rss-bytes :processes processes
+            :pss-bytes (if (is pss-read None) None (get pss-read 0))
+            :pss-at-ms (if (is pss-read None) None (get pss-read 1))
+            :body-anonymous-bytes (if (is pss-read None) None (get pss-read 2))))
+
+
+(defk job-meters-of [walks pss [warm None]]
+  {:pre [(: walks tuple) (: pss dict) (: warm (| JobMeter None))] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
   "常駐の job ごとの CPU と memory の今(JobMeter の列 — 名の昇順)を、木(walks = resident-walks の答え)の rss と CPU の累計の和で数え、
    PSS は pss(#(job の名 根の pid) → #(PSS の和 読んだ刻 本体の Anonymous) — 見張りが最後に読めた物)から添えるため。根の pid の違う前の PSS は添えない
-   (起こし直された job の前の木の値を今の木に付けない)。"
-  (tuple (sorted (gfor w walks
-                       :setv key #(w.root.name w.root.pid)
-                       :setv read (.get pss key)
-                       (JobMeter :job w.root.name :pid w.root.pid :cpu-ms (sum (gfor m w.walk.members m.cpu-ms))
-                                 :rss-bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)
-                                 :pss-bytes (if (is read None) None (get read 0)) :pss-at-ms (if (is read None) None (get read 1))
-                                 :body-anonymous-bytes (if (is read None) None (get read 2)) :started-ms w.root.started-ms))
-                 :key (fn [meter] #(meter.job meter.pid)))))
+   (起こし直された job の前の木の値を今の木に付けない)。待ちの子 warm(JobMeter — 名 WARM-JOB-NAME)が在れば同じ列に添える。"
+  (val resident-meters
+    (tuple (gfor w walks
+                 :setv key #(w.root.name w.root.pid)
+                 :setv read (.get pss key)
+                 (JobMeter :job w.root.name :pid w.root.pid :cpu-ms (sum (gfor m w.walk.members m.cpu-ms))
+                           :rss-bytes (get w.walk.sizes 0) :processes (get w.walk.counts 0)
+                           :pss-bytes (if (is read None) None (get read 0)) :pss-at-ms (if (is read None) None (get read 1))
+                           :body-anonymous-bytes (if (is read None) None (get read 2)) :started-ms w.root.started-ms))))
+  (val all-meters (if (is warm None) resident-meters (+ resident-meters #(warm))))
+  (tuple (sorted all-meters :key (fn [meter] #(meter.job meter.pid)))))
 
 
 (defk pss-bytes-of [text]

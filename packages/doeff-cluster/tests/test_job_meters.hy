@@ -167,3 +167,63 @@
           load.job-meters)
   (<- plain MachineLoad (machine-load-of (replace machine :service-mib None) 0 11000 :services services))
   (assert (is plain.job-meters None) plain))
+
+
+(defk files-with-cmdlines [pss cmdlines]
+  {:pre [(: pss dict) (: cmdlines dict)] :post [(: % MemoryFiles)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "機体 32 GiB・空き 16 GiB の /proc/meminfo と、pid ごとの smaps_rollup と cmdline を memory の置き場に置くため。"
+  (val meminfo (.format "MemTotal:       {} kB\nMemFree:        1024 kB\nMemAvailable:   {} kB\n" (* 32 1024 1024) (* 16 1024 1024)))
+  (val pids (sorted (set (+ (tuple (.keys pss)) (tuple (.keys cmdlines))))))
+  (MemoryFiles :dirs (+ #("/proc") (tuple (gfor pid pids (.format "/proc/{}" pid))))
+               :files (+ #((MemoryFile :path "/proc/meminfo" :content (.encode meminfo)))
+                         (tuple (gfor #(pid mib) (.items pss)
+                                      (MemoryFile :path (.format "/proc/{}/smaps_rollup" pid)
+                                                  :content (.encode (.format "00400000-7fff [rollup]\nRss:  {} kB\nPss:  {} kB\nAnonymous:  {} kB\n"
+                                                                             (* 2 mib 1024) (* mib 1024) (* (// mib 5) 1024))))))
+                         (tuple (gfor #(pid cmd) (.items cmdlines)
+                                      (MemoryFile :path (.format "/proc/{}/cmdline" pid)
+                                                  :content (.encode cmd)))))))
+
+
+(deftest test-warm-child-named-in-job-meters-and-leaves-victim-population-unaffected
+  ;; doeff-cluster の worker が待ちの子(起こし手と待ちの子の python — fork した子とその子孫は除く)の CPU の累計と PSS を
+  ;; heartbeat の measured に名乗り、見張りの止めの母集団を変えない事を確かめる。
+  (val warm-rows #(
+    (ProcRow :pid 1 :ppid 0 :start-ticks 1 :rss-bytes (* 1 MIB) :comm "tini" :cpu-ms 0)
+    (ProcRow :pid 10 :ppid 1 :start-ticks 10 :rss-bytes (* 10 MIB) :comm "python" :cpu-ms 1000)
+    (ProcRow :pid 11 :ppid 10 :start-ticks 11 :rss-bytes (* 20 MIB) :comm "python" :cpu-ms 2000)
+    (ProcRow :pid 30 :ppid 1 :start-ticks 30 :rss-bytes (* 15 MIB) :comm "uv" :cpu-ms 300)
+    (ProcRow :pid 31 :ppid 30 :start-ticks 31 :rss-bytes (* 50 MIB) :comm "python" :cpu-ms 700)
+    (ProcRow :pid 32 :ppid 31 :start-ticks 32 :rss-bytes (* 30 MIB) :comm "node" :cpu-ms 500)))
+  ;; PSS: svc(10: 5, 11: 15) -> 20 MB; warm-child(30: 10, 31: 40) -> 50 MB; fork した子(32: 25) -> 除外されるべき
+  (val warm-pss {10 5 11 15 30 10 31 40 32 25})
+  (val cmdlines {30 "uv run --no-sync --frozen --project /app/my-project python -m doeff_cluster._worker.entry.warm_child --root /app"})
+  (val cell (MemoryCell))
+  (<- files MemoryFiles (files-with-cmdlines warm-pss cmdlines))
+  (<- reads tuple (with-handlers [(state) (sim-time-handler :clock (SimClock)) (memory-file-handler files)
+                                  (scripted-proc-table-handler warm-rows) (meter-world cell 10000)]
+                    (watch-then-reads (MemoryWatchSettings :guard False) cell)))
+  ;; 1. cell.eviction.meters に svc と warm-child の両方が出る
+  (val warm-meter (next (gfor m cell.eviction.meters :if (= m.job "warm-child") m) None))
+  (assert (is-not warm-meter None) cell.eviction.meters)
+  (assert (= warm-meter.pid 30) warm-meter)
+  (assert (= warm-meter.processes 2) warm-meter)  ; 起こし手 uv と 待ちの子 python のみ。fork した子 32 は含まれない！
+  (assert (= warm-meter.cpu-ms 1000) warm-meter)
+  (assert (= warm-meter.rss-bytes (* 65 MIB)) warm-meter)
+  (assert (= warm-meter.pss-bytes (* 50 MIB)) warm-meter)
+  (assert (= warm-meter.body-anonymous-bytes (* 8 MIB)) warm-meter)
+
+  ;; 2. measured-json (heartbeat の measured) に名乗る
+  (<- spelled dict (measured-json (MachineLoad :at-ms 10000 :cpus 4 :cpu-busy 0.0 :memory-total-mib 2659 :memory-available-mib 410
+                                                :cpu-some-avg10 None :cpu-full-avg10 None :memory-some-avg10 None :memory-full-avg10 None
+                                                :job-meters cell.eviction.meters :job-meters-at-ms 10000)))
+  (val uses (get spelled "jobUses"))
+  (val warm-use (next (gfor u uses :if (= (get u "job") "warm-child") u) None))
+  (assert (is-not warm-use None) uses)
+  (assert (= (get warm-use "pid") 30) warm-use)
+  (assert (= (get warm-use "processes") 2) warm-use)
+  (assert (= (get warm-use "pssMiB") 50) warm-use)
+
+  ;; 3. 見張りの止めの母集団(cell.eviction.uses)に warm-child が含まれない(roots から作られるため)
+  (assert (not (any (gfor u cell.eviction.uses (= u.job "warm-child")))) cell.eviction.uses)
+  (assert (= (tuple (gfor u cell.eviction.uses u.job)) #("svc")) cell.eviction.uses))
