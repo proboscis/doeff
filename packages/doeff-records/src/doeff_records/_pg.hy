@@ -1915,7 +1915,7 @@
     (return answer))
   (<- held-statement (held-changes-statement store.prefix reached ask.tables))
   (<- held-rows (query-rows store.database held-statement))
-  (if (get held-rows 0 0) (Held answer) answer))
+  (if (get held-rows 0 0) (Held :answer answer) answer))
 
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
