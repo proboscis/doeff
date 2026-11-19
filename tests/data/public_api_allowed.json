@@ -214,6 +214,34 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "HostedLaunch",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "HostedLog",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "HostedProcess",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "HostedRefused",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "JobNotResolved",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
@@ -357,6 +385,13 @@
    "name": "dependency_key",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "hosted_socket_path",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R18"
   },
   {
    "package": "doeff-cluster",

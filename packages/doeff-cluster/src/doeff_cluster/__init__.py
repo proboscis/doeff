@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     from doeff_cluster._sim.child_processes import DescendantsOf as DescendantsOf
     from doeff_cluster._sim.child_processes import SimChildren as SimChildren
     from doeff_cluster._sim.child_processes import SimDescendant as SimDescendant
+    from doeff_cluster._sim.hosted_processes import HostedLog as HostedLog
+    from doeff_cluster._sim.hosted_processes import held_hosted_processes as held_hosted_processes
     from doeff_cluster._sim.k8s_services import held_kube_services as held_kube_services
     from doeff_cluster._sim.workspace_volumes import HeldBackup as HeldBackup
     from doeff_cluster._sim.workspace_volumes import HeldVolume as HeldVolume
@@ -228,6 +230,12 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.workspace_volume_model import (
         ReadWorkspacePlace as ReadWorkspacePlace,
     )
+    from doeff_cluster._shared.intent.hosted_model import HostedLaunch as HostedLaunch
+    from doeff_cluster._shared.intent.hosted_model import HostedProcess as HostedProcess
+    from doeff_cluster._shared.intent.hosted_model import HostedRefused as HostedRefused
+    from doeff_cluster._shared.intent.hosted_model import LaunchHosted as LaunchHosted
+    from doeff_cluster._shared.intent.hosted_model import ListHosted as ListHosted
+    from doeff_cluster._shared.intent.hosted_model import StopHosted as StopHosted
     from doeff_cluster._shared.intent.metrics_model import ReportMetrics as ReportMetrics
     from doeff_cluster._shared.intent.process_model import AwaitProcessEnded as AwaitProcessEnded
     from doeff_cluster._shared.intent.protocol import (
@@ -471,6 +479,8 @@ if TYPE_CHECKING:
         hyx_env_marker_XgreaterHthan_signXjson as hyx_env_marker_XgreaterHthan_signXjson,
     )
     from doeff_cluster._worker.entry.line_stamp import logs_body as logs_body
+    from doeff_cluster._worker.entry.hosted_socket import hosted_client as hosted_client
+    from doeff_cluster._worker.entry.hosted_socket import hosted_socket_path as hosted_socket_path
     from doeff_cluster._worker.entry.retirement_notices import (
         pipe_retirement_notices as pipe_retirement_notices,
     )
@@ -1052,6 +1062,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "ReplaceWorker": "doeff_cluster._sim.local",
     "ReplayDiverged": "doeff_cluster._foundation.record_log",
     "Reply": "doeff_cluster._shared.intent.protocol",
+    "HostedLaunch": "doeff_cluster._shared.intent.hosted_model",
+    "HostedProcess": "doeff_cluster._shared.intent.hosted_model",
+    "HostedRefused": "doeff_cluster._shared.intent.hosted_model",
+    "LaunchHosted": "doeff_cluster._shared.intent.hosted_model",
+    "ListHosted": "doeff_cluster._shared.intent.hosted_model",
+    "StopHosted": "doeff_cluster._shared.intent.hosted_model",
     "ReportMetrics": "doeff_cluster._shared.intent.metrics_model",
     "ReportReady": "doeff_cluster._shared.intent.readiness_model",
     "ReportsOf": "doeff_cluster._sim.local",
@@ -1122,6 +1138,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "fence": "doeff_cluster._sim.local",
     "git_command": "doeff_cluster._sim.checkout_git_script",
     "heartbeat": "doeff_cluster._sim.local",
+    "HostedLog": "doeff_cluster._sim.hosted_processes",
+    "held_hosted_processes": "doeff_cluster._sim.hosted_processes",
     "held_kube_services": "doeff_cluster._sim.k8s_services",
     "HeldBackup": "doeff_cluster._sim.workspace_volumes",
     "HeldVolume": "doeff_cluster._sim.workspace_volumes",
@@ -1369,6 +1387,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "lowered_priority_argv": "doeff_cluster._worker.core.env_rules",
     "memory_observer": "doeff_cluster._worker.protocol.memory_observer",
     "no_wakes": "doeff_cluster._worker.protocol.worker_wakes",
+    "hosted_client": "doeff_cluster._worker.entry.hosted_socket",
+    "hosted_socket_path": "doeff_cluster._worker.entry.hosted_socket",
     "pipe_retirement_notices": "doeff_cluster._worker.entry.retirement_notices",
     "plan": "doeff_cluster._worker.core.policy",
     "pod_job_labels": "doeff_cluster._worker.protocol.pod_labels",
