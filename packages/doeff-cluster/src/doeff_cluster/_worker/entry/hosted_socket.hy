@@ -14,7 +14,7 @@
 (import doeff_cluster._foundation.line_socket [LineCall LineCallFailed LineInbox answer-call line-call next-calls])
 (import doeff_cluster._shared.intent.hosted_model [HostedProcess HostedRefused LaunchHosted StopHosted ListHosted])
 (import doeff_cluster._worker.core.hosted_rules [SOCKET-VAR])
-(import doeff_cluster._worker.protocol.hosted_host [hosted-answer-of hosted-answer-text hosted-request-of hosted-request-text])
+(import doeff_cluster._worker.protocol.hosted_host [HostedAsk hosted-answer-of hosted-answer-text hosted-request-of hosted-request-text])
 
 ;; 頼む側の往復の上限(秒)。止めは worker の猶予(STOP-GRACE-MS の 2 倍まで)を待つので、それより長く取る。
 (val CALL-SECONDS 30.0)
@@ -23,16 +23,16 @@
 (defk answered [call]
   {:pre [(: call LineCall)] :post [(: % None)] :tags {:context "worker" :role "main"}}
   "頼み 1 つを読み、効果として答え手へ渡し、答えを 1 行で返すため。答え手の思わぬ例外も断りの 1 行にして返す(頼み手を待たせない)。"
-  (<- request (| LaunchHosted StopHosted ListHosted HostedRefused) (hosted-request-of call.text))
+  (<- request (| HostedAsk HostedRefused) (hosted-request-of call.text))
   (when (isinstance request HostedRefused)
     (<- refused str (hosted-answer-text request))
     (answer-call call refused)
     (return None))
   (try
     (<- answer (| HostedProcess HostedRefused tuple)
-        (match request
-          (LaunchHosted) (LaunchHosted request.launch)
-          (StopHosted) (StopHosted request.id)
+        (match request.op
+          "launch" (LaunchHosted request.launch)
+          "stop" (StopHosted request.id)
           _ (ListHosted)))
     (<- text str (hosted-answer-text answer))
     (answer-call call text)

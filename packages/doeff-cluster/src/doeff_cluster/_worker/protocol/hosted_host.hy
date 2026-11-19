@@ -175,18 +175,28 @@
   text)
 
 
+(defrecord HostedAsk
+  "口の 1 行を読んだ頼み(効果の値は defk の答えに返せないので、効果に組む前の形): op = launch・stop・list・launch = 起こし方(launch の時)・
+   id = 止める id(stop の時)。効果に組むのは hosted-effect-of。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ str op)
+  (setv #^ (| HostedLaunch None) launch None)
+  (setv #^ (| str None) id None))
+
+
 (defk hosted-request-of [text]
-  {:pre [(: text str)] :post [(: % (| LaunchHosted StopHosted ListHosted HostedRefused))] :tags {:context "worker" :role "protocol"}}
-  "口の 1 行を頼みの効果に読むため(受ける側)。形の違う頼み・版の違う頼みは断りにする。"
+  {:pre [(: text str)] :post [(: % (| HostedAsk HostedRefused))] :tags {:context "worker" :role "protocol"}}
+  "口の 1 行を頼みに読むため(受ける側)。形の違う頼み・版の違う頼みは断りにする。"
   (<- wire (| HostedRequestWire Malformed) (parse-json HostedRequestWire text))
   (cond
     (isinstance wire Malformed) (HostedRefused :detail (.format "頼みの形が違う: {}" wire))
     (!= wire.v WIRE-VERSION) (HostedRefused :detail (.format "頼みの版 {} を読めない(この worker は {})" wire.v WIRE-VERSION))
-    (= wire.op "list") (ListHosted)
-    (and (= wire.op "stop") (is-not wire.id None)) (StopHosted wire.id)
+    (= wire.op "list") (HostedAsk :op "list")
+    (and (= wire.op "stop") (is-not wire.id None)) (HostedAsk :op "stop" :id wire.id)
     (and (= wire.op "launch") wire.argv wire.owner)
-      (LaunchHosted (HostedLaunch :argv wire.argv :owner wire.owner :layer wire.layer
-                                  :env (tuple (gfor #(k v) (.items (or wire.env {})) (EnvEntry :name k :value v)))))
+      (HostedAsk :op "launch"
+                 :launch (HostedLaunch :argv wire.argv :owner wire.owner :layer wire.layer
+                                       :env (tuple (gfor #(k v) (.items (or wire.env {})) (EnvEntry :name k :value v)))))
     True (HostedRefused :detail (.format "頼みの op {!r} と欄が合わない" wire.op))))
 
 

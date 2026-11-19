@@ -8,7 +8,7 @@
 (import doeff_cluster._worker.intent.worker_model [ProcessView])
 (import doeff_cluster._worker.core.hosted_rules [HostedRecord hosted-id-of hosted-id? hosted-layer-procs hosted-orphans hosted-owners
                                                  hosted-place-of hosted-root-of hosted-socket-of])
-(import doeff_cluster._worker.protocol.hosted_host [hosted-answer-of hosted-answer-text hosted-request-of hosted-request-text
+(import doeff_cluster._worker.protocol.hosted_host [HostedAsk hosted-answer-of hosted-answer-text hosted-request-of hosted-request-text
                                                    record-of record-text])
 
 (val ROOT "/work/shared/hosted")
@@ -85,14 +85,16 @@
 (deftest test-the-socket-line-round-trips-each-request-and-answer
   (val launch (LaunchHosted (HostedLaunch :argv #("cli-shim" "--x") :owner "turn-host" :layer "clis"
                                           :env #((EnvEntry :name "A" :value "1") (EnvEntry :name "B" :value "2")))))
-  (for [request #(launch (StopHosted "h-0001020304050607") (ListHosted))]
+  (for [#(request ask) #(#(launch (HostedAsk :op "launch" :launch launch.launch))
+                           #((StopHosted "h-0001020304050607") (HostedAsk :op "stop" :id "h-0001020304050607"))
+                           #((ListHosted) (HostedAsk :op "list")))]
     (<- text str (hosted-request-text request))
     (assert (not-in "\n" text) text)
-    (<- back (| LaunchHosted StopHosted ListHosted HostedRefused) (hosted-request-of text))
-    (assert (= back request) #(back request)))
-  (<- broken (| LaunchHosted StopHosted ListHosted HostedRefused) (hosted-request-of "{\"v\": 2, \"op\": \"list\"}"))
+    (<- back (| HostedAsk HostedRefused) (hosted-request-of text))
+    (assert (= back ask) #(back ask)))
+  (<- broken (| HostedAsk HostedRefused) (hosted-request-of "{\"v\": 2, \"op\": \"list\"}"))
   (assert (isinstance broken HostedRefused) broken)
-  (<- shapeless (| LaunchHosted StopHosted ListHosted HostedRefused) (hosted-request-of "{\"v\": 1, \"op\": \"launch\"}"))
+  (<- shapeless (| HostedAsk HostedRefused) (hosted-request-of "{\"v\": 1, \"op\": \"launch\"}"))
   (assert (isinstance shapeless HostedRefused) shapeless)
   (val process (HostedProcess :id "h-0001020304050607" :pid 42 :owner "turn-host" :layer "clis" :place "/p" :started-ms 7))
   (<- one str (hosted-answer-text process))
