@@ -161,7 +161,7 @@ def test_an_earlier_number_committed_later_is_not_skipped(xact_store):
     cursor = start_cursor(store)
     early = EarlyWriter(store, "early")
     try:
-        later = store.as_writer(PutRow("tickets", ("t1",), FrozenMap({"label": "later"}), ExpectAbsent()))
+        later = store.as_writer(PutRow("tickets", ("g1", "t1"), FrozenMap({"owner": "o1"}), ExpectAbsent()))
         assert isinstance(later, Written), later
         assert early.sequence < later.position.sequence, (early.sequence, later.position)
         # 古い transaction が commit していない間: 新しい方の変更も頭の手前で止まり、位置は古い方の番号を越えない。

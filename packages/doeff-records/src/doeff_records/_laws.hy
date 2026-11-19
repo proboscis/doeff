@@ -958,15 +958,17 @@
                     (>= (- (get ats 1) (get ats 0)) 100000))
                law (.format "変更の確定の刻が書いた時の時計でない: {!r}" written)))
   (<- pruned (as-writer harness MAKER (PruneChanges 50)))
-  (<- (require-law (= pruned (Pruned middle.sequence 1)) law (.format "50 秒より古い変更 1 つを刈る: {!r}" pruned)))
+  ;; floor = 刈った変更の位置(錠の形では書いた直後の頭 middle と同じ・transaction の形の頭は見張りの位置で、刈った変更の位置より後に在り得る)。
+  (val cut-at w1.position.sequence)
+  (<- (require-law (and (<= cut-at middle.sequence) (= pruned (Pruned cut-at 1))) law (.format "50 秒より古い変更 1 つを刈る: {!r}" pruned)))
   (<- old (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch start.sequence))))
-  (<- (require-law (= old (Reset start.epoch middle.sequence)) law (.format "刈った変更より前の位置(floor = 刈った位置): {!r}" old)))
+  (<- (require-law (= old (Reset start.epoch cut-at)) law (.format "刈った変更より前の位置(floor = 刈った位置): {!r}" old)))
   ;; 読み手は Reset の (epoch, floor) だけで、刈り残った変更を頭から全部読める。
   (<- kept (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor old.epoch old.floor))))
   (<- (require-law (and (isinstance kept Changes) (= (lfor item kept.items #(item.key item.version)) [#(#("p2") 1)]))
                law (.format "Reset の floor の位置から残った変更を全部読む: {!r}" kept)))
   (<- again (as-writer harness MAKER (PruneChanges 50)))
-  (<- (require-law (= again (Pruned middle.sequence 0)) law (.format "2 度目の刈り取りは何も消さない: {!r}" again)))
+  (<- (require-law (= again (Pruned cut-at 0)) law (.format "2 度目の刈り取りは何も消さない: {!r}" again)))
   (<- listed (as-writer harness MAKER (ListRows "parts")))
   (<- (require-law (= (lfor row listed.rows row.key) [#("p1") #("p2")]) law (.format "刈り取りが行を消した: {!r}" listed)))
   (<- t1 (as-writer harness MAKER (PutRow "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))))
@@ -1001,14 +1003,15 @@
   (<- (Delay 100))
   ;; 2 つの変更はどちらも 50 秒より古い。送って確かめた番号は 1 つ目まで。
   (<- bounded (as-writer harness MAKER (PruneChanges 50 :upto-seq first.sequence)))
-  (<- (require-law (= bounded (Pruned first.sequence 1)) law (.format "上限の内の 1 つだけを刈る: {!r}" bounded)))
+  ;; floor = 刈った変更の位置(錠の形では上限 first と同じ — 法 10 の註)。
+  (<- (require-law (= bounded (Pruned w1.position.sequence 1)) law (.format "上限の内の 1 つだけを刈る: {!r}" bounded)))
   (<- kept (as-writer harness MAKER (WatchChanges #("parts") (WatchCursor start.epoch first.sequence))))
   (<- (require-law (and (isinstance kept Changes) (= (lfor item kept.items #(item.key item.version)) [#(#("p2") 1)]))
                law (.format "上限より後の古い変更が残り読める: {!r}" kept)))
   (<- again (as-writer harness MAKER (PruneChanges 50 :upto-seq first.sequence)))
-  (<- (require-law (= again (Pruned first.sequence 0)) law (.format "同じ上限の 2 度目の刈りは何も消さない: {!r}" again)))
+  (<- (require-law (= again (Pruned w1.position.sequence 0)) law (.format "同じ上限の 2 度目の刈りは何も消さない: {!r}" again)))
   (<- rest (as-writer harness MAKER (PruneChanges 50 :upto-seq second.sequence)))
-  (<- (require-law (= rest (Pruned second.sequence 1)) law (.format "上限を上げれば残りを刈る: {!r}" rest)))
+  (<- (require-law (= rest (Pruned w2.position.sequence 1)) law (.format "上限を上げれば残りを刈る: {!r}" rest)))
   [w1 w2 bounded kept again rest])
 
 
@@ -1798,15 +1801,16 @@
 (defk law-a-write-names-its-change-position [harness]
   {:pre [(: harness LawHarness)] :post [(: % (get list object))]}
   "書き手が自分の書きの入った位置を答えから知り、次の読みでその位置まで追いついた答えを求められるための法: PutRow の Written と
-   PutRows の束の各項の position は、その書きの変更が WatchChanges に現れる番号と置き場の版(epoch)で、束の中では束の順に 1 つずつ続き、
-   最後の書きの位置は書いた直後の一覧の頭(Page の epoch・sequence)と同じ。位置から読む WatchChanges はその書きより後の変更だけを返し、
+   PutRows の束の各項の position は、その書きの変更が WatchChanges に現れる番号と置き場の版(epoch)で、前の書きの位置と一覧の頭より後、
+   束の中では束の順に 1 つずつ続き、書いた直後の一覧の頭(Page の epoch・sequence)は最後の書きの位置に届いている(錠の形では同じ・
+   transaction の形の頭は見張りの位置で、位置より後に在り得る — _pg_sql.hy の頭の註の「番号の形」)。位置から読む WatchChanges はその書きより後の変更だけを返し、
    版を上げた置き場の書きは新しい版を名乗る。断り・衝突の答えは位置を持たない(書いていない)。答えの列は memory・PostgreSQL・HTTP の口越しで
    等しい(test_parity_memory_pg.hy — 位置まで同じ値)。"
   (val law "書きの答えは、その書きが変更の列に積んだ変更の位置を名乗る")
   (<- start (as-writer harness MAKER (ListRows "parts" :limit 1)))
   (<- (require-law (isinstance start Page) law (.format "最初の一覧: {!r}" start)))
   (<- w1 (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "a"}) (ExpectAbsent))))
-  (<- (require-law (and (isinstance w1 Written) (= w1.position (WatchCursor start.epoch (+ start.sequence 1)))) law
+  (<- (require-law (and (isinstance w1 Written) (= w1.position.epoch start.epoch) (> w1.position.sequence start.sequence)) law
                    (.format "最初の書きの位置: {!r} (一覧の頭 {!r} {!r})" w1 start.epoch start.sequence)))
   (<- refused (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"size" 1}) (ExpectAny))))
   (<- conflict (as-writer harness MAKER (PutRow "parts" #("p1") (FrozenMap {"label" "b"}) (ExpectAbsent))))
@@ -1817,8 +1821,9 @@
                          (RowWrite "tickets" #("g1" "t1") (FrozenMap {"owner" "o1"}) (ExpectAbsent))
                          (RowWrite "parts" #("p2") (FrozenMap {"label" "d"}) (ExpectAbsent))))))
   (<- (require-law (and (isinstance batch WrittenRows)
+                        (> (. (get batch.items 0) position sequence) w1.position.sequence)
                         (= (lfor item batch.items item.position)
-                           (lfor n [1 2 3] (WatchCursor start.epoch (+ w1.position.sequence n)))))
+                           (lfor n [0 1 2] (WatchCursor start.epoch (+ (. (get batch.items 0) position sequence) n)))))
                    law (.format "束の各項の位置が束の順に続かない: {!r}" batch)))
   (val written [#("parts" #("p1") w1) #("parts" #("p1") (get batch.items 0)) #("tickets" #("g1" "t1") (get batch.items 1))
                 #("parts" #("p2") (get batch.items 2))])
@@ -1829,7 +1834,7 @@
                    law (.format "書きの位置と WatchChanges の変更の番号が違う: {!r}" items)))
   (val last (get batch.items -1))
   (<- head (as-writer harness MAKER (ListRows "parts" :limit 1)))
-  (<- (require-law (and (isinstance head Page) (= (WatchCursor head.epoch head.sequence) last.position)) law
+  (<- (require-law (and (isinstance head Page) (= head.epoch last.position.epoch) (>= head.sequence last.position.sequence)) law
                    (.format "最後の書きの位置が書いた直後の一覧の頭でない: {!r} {!r}" last head)))
   (<- beyond (as-writer harness MAKER (WatchChanges #("parts" "tickets") w1.position)))
   (<- (require-law (and (isinstance beyond Changes)
@@ -1837,7 +1842,8 @@
                    law (.format "最初の書きの位置から読んだ変更が、その後の書きの変更だけでない: {!r}" beyond)))
   (<- epoch (as-writer harness MAKER (AdvanceStoreEpoch)))
   (<- after-epoch (as-writer harness MAKER (PutRow "parts" #("p3") (FrozenMap {"label" "e"}) (ExpectAbsent))))
-  (<- (require-law (and (isinstance after-epoch Written) (= after-epoch.position (WatchCursor epoch (+ last.position.sequence 1))))
+  (<- (require-law (and (isinstance after-epoch Written) (= after-epoch.position.epoch epoch)
+                        (> after-epoch.position.sequence last.position.sequence))
                    law (.format "版を上げた置き場の書きの位置: {!r} (新しい版 {!r})" after-epoch epoch)))
   [start w1 refused conflict batch #* (get collected 0) head beyond epoch after-epoch])
 
@@ -1988,8 +1994,9 @@
                    (.format "全部通る書き: {!r}" both)))
   (<- (require-law (and (= (! (unplaced both.rows)) (WrittenRows #((Written 1 (FrozenMap {"id" "p1" "label" "a" "state" "open"}))
                                                                  (Written 1 (FrozenMap {"group" "g1" "id" "t1" "owner" "o1" "state" "open"})))))
+                        (> (. (get both.rows.items 0) position sequence) start.sequence)
                         (= (lfor item both.rows.items item.position)
-                           (lfor n [1 2] (WatchCursor start.epoch (+ start.sequence n)))))
+                           (lfor n [0 1] (WatchCursor start.epoch (+ (. (get both.rows.items 0) position sequence) n)))))
                    law (.format "行の束の答えが PutRows と違う: {!r}" both.rows)))
   (val fresh (get both.appends 0))
   (val paired (get both.appends 2))
@@ -2097,7 +2104,9 @@
                                     #((EventAppend "journal" "pos-2" {"n" 4}) (EventAppend "journal" "pos-1" {"n" 3})))))
   (<- (require-law (isinstance second WrittenAndAppended) law (.format "2 つ目の書き: {!r}" second)))
   (val second-at (. (get second.rows.items -1) position))
-  (<- (require-law (= first-at (WatchCursor start.epoch (+ start.sequence 2))) law (.format "最初の書きの行の最後の位置: {!r}" first)))
+  (<- (require-law (and (= first-at.epoch start.epoch) (> first-at.sequence start.sequence)
+                        (= first-at.sequence (+ (. (get first.rows.items 0) position sequence) 1)))
+                   law (.format "最初の書きの行の最後の位置: {!r}" first)))
   (<- journal (as-writer harness MAKER (ReadEvents "journal")))
   (<- (require-law (= (lfor e journal.items #(e.idempotency-key e.position))
                       [#("pos-plain" None) #("pos-bundle" None) #("pos-1" first-at) #("pos-2" second-at)])
