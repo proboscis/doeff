@@ -29,7 +29,11 @@
     (answer-call call refused)
     (return None))
   (try
-    (<- answer (| HostedProcess HostedRefused tuple) request)
+    (<- answer (| HostedProcess HostedRefused tuple)
+        (match request
+          (LaunchHosted) (LaunchHosted request.launch)
+          (StopHosted) (StopHosted request.id)
+          _ (ListHosted)))
     (<- text str (hosted-answer-text answer))
     (answer-call call text)
     (except [error Exception]
