@@ -1098,7 +1098,7 @@
    錠の形は変更の列の最大の番号(番号の錠の約束)、transaction の形は文の snapshot の xmin の xid の範囲の手前。どちらも floor を下回らない。
    pg_current_snapshot() は文の snapshot なので、同じ文が読む行と同じ断面の頭になる。"
   (.format "CASE WHEN {a}.numbering = '{x}'
-                 THEN greatest({a}.floor, (SELECT coalesce(max({p}row_changes.seq), 0) FROM {p}row_changes))
+                 THEN greatest({a}.floor, pg_snapshot_xmin(pg_current_snapshot())::text::bigint * {s} - 1)
                  ELSE greatest({a}.floor, (SELECT coalesce(max({p}row_changes.seq), 0) FROM {p}row_changes)) END"
            :a alias :x NUMBERING-XACT :s XACT-NUMBER-SPAN :p prefix))
 
