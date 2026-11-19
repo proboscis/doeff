@@ -15,7 +15,8 @@
 ;;;   mounts      = この process の mount の表(/proc/self/mountinfo の中身 — 置き場の disk の種類を読む・#3676)。
 ;;;   tree-mount / tree-unmount = 翻訳の設定 runtime-env.tree-mount・tree-unmount(空 = 木を mount で置かない)。世界は台本の命令
 ;;;                 TREE-MOUNT-COMMAND・TREE-UNMOUNT-COMMAND(木を読み専用で見せる外の daemon の代役)を持つ: 置く命令は commit の木を dir の下へ
-;;;                 書き(翻訳の file の効果の外 — 世界が書く)、mount の表に行を足す。外す命令は行を消し、dir を中身ごと消す。
+;;;                 書き(翻訳の file の効果の外 — 世界が書く)、mount の表に行を足す。親の dir の無い dir は断る(mount 点の親は作らない)。
+;;;                 外す命令は行を消し、dir を中身ごと消す。
 ;;;   mount-refused = 置く命令が断る commit(外の daemon の保存先にまだ無い commit の代役)。
 ;;; 模擬の uv.lock の書き方: 1 行 1 package で `名==版`、第三者の package の最上位の import の名は ` top=a,b` で添える
 ;;; (処理ステージ 10 の名前の影を起こすため)。editable で入る package は ` editable=<project の dir からの相対 path>` を添える
@@ -504,18 +505,22 @@
 
 (defk tree-mount-script [world commands request]
   {:pre [(: world EnvWorld) (: commands tuple) (: request RunProcess)] :post [(: % ProcessOutcome)]}
-  "tree-mount --read-only --commit <sha> <dir> に答える台本: 断る commit(mount-refused)・世界に無い commit・中身の在る dir は断り、
-   それ以外は commit の木を dir の下へ書いて mount の表に dir の行を足す(本物の daemon と同じく、置いた木の file は翻訳が書かない)。"
+  "tree-mount --read-only --commit <sha> <dir> に答える台本: 断る commit(mount-refused)・世界に無い commit・親の dir の無い dir・中身の
+   在る dir は断り、それ以外は commit の木を dir の下へ書いて mount の表に dir の行を足す(本物の daemon と同じく、置いた木の file は翻訳が
+   書かない・mount 点の親は作らない)。"
   (val argv (tuple request.argv))
   (<- sha str (required-option-of argv "--commit"))
   (val dir (get argv -1))
   (<- commit (| WorldCommit None) (commit-of world sha))
+  (<- parent (| PathStat FileFailed) (StatPath (posixpath.dirname dir)))
   (<- listed (| tuple FileFailed) (ListDirectory dir))
   (cond
     (in sha world.mount-refused)
     (ProcessOutcome :stdout "" :stderr (.format "commit {} is not in the store\n" sha) :exit-code REFUSED-CODE)
     (is commit None)
     (ProcessOutcome :stdout "" :stderr (.format "no commit {}\n" sha) :exit-code REFUSED-CODE)
+    (not (and (isinstance parent PathStat) (= parent.kind PathKind.DIRECTORY)))
+    (ProcessOutcome :stdout "" :stderr (.format "{}: No such file or directory\n" (posixpath.dirname dir)) :exit-code REFUSED-CODE)
     (and (isinstance listed tuple) listed)
     (ProcessOutcome :stdout "" :stderr (.format "{} is not empty\n" dir) :exit-code REFUSED-CODE)
     True

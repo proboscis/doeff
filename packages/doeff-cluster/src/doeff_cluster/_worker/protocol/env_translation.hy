@@ -1123,8 +1123,10 @@
    :post [(: % TreePlaced)]}
   "MaterializeTree に答えるため: 木を置く命令の設定(mount — 空 = 無い)が在れば木を読み専用の mount で置き、置けなければ訳を準備の
    記録の行に残して、今までどおり写し元からの写しか mirror からの展開で置く(準備を止めない — daemon の無い機体・daemon の store に
-   まだ無い commit)。"
+   まだ無い commit)。置く命令は mount 点の親を作らないので、先に親(新しい root の dir)を作る — 作らないと root の最初の木は
+   毎回断られて写しに戻る。"
   (when mount
+    (<- (MakeDirectory (posixpath.dirname dest)))     ; 作れない断りは置く命令の断りとして読む
     (<- tried (| TreePlaced str) (mounted-tree mount unmount commit dest))
     (match tried
       (TreePlaced) (return tried)
