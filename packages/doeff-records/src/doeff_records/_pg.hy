@@ -2207,7 +2207,9 @@
   (when (and (= numbering NUMBERING-XACT) (<= base top))
     (raise (RecordsSqlFailed None (.format "番号の形を {} へ替えない: この transaction の xid の範囲の頭 {} が錠の形の番号の上の端 {} を越えない"
                                            numbering base top))))
-  (<- statements (switch-numbering-statements store.prefix numbering (if (= numbering NUMBERING-XACT) last-value top)))
+  ;; 'xact' への上限は今の値の 1 つ先(使ったことの無い sequence の今の値は最小の値 1 で、上限を最小の値と同じにできない —
+  ;; 1 つ先へ進めてから止めても、旧い版の次の番号は上限を越える)。
+  (<- statements (switch-numbering-statements store.prefix numbering (if (= numbering NUMBERING-XACT) (+ last-value 1) top)))
   (for [statement statements]
     (<- (query-rows store.database statement)))
   current)

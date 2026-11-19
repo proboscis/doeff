@@ -2,7 +2,7 @@
 ;; 同じ表の形と同じ錠を使うこと。旧い版と新しい版が同じ置き場に重なっても(入れ替えの途中)壊れないための約束:
 ;;   - 表の用意の DDL は旧い版と同じ字面(tests/pg_ddl_before_880.json = 旧い版の schema-statements の "records_" の答えの写し)。
 ;;     答え手の方言への書き換え(postgres-statement)を通した後の、driver に渡る字面で比べる。旧い版より後に足した表と索引の文
-;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022 とその覚えた刻の列、行の書きの冪等キーの表 write_keys とその
+;;     (ADDED-AFTER-880 — 鍵だけの表 retired_keys・#3022 とその覚えた刻の列、行の書きの冪等キーの表 write_keys・置き場の 1 行の番号の形の列 numbering とその
 ;;     覚えの外しの索引と、期限の境と組と変更の列の刻と
 ;;     状態の欄の索引・#3614 と覚えの外しの索引・等号の欄 × 上から読む欄の組の索引)は旧い版の文の後ろにだけ並び、
 ;;     旧い版の文の字面と順を変えない。旧い版と字面が違うのは store_epoch の行を作る文の版の初めの値だけ(#3632 — 行を作った時の
@@ -86,6 +86,8 @@
            idempotency_key text PRIMARY KEY, body_digest text NOT NULL, answer text NOT NULL, last_seq bigint NOT NULL,
            remembered_at bigint NOT NULL)"
    "ALTER TABLE records_state_rows ADD COLUMN bulk text"
+   "ALTER TABLE records_store_epoch ADD COLUMN numbering text NOT NULL DEFAULT 'lock'
+           CHECK (numbering IN ('lock', 'xact'))"
    "CREATE INDEX IF NOT EXISTS records_append_rows_ledger_at ON records_append_rows (ledger, at)"
    "CREATE INDEX IF NOT EXISTS records_append_rows_group_05a79f06cf3f ON records_append_rows (ledger, (CASE WHEN strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') > 0
                  THEN substr(((payload::jsonb) ->> 'idempotencyKey'), strpos(((payload::jsonb) ->> 'idempotencyKey'), ':') + 1)
