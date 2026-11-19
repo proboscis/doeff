@@ -49,6 +49,8 @@
 ;;;   RECORDS_ORIGIN_HOST            行に刻む機体の名(既定 = env HOSTNAME — k8s は pod の名を置く。どちらも無ければ起動しない)
 ;;;   RECORDS_CALLERS                一覧の読みと要求の数を呼び手ごとに数える呼び手の job の名(, で区切る・既定 = 無し — 要求の見出し X-Records-Caller の
 ;;;                                  名乗りをこの名に限って数え、ほかの名乗りは undeclared に畳む。_http_server.hy の頭の註の一覧の読みの数)
+;;;   RECORDS_NUMBERING              起動の表の用意で置き場を替える変更の列の番号の形(lock | xact・既定 = 空 — 置き場のまま。_pg_sql.hy の頭の註の
+;;;                                  「番号の形」— xact は置き場を読み書きする全部の process が形を読む版になった後にだけ置く)
 ;;; 表は起動時に CREATE ... IF NOT EXISTS だけを流す(既存の表を消さない・変えない)。既に在る表に足りない索引は、索引の用意の task が
 ;;; CREATE INDEX CONCURRENTLY で作る(_pg.hy の頭の註の「索引の用意」)。
 (require doeff-hy.macros [defhandler defk <- val])
@@ -73,8 +75,8 @@
 (import doeff_core_effects [thread-pool-compute-handler])
 (import doeff_time [async-time-handler])
 (import doeff_records._values [RecordsSchema])
-(import doeff_records._pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates])
-(import doeff_records._pg_sql [DEFAULT-PREFIX])
+(import doeff_records._pg [pg-records-handler prepare-records-store reconcile-indexes writer-gates switch-numbering])
+(import doeff_records._pg_sql [DEFAULT-PREFIX NUMBERINGS])
 (import doeff_records._http_server [MaintenancePlan RecordsServing RecordsListening RecordsPrepared REQUEST-MAX-BYTES serve-records])
 (import doeff_records._store_choice [StoreChoice StorePressure PressureUnread])
 
@@ -89,6 +91,7 @@
 (val ENV-KEEP-CHANGES-SECONDS "RECORDS_KEEP_CHANGES_SECONDS")
 (val ENV-ORIGIN-HOST "RECORDS_ORIGIN_HOST")
 (val ENV-CALLERS "RECORDS_CALLERS")
+(val ENV-NUMBERING "RECORDS_NUMBERING")
 (val ENV-HOSTNAME "HOSTNAME")
 (val DEFAULT-HOST "0.0.0.0")
 (val DEFAULT-PORT 8875)
@@ -126,7 +129,8 @@
   "env と Secret の file から読んだ設定の値(records-settings が作る — 土台の口 records-connected と本体の設定 records-serving の材料):
    dsn = PostgreSQL の DSN・prefix = 表の名の接頭辞・origin-host = 行に刻む機体の名・pool-size = 要求に同時に貸す
    接続の上限(手入れの係の 1 本は別に足す)・address = 待ち受けの宛先・maintenance = 手入れの周期・callers = 一覧の読みを呼び手ごとに
-   数える呼び手の job の名(RecordsServing の callers)。資源(接続の貸し出しと pool)は持たない — records-connected が開いて閉じる。"
+   数える呼び手の job の名(RecordsServing の callers)・numbering = 起動の表の用意で置き場を替える変更の列の番号の形('lock' | 'xact' —
+   _pg_sql.hy の頭の註の「番号の形」・空 = 置き場のまま)。資源(接続の貸し出しと pool)は持たない — records-connected が開いて閉じる。"
   {:check [(> (len dsn) 0) (> (len prefix) 0) (> (len origin-host) 0) (> pool-size 0)]}
   (#^ str dsn)
   (#^ str prefix)
@@ -134,7 +138,8 @@
   (#^ int pool-size)
   (#^ HttpAddress address)
   (#^ MaintenancePlan maintenance)
-  (setv #^ (get tuple #(str ...)) callers #()))
+  (setv #^ (get tuple #(str ...)) callers #())
+  (setv #^ str numbering ""))
 
 
 ;; --- env と Secret の file の読み --------------------------------------------------------------------------------------------------
@@ -189,12 +194,17 @@
 
 ;; --- 本番の用意と土台 ----------------------------------------------------------------------------------------------------------------
 
-(defk pg-handlers-of [schema prefix host]
-  {:pre [(: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
-  "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、書き手の名 → PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が
-   1 度だけ撃つ)。宣言の索引が置き場に足りないか、宣言に無い索引(旧い形か宣言から外した表ごとの形)が置き場に残っていれば、索引の用意の task(pg.reconcile-indexes)を
+(defk pg-handlers-of [schema prefix host numbering]
+  {:pre [(: schema RecordsSchema) (: prefix str) (: host str) (: numbering str)] :post [(: % (get Callable #([str] object)))] :tags {:context "records" :role "entry"}}
+  "表を用意し(移行の錠の中で CREATE ... IF NOT EXISTS)、設定の番号の形 numbering(空 = 置き場のまま)へ置き場を替え、書き手の名 →
+   PostgreSQL の置き場の handler の関数を返すため(入口の用意の task が 1 度だけ撃つ)。宣言の索引が置き場に足りないか、宣言に無い索引(旧い形か宣言から外した表ごとの形)が置き場に残っていれば、索引の用意の task(pg.reconcile-indexes)を
    serving と別の daemon の task で立てる — 用意の終わりも serving の生死も索引の作りと外しに縛られない(_pg.hy の頭の註の「索引の用意」)。"
   (<- store (prepare-records-store DATABASE DDL-DATABASE schema prefix))
+  ;; 設定が番号の形を名指せば、答え始める前に置き場をその形へ替える(同じ形なら何もしない — _pg.hy の switch-numbering)。
+  (when numbering
+    (<- before str (switch-numbering store False numbering))
+    (when (!= before numbering)
+      (print (.format "記録の service: 変更の列の番号の形を {} から {} へ替えた" before numbering) :file sys.stderr :flush True)))
   (when store.indexes.missing
     (print (.format "記録の service: 宣言の索引 {} 本が置き場に無い — 索引の用意の task が作る({})"
                     (len store.indexes.missing) (.join "・" store.indexes.missing))
@@ -288,10 +298,14 @@
   (<- interval float (env-number ENV-MAINTENANCE-SECONDS DEFAULT-MAINTENANCE-SECONDS))
   (<- keep float (env-number ENV-KEEP-CHANGES-SECONDS DEFAULT-KEEP-CHANGES-SECONDS))
   (<- callers-text str (env-text ENV-CALLERS ""))
+  (<- numbering str (env-text ENV-NUMBERING ""))
+  (when (and numbering (not-in numbering NUMBERINGS))
+    (raise (SystemExit (.format "記録の service: env {} は {} のどれか(空 = 置き場のまま)— {!r}" ENV-NUMBERING (.join " / " NUMBERINGS) numbering))))
   (RecordsSettings :dsn dsn :prefix prefix :origin-host host :pool-size (int size)
                    :address (HttpAddress :host listen-host :port (int listen-port))
                    :maintenance (MaintenancePlan :interval-seconds interval :keep-seconds keep)
-                   :callers (tuple (gfor name (.split callers-text ",") :if (.strip name) (.strip name)))))
+                   :callers (tuple (gfor name (.split callers-text ",") :if (.strip name) (.strip name)))
+                   :numbering numbering))
 
 
 (defk store-reachable []
@@ -345,7 +359,7 @@
    (readiness)は choice が決める — PostgreSQL = PG-STORE・memory = doeff_records._memory の memory-store-choice。
    以前は PostgreSQL に固定で、使い手が dataclasses.replace で上書きしていた。"
   (RecordsServing :address settings.address :schema schema
-                  :prepare (choice.prepare-of schema settings.prefix settings.origin-host) :request-handlers #()
+                  :prepare (choice.prepare-of schema settings.prefix settings.origin-host settings.numbering) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
                   :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
                   :pressure choice.pressure :callers settings.callers
