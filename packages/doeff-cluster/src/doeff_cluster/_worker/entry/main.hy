@@ -68,6 +68,10 @@
                                                   layout-limited-layers layer-floors-of layout-layer-names pods-dir-of])
 (import doeff_cluster._worker.protocol.supplied_hold [SuppliedHoldSettings SuppliedHoldCell supplied-hold-loop])
 (import doeff_cluster._worker.protocol.warm_host [WarmSettings warm-host])
+(import doeff_cluster._worker.protocol.hosted_host [HostedCell HostedSettings hosted-host])
+(import doeff_cluster._worker.core.hosted_rules [SOCKET-VAR :as HOSTED-SOCKET-VAR hosted-root-of hosted-socket-of])
+(import doeff_cluster._worker.entry.hosted_socket [hosted-serve-loop])
+(import doeff_cluster._foundation.line_socket [LineInbox open-line-inbox])
 (import doeff_cluster._worker.core.places [worker-places])
 (import doeff_cluster._worker.protocol.probes [ProbeSettings probe-host])
 (import doeff_cluster._worker.protocol.code_store [CodeSettings code-host PREPARE-TOOL])
@@ -272,6 +276,35 @@
   (if (and cgroup-dir (in CLI-LAYER names))
       (+ cgroup-dir "/" CLI-LAYER "/cpu.pressure")
       None))
+
+
+(defk hosted-layers-of [machine-env]
+  {:pre [(: machine-env dict)] :post [(: % (| dict None))] :tags {:context "worker" :role "main"}}
+  "預かりの process を置ける cgroup の層(層の名 → cgroup.procs — worker/protocol/hosted_host の HostedSettings.layers)を起動の時に 1 度
+   だけ決めるため: 層の親 CGROUP-DIR-VAR と層の宣言 CGROUP-LAYOUT-VAR が在る機体は、宣言の層のうち cgroup.procs の在る層(会話の CLI の
+   層 clis と同じ綴り <層の親>/<名>)。どちらかが無い機体(native の機体・macOS)は None(層を頼まれても今の置き方のまま起こす)。"
+  (val cgroup-dir (.get machine-env CGROUP-DIR-VAR ""))
+  (<- names tuple (layout-layer-names (.get machine-env CGROUP-LAYOUT-VAR "")))
+  (when (or (not cgroup-dir) (not names))
+    (return None))
+  (var layers {})
+  (for [name names]
+    (val procs (+ cgroup-dir "/" name "/cgroup.procs"))
+    (<- seen (| PathStat FileFailed) (StatPath procs))
+    (when (and (isinstance seen PathStat) (= seen.kind PathKind.FILE))
+      (:= layers (| layers {name procs}))))
+  layers)
+
+
+(deff hosted-inbox-of [path]  ; cannot be a defk: 起動の時に Program の外で口の受けの thread を立てる(Program の外の資源)
+  {:pre [(: path str)] :post [(: % (| LineInbox None))] :tags {:context "worker" :role "main"}}
+  "預かりの process の口(worker/entry/hosted_socket)の受けを開くため。開けなければ訳を 1 行出して None(口を持たずに起きる — job は
+   今の形〔自分の木の中に起こす〕へ戻る。口の無い事で worker の起動を止めない)。"
+  (try
+    (open-line-inbox path)
+    (except [error OSError]
+      (print (.format "worker: 預かりの process の口 {} を開けない — 口を持たずに起きます: {!r}" path error) :file sys.stderr :flush True)
+      None)))
 
 
 (defk cli-kept-file-of [machine-env]
@@ -584,11 +617,12 @@
 
 
 (defk production-handlers [host probes link link-cell link-options watch-cell lease-cell status-path codes envs warm boot-file memory-cell
-                           [job-procs None] [pod-labels None]]
+                           [job-procs None] [pod-labels None] [hosted None] [hosted-cell None]]
   {:pre [(: host HostSettings) (: probes ProbeSettings) (: link LinkState) (: link-cell RouteCell) (: link-options RouteOptions)
          (: watch-cell RouteCell) (: lease-cell RouteCell) (: status-path str) (: codes CodeSettings) (: envs EnvSettings)
          (: warm WarmSettings) (: boot-file (| str None)) (: memory-cell MemoryCell) (: job-procs (| str None))
-         (: pod-labels (| tuple None))]
+         (: pod-labels (| tuple None)) (: hosted (| HostedSettings None)) (: hosted-cell (| HostedCell None))
+         (= (is hosted None) (is hosted-cell None))]
    :post [(: % list)] :tags {:context "worker" :role "main"}}
   "本番の handler の組(外側が先 — with-handlers の順)。process-host・warm-host・probe-host・code-host・env-host の session の値(子の表・
    待ちの子の表・検めの記録・木と root の準備の記録)は外側の session-store が持つ。status-file は焼きの経過の秒を CodeTimings で問うので、
@@ -607,7 +641,9 @@
    job-cgroup-placer を subprocess-handler のすぐ内側に置き、内側の宿が起こす子をすべて兄弟の cgroup へ入れる(本体は残る)。
    Pod の job の label(pod-labels = pod-label-parts の #(設定 入れ物))が在れば、pod-job-labels を coordinator-link の
    すぐ内側に置き(拍の宣言の読みの答えを受け取って label に写す)、自区画の API server 宛ての要求だけを区画の CA で検める
-   in-cluster-api-routed を http-production-handler のすぐ内側に置く(coordinator への要求は外側の client のまま)。"
+   in-cluster-api-routed を http-production-handler のすぐ内側に置く(coordinator への要求は外側の client のまま)。
+   預かりの process の宿(hosted = 設定・hosted-cell = 表の入れ物)は一番内側に置く — 拍の宣言の読み(coordinator-link が答える)と世界の
+   観測(local-host が答える)の答えを読んで持ち主不在の止めを判じ、起こす子は外側の job-cgroup-placer・subprocess-handler を通る。"
   (+
   [await-handler (async-time-handler) (http-production-handler)]
   (if (is pod-labels None) [] [(in-cluster-api-routed KUBE-API SERVICE-ACCOUNT-CA-PATH)])
@@ -618,7 +654,8 @@
    os-file-handler os-host-counters offloaded-tree-handler offloaded-file-handler worker-compute-handler (session-store) os-warm-process-handler os-signal-stop-handler no-wakes (env-host envs) (code-host codes) (status-file status-path)
    (lease-release lease-cell link-options) (coordinator-link link link-cell link-options watch-cell)]
   (if (is pod-labels None) [] [(pod-job-labels (get pod-labels 0) (get pod-labels 1))])
-  [(probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]))
+  [(probe-host probes) (warm-host warm) (process-host host) (leaving-observer boot-file link.boot) (memory-observer memory-cell) local-host tick-pauses]
+  (if (is hosted None) [] [(hosted-host hosted hosted-cell)])))
 
 
 (defk timing-checked [fence-ms policy timing]
@@ -653,27 +690,30 @@
   state)
 
 
-(defk worker-watching-memory [policy watch cell hold link hold-cell]
+(defk worker-watching-memory [policy watch cell hold link hold-cell [inbox None]]
   {:pre [(: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell) (: hold (| SuppliedHoldSettings None)) (: link LinkState)
-         (: hold-cell SuppliedHoldCell)]
+         (: hold-cell SuppliedHoldCell) (: inbox (| LineInbox None))]
    :post [(: % WorkerState)] :tags {:context "worker" :role "main"}}
   "機体の memory の見張り(worker/protocol/memory_watch)と、値の写しの係(worker/protocol/supplied_hold — hold が在る時だけ・
    ADR-DOE-CLUSTER-004)を調整ループの外の背景の task として起こしてから、調整ループを回すため。どちらも同じ
-   handler の組の下で走る(job の根は process-host・表は os-proc-table-handler・API server への要求は in-cluster-api-routed が答える)。"
+   handler の組の下で走る(job の根は process-host・表は os-proc-table-handler・API server への要求は in-cluster-api-routed が答える)。
+   預かりの process の口(inbox — 開けた worker だけ)の背景の task も同じ組の下で起こす(頼みは hosted-host が答える)。"
   (<- (Spawn (memory-watch-loop watch cell) :daemon True))
+  (when (is-not inbox None)
+    (<- (Spawn (hosted-serve-loop inbox) :daemon True)))
   (when (is-not hold None)
     (<- (Spawn (supplied-hold-loop hold link hold-cell) :daemon True)))
   (<- state WorkerState (run-worker policy))
   state)
 
 
-(defk worker-on-watching-memory [handlers policy watch cell hold link hold-cell]
+(defk worker-on-watching-memory [handlers policy watch cell hold link hold-cell [inbox None]]
   {:pre [(: handlers list) (: policy WorkerPolicy) (: watch MemoryWatchSettings) (: cell MemoryCell) (: hold (| SuppliedHoldSettings None))
-         (: link LinkState) (: hold-cell SuppliedHoldCell)]
+         (: link LinkState) (: hold-cell SuppliedHoldCell) (: inbox (| LineInbox None))]
    :post [(: % WorkerState)] :tags {:context "worker" :role "main"}}
   "本番の組 handlers の上で、機体の memory の見張りと値の写しの係と調整ループを回すため(worker-on の本番の形 — 模擬の環境は見張りも
    係も持たない)。"
-  (<- state WorkerState (with-handlers handlers (worker-watching-memory policy watch cell hold link hold-cell)))
+  (<- state WorkerState (with-handlers handlers (worker-watching-memory policy watch cell hold link hold-cell inbox)))
   state)
 
 
@@ -810,12 +850,21 @@
         ;; process の始まりは /proc を file の効果で読む(答え手 = os-file-handler と process_clock)。
         boot-marks (run (with-handlers [(sync-time-handler) os-file-handler (process-clock (run (clock-ticks)))]
                           (read-boot-marks machine-env imported-ms)))
+        ;; 預かりの process の置き場の根(分け合う dir の下 — 次の世代が覚え直す)と、この世代の口(worker/core/hosted_rules)。口を開けない
+        ;; 世代は口を持たずに起き、job の子へ口の path を渡さない。
+        hosted-root (run (hosted-root-of (str shared-dir)))
+        hosted-socket (run (hosted-socket-of hosted-root places.generation))
+        hosted-inbox (hosted-inbox-of hosted-socket)
+        hosted (HostedSettings :root hosted-root :generation places.generation
+                               :layers (run (with-handlers [os-file-handler] (hosted-layers-of machine-env))))
+        hosted-cell (HostedCell)
         ;; 子 process(service の env)が coordinator と自分の名を知る口。資格は渡さない。書ける cgroup の見えの根と会話の CLI の層の天井が
         ;; 在れば子へも渡す。
         host-env (| (run (passed-environment args.pass-env machine-env))
                     (run (worker-context-environ args.coordinator args.name))
                     (run (cgroup-dir-environ (.get machine-env CGROUP-DIR-VAR)))
-                    (run (cli-ceiling-environ machine-env)))
+                    (run (cli-ceiling-environ machine-env))
+                    (if (is hosted-inbox None) {} {HOSTED-SOCKET-VAR hosted-socket}))
         ;; job の子へ渡す環境変数の名(許可表の名のうち worker の環境に在る物 + 上の host-env の名 — heartbeat の childEnviron で名乗る)。
         child-environ (run (child-environ-names (run (with-handlers [subprocess-handler] (allowed-environment))) host-env))
         ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層が置く・無ければ /sys/fs/cgroup)。
@@ -956,7 +1005,7 @@
   ;; handler の組を選び(本番の組)、その組の上で worker の Program を回す。
   (setv handlers (run (production-handlers host probes link link-cell link-options watch-cell lease-cell
                                            places.status codes envs warm (.get machine-env BOOT-FILE-VAR) memory-cell
-                                           :job-procs shared-procs :pod-labels pod-labels)))
+                                           :job-procs shared-procs :pod-labels pod-labels :hosted hosted :hosted-cell hosted-cell)))
   ;; 生存の合図の thread(scheduler の外の OS の thread)。拍の側の送りが送信間隔 × 1.5 を過ぎても来ない時に、
   ;; 拍が最後に送った本文を送り直す(判断は coordinator への口の lifeline-turn)。返事の上限は生存の窓の半分(遅い返事を待つ間に次の
   ;; 送りを始められなくならない)。時計の読みは引数なしの sync-time-handler(拍と同じ機体の時計)。ready を許す返事が届いた送りの後は、
@@ -973,11 +1022,14 @@
   ;; 世代(boot)と log の名の世代の印を名乗る — log の読み手が、分け合う log の dir の file をこの process の物と見分ける(AL-D2j)。
   (print (.format "worker: 起動します boot={} log-generation={}" boot places.generation) :file sys.stderr :flush True)
   (try
-    (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell hold link hold-cell)))
+    (run (scheduled (worker-on-watching-memory handlers policy watch memory-cell hold link hold-cell hosted-inbox)))
     (finally
       ;; 名指しの待ちと拍の外の送りと memory の見張りの背景の task を止める(worker の終わり — 次の待ちも heartbeat も読みも送らない)。
       ;; 生存の合図の thread も止める(全 job を回収した worker の lease を延ばさない)。
       (setv link.watch.closing True link.beating.closing True memory-cell.closing True hold-cell.closing True)
+      ;; 預かりの process の口を閉じる(預かりの process は止めない — 次の世代が覚え直す)。
+      (when (is-not hosted-inbox None)
+        (.close hosted-inbox))
       (stop-lifeline)))
   (print "worker: 全 job を回収しました" :file sys.stderr :flush True))
 
