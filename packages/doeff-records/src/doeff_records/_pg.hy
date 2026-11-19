@@ -138,7 +138,7 @@
 (import doeff_records._admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
                                  judge-write-replay write-digest])
-(import doeff_records._watching [wait-for-signal moved-of])
+(import doeff_records._watching [wait-for-signal moved-of Held])
 (import doeff_records._pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
                               IndexedField DeclaredIndex declared-indexes relations-statement indexes-statement
@@ -156,7 +156,8 @@
                               retire-keys-statement find-retired-key-statement expired-page-statement
                               SchemaStep columns-statement drop-keys-statement forget-keys-statement
                               find-write-key-statement remember-write-statement forget-write-keys-statement
-                              insert-positioned-event-statement remember-rows-events-statement])
+                              insert-positioned-event-statement remember-rows-events-statement
+                              NUMBERING-LOCK NUMBERING-XACT NUMBERINGS held-changes-statement numbering-state-statement switch-numbering-statements])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 
@@ -285,10 +286,14 @@
 
 
 (defrecord StoreHead
-  "置き場の頭: epoch = 置き場の版 / floor = 変更の列の最も古い番号の手前(これより前の位置は Reset)/ head = 最新の変更の番号。"
+  "置き場の頭: epoch = 置き場の版 / floor = 変更の列の最も古い番号の手前(これより前の位置は Reset)/ head = 変更の列の頭(これより小さい
+   番号に後から commit が現れない位置 — 錠の形は最新の変更の番号・pg_sql の頭の註の「番号の形」)/ numbering = 番号の形('lock' | 'xact')/
+   bound = 読み手の位置の上限(これより後の位置は Reset — 錠の形は head・transaction の形は snapshot の xmax の xid の範囲の頭)。"
   (#^ int epoch)
   (#^ int floor)
-  (#^ int head))
+  (#^ int head)
+  (#^ str numbering)
+  (#^ int bound))
 
 
 (defrecord ExpiredRow
@@ -1015,9 +1020,12 @@
 (defk head-of [rows]
   {:pre [(: rows tuple)] :post [(: % StoreHead)]
    :tags {:context "records" :role "foundation"}}
-  "store-head-statement の答えの行を置き場の頭にするため(読みの 1 文と、書きの 1 往復目の束が同じ綴りを使う)。"
+  "store-head-statement の答えの行(pg_sql.head-columns の 5 つの列)を置き場の頭にするため(読みの 1 文と、書きの 1 往復目の束と
+   watch-head-statement が同じ綴りを使う)。位置の上限が NULL(錠の形)なら上限は頭。"
   (val record (get rows 0))
-  (StoreHead :epoch (int (get record 0)) :floor (int (get record 1)) :head (int (get record 2))))
+  (val head (int (get record 2)))
+  (StoreHead :epoch (int (get record 0)) :floor (int (get record 1)) :head head :numbering (get record 3)
+             :bound (if (is (get record 4) None) head (int (get record 4)))))
 
 
 (defn #^ FrozenMap decoded-value [#^ str payload]  ; cannot be a defk: 頁の行を内包表記で 1 度に組む listed-rows-of が行ごとに呼ぶ純粋な綴り(defk にすると行ごとに Program を bind し、頁の行の数だけ費用が足される)
@@ -1864,7 +1872,7 @@
   {:pre [(: streams (get tuple #(str ...))) (: columns tuple) (= (len columns) (* 2 (len streams)))]
    :post [(: % (get tuple #((| StreamTail StreamTailEmpty) ...)))]
    :tags {:context "records" :role "foundation"}}
-  "watch-head-statement の答えの行の 4 つ目からの列(名指した列ごとに seq・at の 2 つ — 生きている出来事の無い列は NULL)を、名指した順の
+  "watch-head-statement の答えの行の頭の 5 つ(head-of)の後ろの列(名指した列ごとに seq・at の 2 つ — 生きている出来事の無い列は NULL)を、名指した順の
    tails(StreamTail | StreamTailEmpty)にするため(#3718)。"
   (var tails #())
   (for [#(stream #(sequence at)) (zip streams (zip (cut columns 0 None 2) (cut columns 1 None 2) :strict True) :strict True)]
@@ -1875,29 +1883,39 @@
 
 
 (defk pg-watch-scan [store ask now-ms]
-  {:pre [(: store PreparedStore) (: ask WatchChanges) (: now-ms int)] :post [(: % (| Changes Reset))]
+  {:pre [(: store PreparedStore) (: ask WatchChanges) (: now-ms int)] :post [(: % (| Changes Reset Held))]
    :tags {:context "records" :role "foundation"}}
-  "WatchChanges の 1 回ぶんの読み(待たない)を流すため。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の変わりは、回収の
+  "WatchChanges の 1 回ぶんの読み(待たない)を流すため(transaction の形で頭の手前で止まった空の答えは Held で包む — _watching.hy)。行の今の値が刻 now-ms で保持の期限を過ぎた終端の行である行の変わりは、回収の
    前でも出さない(文の条件・頭の註)。頼んだ表が空なら文を流さない(`IN ()` は文にできない — WatchChanges は空の組を作る時に断るので、
    今は起きない)。名指した列(ask.streams)の末尾は、置き場の頭と同じ 1 文(watch-head-statement — 同じ断面)で読み、変更の列は頭の番号
    までを読む(変更と末尾が同じ断面の物になる・往復は増えない — #3718)。位置が頭そのもの(cursor.sequence = head)なら、読む変更の範囲
-   (位置, 頭] は空なので変更の列の文を流さない(答えは同じ空の変更 — 追いついた読み手の待たない読みは、頭の 1 文だけで答える)。"
+   (位置, 頭] は空なので変更の列の文を流さない(答えは同じ空の変更 — 追いついた読み手の待たない読みは、頭の 1 文だけで答える)。
+   位置が頭より後でも位置の上限(StoreHead.bound — transaction の形の置き場で、commit 済みの書きの答えの位置が頭を越えている間・pg_sql の
+   頭の註の「番号の形」)までは Reset にせず、位置を動かさない空の変更で答える(頭が追いつくまで待つ)。上限より後は Reset。"
   (for [name ask.tables] (store.schema.table name))
   (<- reads tuple (tail-reads store ask.streams now-ms))
   (<- head-statement Statement (watch-head-statement store.prefix reads))
   (<- head-rows tuple (query-rows store.database head-statement))
   (<- head StoreHead (head-of head-rows))
   (val cursor ask.cursor)
-  (when (or (!= cursor.epoch head.epoch) (< cursor.sequence head.floor) (> cursor.sequence head.head))
+  (when (or (!= cursor.epoch head.epoch) (< cursor.sequence head.floor) (> cursor.sequence head.bound))
     (return (Reset head.epoch head.floor)))
+  (val reached (max head.head cursor.sequence))
   (var items #())
-  (when (and ask.tables (< cursor.sequence head.head))
+  (when (and ask.tables (< cursor.sequence reached))
     (<- expiries (table-expiries store (tuple ask.tables) now-ms))
-    (<- statement (changes-statement store.prefix cursor.sequence head.head ask.tables ask.limit expiries))
+    (<- statement (changes-statement store.prefix cursor.sequence reached ask.tables ask.limit expiries))
     (<- records (query-rows store.database statement))
     (:= items (! (decoded-batch records changes-of))))
-  (<- tails tuple (tails-of ask.streams (tuple (cut (get head-rows 0) 3 None))))
-  (Changes items (WatchCursor head.epoch (next-watch-sequence items ask.limit head.head)) tails))
+  (<- tails tuple (tails-of ask.streams (tuple (cut (get head-rows 0) 5 None))))
+  (val answer (Changes items (WatchCursor head.epoch (next-watch-sequence items ask.limit reached)) tails))
+  ;; transaction の形で空の変更なら、頼んだ表の commit 済みの変更が頭の後ろで止まっていないかを読む(止まっていれば Held — 待ちが間隔でも
+  ;; 読み直す・_watching.hy)。
+  (when (or items (not ask.tables) (!= head.numbering NUMBERING-XACT))
+    (return answer))
+  (<- held-statement (held-changes-statement store.prefix reached ask.tables))
+  (<- held-rows (query-rows store.database held-statement))
+  (if (get held-rows 0 0) (Held :answer answer) answer))
 
 
 ;; --- 追記の列 --------------------------------------------------------------------------------------------
@@ -2169,6 +2187,42 @@
   (<- forget (forget-changes-statement store.prefix))
   (<- (query-rows store.database forget))
   (int (get (get rows 0) 0)))
+
+
+(defk numbering-switched [store numbering]
+  {:pre [(: store PreparedStore) (: numbering str) (in numbering NUMBERINGS)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場全体の錠を排他で持つ transaction の中で、置き場の番号の形を numbering へ替えるため(pg_sql の頭の註の「番号の形」): 今の形と
+   番号を読み(numbering-state-statement)、同じ形なら何もしない。'xact' へは、この transaction の xid の範囲の頭が錠の形の番号の上の端より
+   大きい事を確かめてから替える(小さければ切り替えの前の位置が後の番号と重なるので RecordsSqlFailed で断る — 何も替えない)。答え = 替える前の形。"
+  (<- state-statement (numbering-state-statement store.prefix))
+  (<- rows (query-rows store.database state-statement))
+  (val record (get rows 0))
+  (val current (get record 0))
+  (when (= current numbering)
+    (return current))
+  (val last-value (int (get record 1)))
+  (val top (int (get record 2)))
+  (val base (int (get record 3)))
+  (when (and (= numbering NUMBERING-XACT) (<= base top))
+    (raise (RecordsSqlFailed None (.format "番号の形を {} へ替えない: この transaction の xid の範囲の頭 {} が錠の形の番号の上の端 {} を越えない"
+                                           numbering base top))))
+  ;; 'xact' への上限は今の値の 1 つ先(使ったことの無い sequence の今の値は最小の値 1 で、上限を最小の値と同じにできない —
+  ;; 1 つ先へ進めてから止めても、旧い版の次の番号は上限を越える)。
+  (<- statements (switch-numbering-statements store.prefix numbering (if (= numbering NUMBERING-XACT) (+ last-value 1) top)))
+  (for [statement statements]
+    (<- (query-rows store.database statement)))
+  current)
+
+
+(defk switch-numbering [store gated numbering]
+  {:pre [(: store PreparedStore) (: gated bool) (: numbering str) (in numbering NUMBERINGS)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の番号の形を numbering('lock' | 'xact')へ替えるため(pg_sql の頭の註の「番号の形」— 置き場の全部の process が形を読む版に
+   なった後に、組み立ての側の設定で 1 度流す)。置き場全体の錠を排他で持ち(全部の書きと互いを待つ — 書きの途中で形が変わらない)、
+   全部の待ち手へ合図を出す(頭の形が変わる)。答え = 替える前の形。"
+  (<- before (writing store gated "switch-numbering" #() None (numbering-switched store numbering)))
+  before)
 
 
 ;; --- 手入れ ------------------------------------------------------------------------------------------------

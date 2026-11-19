@@ -1623,11 +1623,12 @@
 
 ;; --- 置き場の選び(records-serving に渡す値)----------------------------------------------------------------
 
-(defk memory-prepared [store schema prefix host]
-  {:pre [(: store MemoryStore) (: schema RecordsSchema) (: prefix str) (: host str)] :post [(: % (get Callable #([str] (get Callable #(... object)))))]
+(defk memory-prepared [store schema prefix host numbering]
+  {:pre [(: store MemoryStore) (: schema RecordsSchema) (: prefix str) (: host str) (: numbering str)] :post [(: % (get Callable #([str] (get Callable #(... object)))))]
    :tags {:context "records" :role "foundation"}}
   "memory の置き場 store で表を用意したことにし、「書き手の名 → 記録の handler の関数」を返すため(表の宣言は置き場が持つ — 接頭辞と
-   機体の名は PostgreSQL の表の名と行の刻みにだけ効くので使わない・I/O なし)。"
+   機体の名は PostgreSQL の表の名と行の刻みにだけ効くので使わない・番号の形 numbering も PostgreSQL の変更の列の番号の取り方にだけ効く・
+   I/O なし)。"
   (partial memory-records-handler store))
 
 

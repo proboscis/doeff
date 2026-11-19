@@ -6,6 +6,8 @@
 ;;; 止めの印(closing-wake? — #3713): 待ちを抱える記録の service の入口が止まる時、呼び鈴の待ちの答えに values.WaitsClosed が届く。
 ;;; 待ち手は読み直さず手元の静かな答えで返る(memory の置き場の memory-watch もこの判断を使う)。
 (require doeff-hy.macros [defk <- var val])
+(require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
 (import doeff_time [GetMonotonic GetTime WaitWithin])
@@ -31,6 +33,19 @@
     (Unreachable) answer))
 
 
+;; 変更の列の頭が commit 済みの変更の手前で止まっている間(Held)の読み直しの間隔(秒)。止めているのは他の表の書きの transaction で、
+;; その commit の合図は待つ名に届かないので、呼び鈴と別に間隔で読み直す。止まりは止めている transaction の長さだけ続く。
+(val HELD-RETRY-SECONDS 0.05)
+
+
+(defrecord Held
+  "1 回ぶんの読み(scan)の答えのうち、頼んだ表の commit 済みの変更が変更の列の頭より後に在り、頭の手前で止まっている空の答え(PostgreSQL の
+   置き場の transaction の形 — _pg_sql.hy の頭の註の「番号の形」): answer = 返す答え(空の Changes)。頭はもっと古い transaction の終わりで
+   進むが、その commit の合図は他の表の名で出て待ち手に届かないので、待ちは呼び鈴に加えて HELD-RETRY-SECONDS ごとに読み直す
+   (wait-for-signal)。"
+  (#^ Changes answer))
+
+
 (defk waiting? [answer]
   {:pre [(: answer (| Changes Reset EventsMoved EventsQuiet Unreachable))] :post [(: % bool)]
    :tags {:context "records" :role "foundation"}}
@@ -51,24 +66,28 @@
    鳴ったら読み直す — 合図は「変わったかもしれない」だけで中身を運ばない。時間が尽きたら最後に 1 度読んで返す。待ちは doeff-time の
    期限つきの待ち WaitWithin の 1 つ(仮想の時計の下でも期限が来る — park)。待ちの答えが止めの印(closing-wake? — 待ちを抱える入口が
    止まる・#3713)なら、読み直さずに手元の静かな答えで返る。待つ秒が 0 以下の問い(待たない読み)は呼び鈴を掛けずに 1 度だけ読んで返す
-   (待たないので、読みと掛けの間の書きを取りこぼす事が無い — 掛けて外すだけの呼び鈴の往復を省く)。"
+   (待たないので、読みと掛けの間の書きを取りこぼす事が無い — 掛けて外すだけの呼び鈴の往復を省く)。読みが頭の手前で止まった空の答え
+   (Held)を返した回は、呼び鈴か HELD-RETRY-SECONDS の早い方で読み直す(返すのは包みを外した答え)。"
   (when (<= timeout 0)
     (<- asked-at (GetTime))
-    (return (! (scan (epoch-ms asked-at)))))
+    (<- once (scan (epoch-ms asked-at)))
+    (return (if (isinstance once Held) once.answer once)))
   (<- start (GetMonotonic))
   (while True
     (<- bell (hang))
     (when (isinstance bell Unreachable)
       (return bell))
     (<- now (GetTime))
-    (<- answer (scan (epoch-ms now)))
+    (<- scanned (scan (epoch-ms now)))
+    (val held (isinstance scanned Held))
+    (val answer (if held scanned.answer scanned))
     (<- at (GetMonotonic))
     (val left (- timeout (- at start)))
     (<- still (waiting? answer))
     (when (or (not still) (<= left 0))
       (<- (drop bell))
       (return answer))
-    (<- woke (WaitWithin bell.future left :park True))
+    (<- woke (WaitWithin bell.future (if held (min left HELD-RETRY-SECONDS) left) :park True))
     (<- (drop bell))
     (<- closing (closing-wake? woke))
     (when closing

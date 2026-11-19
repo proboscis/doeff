@@ -192,6 +192,28 @@
 ;;; 書きと互いを待ち、番号を取りこぼさない。鍵の字面を変えると、重なった間に別々の錠を取り、変更の列の番号を取りこぼす(戻せない)。
 ;;; 部分の錠の鍵は置き場全体の鍵 + "/" + 単位の名(hashtext が 2 つの鍵を同じ数にしても、余計に待つだけで約束は破れない)。
 ;;;
+;;; 番号の形(store_epoch.numbering — 'lock' | 'xact'): 錠の形('lock' — 上の「書きの錠」)は、全部の表の行の書きが番号の錠を番号を取って
+;;; から COMMIT まで持ち、錠の中の IO(索引の頁の読み・COMMIT の WAL の書き)を全部の表の書きが 1 本ずつ払う(2026-11-19 — 錠を持ったまま
+;;; disk を読む文の後ろに 7 本が並び、記録の書きが 2〜5 秒待った)。transaction の形('xact')は番号の錠を取らず、番号の読みの約束を snapshot で
+;;; 守る(transactional outbox の xid8 の形 — 変更の列に transaction の id を持たせ、読み手は snapshot の xmin より前の transaction の行
+;;; だけを読む): 変更の番号 = 書きの transaction の xid8 × XACT-NUMBER-SPAN(2^20)+ その transaction の中の順(同じ文で自分の xid の範囲の
+;;; 最大 + 1 を読む — append-change-statement)。読み手の頭 = pg_snapshot_xmin(pg_current_snapshot()) × 2^20 − 1(watermark-expression)で、
+;;; xmin より前の transaction は全部終わっているので、頭より小さい番号に後から commit が現れない。番号の順は (xid8, transaction の中の順) で、
+;;; 位置は 1 つの整数のまま(WatchCursor・Written.position・出来事の position・write_keys.last_seq の形と大小の意味を変えない)。同じ行への
+;;; 2 つの書きは表の単位の錠で 1 本ずつに並び、xid は表の単位の錠の後の最初の行の錠で付くので、行の変更の順(版の順)と xid の順は揃う。
+;;; 頭は行の番号でなく見張りの位置なので、書きの答えの位置(自分の番号)は commit の直後に頭を越えていることがある — 頭より後でも、
+;;; snapshot の xmax × 2^20 より前の位置(watch-bound-expression)は Reset にせず、頭が追いつくまで空の変更で待たせる。
+;;; 変更の列の頭は xmin で決まるので、長く走る書きの transaction(PostgreSQL の全部の database の、xid を持つ transaction)の間は、
+;;; その後の変更の見え始めがその終わりまで遅れる(書きは待たない)。
+;;; 形の切り替え(switch-numbering-statements — 置き場全体の錠を排他で持つ transaction の中): 旧い版の読み手は全部の書きが番号の錠を
+;;; 持つ前提で max(seq) まで読むので、旧い版の process が残っている間は 'lock' のまま。'xact' へ切り替える transaction は、変更の列の
+;;; sequence の上限(MAXVALUE)を今の値に止める — 残った旧い版の行の書きは番号を取れずに失敗する(黙って取りこぼさない)。xid8 × 2^20 は
+;;; 錠の形の番号の全部より大きい(本番 2026-11-19: xid 約 6,388 万 × 2^20 ≒ 6.7 × 10^13・番号 約 5,716 万 — 切り替えはこれを確かめる)ので、
+;;; 切り替えの前の位置は後でもそのまま有効。'lock' へ戻す transaction は sequence の上限を外し、今の xid の範囲の後ろへ進める(戻した後の
+;;; 番号が、渡した全部の位置と頭より大きい)。
+;;; 書きと読みの文は形を引数に取らず、同じ文の中で store_epoch.numbering を読んで選ぶ(置き場全体の錠を共有で持つ書きの transaction の
+;;; 間は、排他の切り替えと重ならないので形は変わらない)。
+;;;
 ;;; 配列の引数は持たない(SqlValue の閉じた集合に配列は無い): `= ANY(配列)` は `IN (:t0, :t1, …)` に展げる。空の組は文にできない
 ;;; (`IN ()` は構文の誤り)ので、in-list は空の組を断り、呼び手(_pg.hy)が空の組なら文を流さない枝を持つ。
 ;;;
@@ -243,6 +265,12 @@
 ;; 旧い版の行の単位と同じ字面)と、列の単位・表の単位・行の書きの冪等キーの単位の名の頭。
 ;; 部分の錠の鍵 = 置き場全体の書きの錠の鍵 + 区切り + 単位の名。
 (val ROWS-UNIT "rows")
+;; 変更の列の番号の形(store_epoch.numbering — 頭の註の「番号の形」): 錠の形(bigserial の番号を番号の錠の中で取る)と、transaction の形
+;; (番号 = 書きの transaction の xid8 × XACT-NUMBER-SPAN + transaction の中の順・読み手は snapshot の xmin より前だけを読む)。
+(val NUMBERING-LOCK "lock")
+(val NUMBERING-XACT "xact")
+(val NUMBERINGS #(NUMBERING-LOCK NUMBERING-XACT))
+(val XACT-NUMBER-SPAN 1048576)
 (val STREAM-UNIT-PREFIX "stream:")
 (val TABLE-UNIT-PREFIX "table:")
 (val WRITE-KEY-UNIT-PREFIX "write-key:")
@@ -401,9 +429,11 @@
 (defk numbering-lock-statement [prefix]
   {:pre [(: prefix str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "行の書きの transaction の中で、変更の列に積む前に番号の錠(ROWS-UNIT の鍵 — 旧い版の行の書きが transaction の初めに取る錠と同じ鍵)を
-   取る文を作るため(頭の註の「書きの錠」— commit までの間、変更の列の番号を取る書きを 1 本にする)。"
-  (Statement :text "SELECT pg_advisory_xact_lock(hashtext(:key))"
+  "行の書きの transaction の中で、変更の列に積む前に、錠の形の置き場でだけ番号の錠(ROWS-UNIT の鍵 — 旧い版の行の書きが transaction の
+   初めに取る錠と同じ鍵)を取る文を作るため(頭の註の「書きの錠」— commit までの間、変更の列の番号を取る書きを 1 本にする)。transaction の
+   形の置き場(頭の註の「番号の形」)では行を返さず錠を取らない(store_epoch.numbering を同じ文で読む)。"
+  (Statement :text (.format "SELECT pg_advisory_xact_lock(hashtext(:key)) FROM {p}store_epoch WHERE id = 1 AND numbering = '{l}'"
+                            :p prefix :l NUMBERING-LOCK)
              :params (! (params-of #(#("key" (! (unit-lock-key prefix ROWS-UNIT))))))))
 
 
@@ -790,8 +820,22 @@
        (! (table-step (.format "CREATE TABLE IF NOT EXISTS {p}write_keys (
            idempotency_key text PRIMARY KEY, body_digest text NOT NULL, answer text NOT NULL, last_seq bigint NOT NULL,
            remembered_at bigint NOT NULL)" :p p)))
-       (! (bulk-column-step p)))
+       (! (bulk-column-step p))
+       (! (numbering-column-step p)))
      added-steps))
+
+
+(defk numbering-column-step [prefix]
+  {:pre [(: prefix str)] :post [(: % SchemaStep)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の 1 行に番号の形の列 numbering(頭の註の「番号の形」— 既定 'lock')を足す表の用意の段を作るため(列が無い表にだけ流す)。
+   既定は揮発しない定数なので、PostgreSQL は既に在る行を書き直さない。列を知らない旧い版は読まない(旧い版は錠の形でだけ書き読む —
+   'xact' への切り替えは旧い版が残らない後・switch-numbering-statements)。"
+  (SchemaStep :statement (Statement :text (.format "ALTER TABLE {p}store_epoch ADD COLUMN numbering text NOT NULL DEFAULT '{l}'
+           CHECK (numbering IN ('{l}', '{x}'))" :p prefix :l NUMBERING-LOCK :x NUMBERING-XACT)
+                                    :params #())
+              :index None
+              :column (AddedColumn :relation "store_epoch" :column "numbering")))
 
 
 (defk bulk-column-step [prefix]
@@ -1039,10 +1083,56 @@
 (defk store-head-statement [prefix]
   {:pre [(: prefix str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "置き場の版・忘れた位置・変更の列の先頭の番号を 1 文 = 1 つの断面で読む文を作るため。"
-  (Statement :text (.format "SELECT epoch, floor, greatest(floor, (SELECT coalesce(max(seq), 0) FROM {p}row_changes))
-                       FROM {p}store_epoch WHERE id = 1" :p prefix)
+  "置き場の版・忘れた位置・変更の列の頭・番号の形・位置の上限(head-columns)を 1 文 = 1 つの断面で読む文を作るため。"
+  (Statement :text (.format "SELECT {c}
+                       FROM {p}store_epoch AS e WHERE e.id = 1" :p prefix :c (! (head-columns prefix "e")))
              :params #()))
+
+
+(val XACT-BASE-EXPRESSION (.format "pg_current_xact_id()::text::bigint * {}" XACT-NUMBER-SPAN))
+
+
+(defk watermark-expression [prefix alias]
+  {:pre [(: prefix str) (: alias str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "変更の列の頭(これより小さい番号に後から commit が現れない位置 — 頭の註の「番号の形」)の式を、store_epoch の行 alias から作るため:
+   錠の形は変更の列の最大の番号(番号の錠の約束)、transaction の形は文の snapshot の xmin の xid の範囲の手前。どちらも floor を下回らない。
+   pg_current_snapshot() は文の snapshot なので、同じ文が読む行と同じ断面の頭になる。"
+  (.format "CASE WHEN {a}.numbering = '{x}'
+                 THEN greatest({a}.floor, pg_snapshot_xmin(pg_current_snapshot())::text::bigint * {s} - 1)
+                 ELSE greatest({a}.floor, (SELECT coalesce(max({p}row_changes.seq), 0) FROM {p}row_changes)) END"
+           :a alias :x NUMBERING-XACT :s XACT-NUMBER-SPAN :p prefix))
+
+
+(defk watch-bound-expression [alias]
+  {:pre [(: alias str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "読み手の位置の上限(これより後の位置は、まだ誰も取れない番号 — Reset)の式を作るため: transaction の形は文の snapshot の xmax の xid の
+   範囲の頭(commit 済みの書きの番号は全部これより前)、錠の形は NULL(上限 = 頭 — head-of が読む)。"
+  (.format "CASE WHEN {a}.numbering = '{x}' THEN pg_snapshot_xmax(pg_current_snapshot())::text::bigint * {s} END"
+           :a alias :x NUMBERING-XACT :s XACT-NUMBER-SPAN))
+
+
+(defk head-columns [prefix alias]
+  {:pre [(: prefix str) (: alias str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の頭の 5 つの列(版・floor・変更の列の頭・番号の形・位置の上限)の選びの綴りを作るため(store-head-statement と
+   watch-head-statement が同じ並びで読む — _pg.hy の head-of)。"
+  (.format "{a}.epoch, {a}.floor, {w}, {a}.numbering, {b}"
+           :a alias :w (! (watermark-expression prefix alias)) :b (! (watch-bound-expression alias))))
+
+
+(defk own-last-change-expression [prefix]
+  {:pre [(: prefix str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "書きの transaction が変更の列に積んだ最後の変更の番号の式(書きの冪等キーの覚えの last_seq と、行と一緒に積む出来事の position が読む)
+   を作るため: 錠の形は番号の錠の中なので変更の列の最大の番号、transaction の形は自分の xid の範囲の最大の番号(頭の註の「番号の形」)。"
+  (.format "(SELECT CASE WHEN e.numbering = '{x}'
+                         THEN (SELECT max(c.seq) FROM {p}row_changes AS c
+                                WHERE c.seq >= {b} AND c.seq < {b} + {s})
+                         ELSE (SELECT max(c.seq) FROM {p}row_changes AS c) END
+              FROM {p}store_epoch AS e WHERE e.id = 1)"
+           :x NUMBERING-XACT :p prefix :b XACT-BASE-EXPRESSION :s XACT-NUMBER-SPAN))
 
 
 (defk expired-row-clause [alias expiries]
@@ -1465,9 +1555,18 @@
   {:pre [(: prefix str) (: table str) (: key str) (: version int) (: payload (| str None)) (: at int) (: epoch int)]
    :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "変更の列に 1 つ積む文を作るため(payload None = 行が消えた)。"
-  (Statement :text (.format "INSERT INTO {p}row_changes (ledger, key, version, payload, at, epoch)
-                       VALUES (:ledger, :key, :version, :payload, :at, :epoch) RETURNING seq" :p prefix)
+  "変更の列に 1 つ積む文を作るため(payload None = 行が消えた)。番号は置き場の番号の形(頭の註の「番号の形」)を同じ文で読んで選ぶ:
+   錠の形は bigserial の次の番号(番号の錠の中)、transaction の形は自分の xid の範囲(xid8 × 2^20 から 2^20 個)の最大 + 1(主鍵の索引を
+   後ろから 1 項 — 同じ transaction の前の変更の文が積んだ行は自分には見える)。"
+  (Statement :text (.format "INSERT INTO {p}row_changes (seq, ledger, key, version, payload, at, epoch)
+                       SELECT CASE WHEN e.numbering = '{x}'
+                                   THEN coalesce((SELECT max(c.seq) + 1 FROM {p}row_changes AS c
+                                                   WHERE c.seq >= {b} AND c.seq < {b} + {s}), {b})
+                                   ELSE nextval('{p}row_changes_seq_seq') END,
+                              CAST(:ledger AS text), CAST(:key AS text), CAST(:version AS bigint), CAST(:payload AS text),
+                              CAST(:at AS bigint), CAST(:epoch AS bigint)
+                         FROM {p}store_epoch AS e WHERE e.id = 1
+                       RETURNING seq" :p prefix :x NUMBERING-XACT :b XACT-BASE-EXPRESSION :s XACT-NUMBER-SPAN)
              :params (! (params-of #(#("ledger" table) #("key" key) #("version" version) #("payload" payload) #("at" at)
                                      #("epoch" epoch))))))
 
@@ -1503,6 +1602,16 @@
              :params (+ (! (params-of #(#("after" after) #("head" head) #("limit" limit)))) ledgers.params hidden.params)))
 
 
+(defk held-changes-statement [prefix head tables]
+  {:pre [(: prefix str) (: head int) (: tables tuple) (> (len tables) 0)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "頼んだ表 tables の commit 済みの変更が変更の列の頭 head より後に在るか(頭の手前で止まった読み — _watching.hy の Held)を 1 行で読む文を
+   作るため(transaction の形の置き場の、空の変更を返す WatchChanges の読みだけが流す — 索引 (ledger, seq) を表ごとに 1 項)。"
+  (<- ledgers (in-list "t" tables))
+  (Statement :text (.format "SELECT EXISTS (SELECT 1 FROM {p}row_changes WHERE seq > :head AND ledger IN ({t}))" :p prefix :t ledgers.text)
+             :params (+ (! (params-of #(#("head" head)))) ledgers.params)))
+
+
 (defk advance-epoch-statement [prefix]
   {:pre [(: prefix str)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
@@ -1513,13 +1622,57 @@
              :params #()))
 
 
+(defk numbering-state-statement [prefix]
+  {:pre [(: prefix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "番号の形の切り替え(頭の註の「番号の形」— 置き場全体の錠を排他で持つ transaction の中)の材料を 1 行で読む文を作るため: 今の形・
+   変更の列の sequence の今の値・錠の形の番号の上の端(変更の列の最大の番号・sequence の値・floor の大きい方)・この transaction の xid の
+   範囲の頭(xid8 × 2^20)。"
+  (Statement :text (.format "SELECT e.numbering, s.last_value,
+                              greatest(e.floor, s.last_value, (SELECT coalesce(max(c.seq), 0) FROM {p}row_changes AS c)),
+                              {b}
+                         FROM {p}store_epoch AS e, {p}row_changes_seq_seq AS s WHERE e.id = 1" :p prefix :b XACT-BASE-EXPRESSION)
+             :params #()))
+
+
+;; 'lock' へ戻す時に sequence を進める先の、今の snapshot の xmax の後ろの xid の数(戻す transaction の間に他の database の transaction が
+;; 取る xid の余り — 戻した後の番号が、transaction の形の読み手が戻す前に渡した頭と位置の全部より大きいように)。
+(val LOCK-RETURN-XID-MARGIN 1048576)
+
+
+(defk switch-numbering-statements [prefix numbering fence]
+  {:pre [(: prefix str) (: numbering str) (in numbering NUMBERINGS) (: fence int) (> fence 0)] :post [(: % (get tuple #(Statement ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の番号の形を numbering へ替える文の並びを作るため(頭の註の「番号の形」— 置き場全体の錠を排他で持つ transaction の中で、
+   numbering-state-statement で今の形と番号を読んだ後に流す)。'xact' へは、変更の列の sequence の上限(MAXVALUE)を今の値 fence に
+   止める(残った旧い版の行の書きの次の番号を断る — 値は検めた整数なので文に直に置く・ALTER SEQUENCE は引数を取らない)。'lock' へは上限を
+   外し、sequence を変更の列の番号の上の端 fence と、今の snapshot の xmax の後ろの xid の範囲(LOCK-RETURN-XID-MARGIN)の大きい方へ進める
+   (戻した後の番号が、transaction の形で渡した全部の位置と頭より大きい)。"
+  (val sequence (+ prefix "row_changes_seq_seq"))
+  (val mark (Statement :text (.format "UPDATE {p}store_epoch SET numbering = '{n}' WHERE id = 1" :p prefix :n numbering) :params #()))
+  (if (= numbering NUMBERING-XACT)
+      #((Statement :text (.format "SELECT setval('{s}', {f}, true)" :s sequence :f fence) :params #())
+        (Statement :text (.format "ALTER SEQUENCE {s} MAXVALUE {f}" :s sequence :f fence) :params #())
+        mark)
+      #((Statement :text (.format "ALTER SEQUENCE {s} NO MAXVALUE" :s sequence) :params #())
+        (Statement :text (.format "SELECT setval('{s}', greatest({f},
+                                     (pg_snapshot_xmax(pg_current_snapshot())::text::bigint + {m}) * {n}), true)"
+                                  :s sequence :f fence :m LOCK-RETURN-XID-MARGIN :n XACT-NUMBER-SPAN)
+                   :params #())
+        mark)))
+
+
 (defk change-log-statement [prefix after limit]
   {:pre [(: prefix str) (: after int) (: limit int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "変更の列の after より後の変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む文を作るため(手入れの送りの読み
-   ReadChangeLog — 主鍵 seq の索引で引く)。行の並びは changes-statement と同じ(change-of が読む)。"
-  (Statement :text (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes WHERE seq > :after ORDER BY seq LIMIT :limit"
-                            :p prefix)
+  "変更の列の after より後・頭(watermark-expression — 同じ文の断面)までの変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む
+   文を作るため(手入れの送りの読み ReadChangeLog — 主鍵 seq の索引で引く)。頭で切るのは、transaction の形の置き場で、頭より後の
+   commit 済みの変更の手前に後から commit する番号が残るため(頭の註の「番号の形」— 錠の形の頭は変更の列の最大の番号で、切らないのと同じ)。
+   行の並びは changes-statement と同じ(change-of が読む)。"
+  (Statement :text (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes
+                       WHERE seq > :after AND seq <= (SELECT {w} FROM {p}store_epoch AS e WHERE e.id = 1)
+                       ORDER BY seq LIMIT :limit"
+                            :p prefix :w (! (watermark-expression prefix "e")))
              :params (! (params-of #(#("after" after) #("limit" limit))))))
 
 
@@ -1531,17 +1684,20 @@
   {:pre [(: prefix str) (: before-at int) (: upto-seq int) (: limit int) (> limit 0)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "刈りの 1 周の境 = 床(store_epoch.floor)より上の変更のうち、刻が before-at 以下の変更を刻の順に limit 件まで読んだ中の最大の番号(ただし
-   upto-seq — 送って確かめた番号の上限 — を越えない・無ければ 0)を読む文を作るため(書きの錠の外で流す — 頭の註の「変更の列の刈り」)。
+   upto-seq — 送って確かめた番号の上限 — と変更の列の頭 — watermark-expression — を越えない・無ければ 0)を読む文を作るため(書きの錠の外で
+   流す — 頭の註の「変更の列の刈り」)。
    索引 row_changes (at) を、床の直ぐ上の変更(主鍵を床から 1 行)の刻から limit 件だけ辿るので、読む行は変更の列の長さにも、刈った後まだ
    vacuum されていない死んだ行(床以下 — 刻も床の直ぐ上の変更より古い)の数にも依らない。刻が番号の順と揃わず、床の直ぐ上の変更より古い刻の
-   変更が在れば境の読みからは外れるが、刈りは番号の前方の連なりを消すので、境がその変更の番号を越えた周に消える(取り残さない)。"
-  (Statement :text (.format "SELECT least(:upto_seq, coalesce(max(seq), 0))
+   変更が在れば境の読みからは外れるが、刈りは番号の前方の連なりを消すので、境がその変更の番号を越えた周に消える(取り残さない)。
+   頭で切るのは、transaction の形の置き場で、頭より後の番号の手前にはまだ commit していない変更が在り得るため(頭の註の「番号の形」—
+   越えて刈ると、その変更が floor の下に commit する)。"
+  (Statement :text (.format "SELECT least(:upto_seq, coalesce(max(old.seq), 0), (SELECT {w} FROM {p}store_epoch AS e WHERE e.id = 1))
                        FROM (SELECT seq FROM {p}row_changes
                               WHERE at <= :before_at
                                 AND at >= (SELECT at FROM {p}row_changes
                                             WHERE seq > (SELECT floor FROM {p}store_epoch WHERE id = 1) ORDER BY seq LIMIT 1)
                                 AND seq > (SELECT floor FROM {p}store_epoch WHERE id = 1)
-                              ORDER BY at LIMIT :limit) AS old" :p prefix)
+                              ORDER BY at LIMIT :limit) AS old" :p prefix :w (! (watermark-expression prefix "e")))
              :params (! (params-of #(#("before_at" before-at) #("upto_seq" upto-seq) #("limit" limit))))))
 
 
@@ -1553,8 +1709,8 @@
    作るため(書きの錠の中で流す — 錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。消す範囲は床
    (store_epoch.floor)の直ぐ上から、床の上の limit 件目の番号(limit 件に満たなければ upto-seq)までの番号の範囲 1 つで、主鍵 seq の
    索引を床の直ぐ上から limit 件だけ辿って上限を読み、同じ索引の範囲 1 回の走査で消す(番号ごとに索引を引き直さない — 頭の註の「変更の列の
-   刈り」)。床以下の変更は在らない(番号は番号の錠の中で採って COMMIT まで錠を持つので、床より小さい番号の変更が後から見える事は無く、
-   版を進める時は変更の列を全部忘れる)ので、下限は消す行を変えず、前の刈りが消してまだ vacuum されていない死んだ行を錠の中で読まない
+   刈り」)。床以下の変更は在らない(錠の形は番号を番号の錠の中で採って COMMIT まで錠を持ち、transaction の形は境が変更の列の頭を越えない
+   — prune-bound-statement — ので、床より小さい番号の変更が後から見える事は無く、版を進める時は変更の列を全部忘れる)ので、下限は消す行を変えず、前の刈りが消してまだ vacuum されていない死んだ行を錠の中で読まない
    ためだけに在る(2026-11-19 — 下限の無い形は主鍵を頭から辿って死んだ行 約 47 万を毎回読み、錠を持ったまま disk の読みで 1.5 秒
    止まった)。"
   (Statement :text (.format "WITH removed AS (DELETE FROM {p}row_changes
@@ -1610,12 +1766,12 @@
   {:pre [(: prefix str) (: stream str) (: at int) (: head str) (: tail str) (: origin-host str) (: epoch int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
   "行と一緒に積む出来事を 1 つ積んで番号を返す文を作るため(PutRowsAppendEvents — _pg.hy の put-rows-append-events-locked)。
-   payload = head と tail の間に変更の列の最大の番号(この書きの行の最後の変更 — 番号の錠の中で、変更の文の後に流す。remember-write-statement
+   payload = head と tail の間にこの書きの行の最後の変更の番号(own-last-change-expression — 変更の文の後に流す。remember-write-statement
    と同じ読み)を挟んだ綴り(head と tail は呼び手が出来事の位置の鍵 position.sequence の前と後ろを正規の綴りで作る)。"
   (Statement :text (.format "INSERT INTO {p}append_rows (ledger, at, payload, origin_host, epoch)
-                       VALUES (:ledger, :at, CAST(:head AS text) || (SELECT max(seq) FROM {p}row_changes)::text || CAST(:tail AS text),
+                       VALUES (:ledger, :at, CAST(:head AS text) || {o}::text || CAST(:tail AS text),
                                :origin_host, :epoch)
-                       RETURNING seq" :p prefix)
+                       RETURNING seq" :p prefix :o (! (own-last-change-expression prefix)))
              :params (! (params-of #(#("ledger" stream) #("at" at) #("head" head) #("tail" tail) #("origin_host" origin-host)
                                      #("epoch" epoch))))))
 
@@ -1736,11 +1892,12 @@
 (defk watch-head-statement [prefix tails]
   {:pre [(: prefix str) (: tails tuple) (all (gfor tail tails (isinstance tail TailRead)))] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "WatchChanges の 1 回ぶんの読みの頭を 1 文 = 1 つの断面で読む文を作るため(#3718): 置き場の版・忘れた位置・変更の列の先頭の番号
-   (store-head-statement と同じ 3 つ)の後ろに、末尾を名指した列 tails ごとに最後の生きている出来事の番号と刻の 2 つを並べる(列ごとに
+  "WatchChanges の 1 回ぶんの読みの頭を 1 文 = 1 つの断面で読む文を作るため(#3718): 置き場の頭の 5 つの列(store-head-statement と同じ
+   head-columns)の後ろに、末尾を名指した列 tails ごとに最後の生きている出来事の番号と刻の 2 つを並べる(列ごとに
    stream-tail-statement の文を LEFT JOIN … ON TRUE の副問い合わせにする — 生きている出来事の無い列は NULL の組)。変更の列の読み
-   (changes-statement)は頭の番号までなので、番号を取ってから commit するまでを書きの錠の中に置く約束(頭の註)の下で、変更と末尾は同じ
-   断面の物になる。READ COMMITTED では文ごとに断面が変わるので、末尾を別の文に分けない。tails が空なら store-head-statement と同じ答えの組。"
+   (changes-statement)は頭の番号までなので、頭より小さい番号に後から commit が現れない約束(頭の註の「書きの錠」「番号の形」)の下で、
+   変更と末尾は同じ断面の物になる。READ COMMITTED では文ごとに断面が変わるので、末尾を別の文に分けない。tails が空なら store-head-statement
+   と同じ答えの組。"
   (var columns "")
   (var joins "")
   (var params #())
@@ -1749,9 +1906,9 @@
     (:= columns (+ columns (.format ", t{i}.seq, t{i}.at" :i index)))
     (:= joins (+ joins (.format "\n                       LEFT JOIN ({s}) AS t{i} ON TRUE" :s select.text :i index)))
     (:= params (+ params select.params)))
-  (Statement :text (.format "SELECT e.epoch, e.floor, greatest(e.floor, (SELECT coalesce(max({p}row_changes.seq), 0) FROM {p}row_changes)){c}
+  (Statement :text (.format "SELECT {h}{c}
                        FROM {p}store_epoch AS e{j}
-                       WHERE e.id = 1" :p prefix :c columns :j joins)
+                       WHERE e.id = 1" :p prefix :h (! (head-columns prefix "e")) :c columns :j joins)
              :params params))
 
 
@@ -1837,12 +1994,12 @@
    :tags {:context "records" :role "foundation"}}
   "確定した行の書きの冪等キーの覚え(本文の指紋・答えの綴り answer・覚えた刻)を入れる文を作るため(書きの錠の中の 2 往復目の、行の書きと
    変更の文の後ろ — 行の書きと同じ transaction で入れる・頭の註の write_keys)。答えの変更の位置の番号は同じ往復の変更の文が採るので、
-   綴りに入れず、書きの最後の変更の番号を変更の列の最大の番号として同じ文で読む(行の単位の錠の中なので、変更の列の最大の番号はこの
-   transaction の最後の変更 — 頭の註の「書きの錠」)。同じ transaction の 1 往復目に鍵が無いと読んだ後なので、在る鍵には当たらない
-   (当たっても書き換えない — ON CONFLICT DO NOTHING)。"
+   綴りに入れず、書きの最後の変更の番号を同じ文で読む(own-last-change-expression — 錠の形は番号の錠の中の変更の列の最大の番号、
+   transaction の形は自分の xid の範囲の最大の番号・頭の註の「番号の形」)。同じ transaction の 1 往復目に鍵が無いと読んだ後なので、
+   在る鍵には当たらない(当たっても書き換えない — ON CONFLICT DO NOTHING)。"
   (Statement :text (.format "INSERT INTO {p}write_keys (idempotency_key, body_digest, answer, last_seq, remembered_at)
-                       VALUES (:idempotency_key, :body_digest, :answer, (SELECT max(seq) FROM {p}row_changes), :remembered_at)
-                       ON CONFLICT (idempotency_key) DO NOTHING" :p prefix)
+                       VALUES (:idempotency_key, :body_digest, :answer, {o}, :remembered_at)
+                       ON CONFLICT (idempotency_key) DO NOTHING" :p prefix :o (! (own-last-change-expression prefix)))
              :params (! (params-of #(#("idempotency_key" idempotency-key) #("body_digest" body-digest) #("answer" answer)
                                      #("remembered_at" remembered-at))))))
 
@@ -1867,8 +2024,9 @@
                                        :p prefix :i index))))
       (:= pairs (+ pairs #(#((.format "ledger_{}" index) (get lookup 0)) #((.format "key_{}" index) (get lookup 1)))))))
   (Statement :text (.format "INSERT INTO {p}write_keys (idempotency_key, body_digest, answer, last_seq, remembered_at)
-                       VALUES (:idempotency_key, :body_digest, {answer}, (SELECT max(seq) FROM {p}row_changes), :remembered_at)
-                       ON CONFLICT (idempotency_key) DO NOTHING" :p prefix :answer (.join " || " pieces))
+                       VALUES (:idempotency_key, :body_digest, {answer}, {o}, :remembered_at)
+                       ON CONFLICT (idempotency_key) DO NOTHING" :p prefix :answer (.join " || " pieces)
+                            :o (! (own-last-change-expression prefix)))
              :params (! (params-of pairs))))
 
 
