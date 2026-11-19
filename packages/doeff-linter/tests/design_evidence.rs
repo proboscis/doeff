@@ -174,3 +174,131 @@ fn one_file_runs_judge_the_module_and_its_evidence() {
     let report = editor(dir.path(), &["--stdin", "--path", "app/core/done.evidence.toml"], Some(&wrong));
     assert_eq!(keys(&report), set(&["app/core/done.hy::DOEFF212::Done", "app/core/done.hy::DOEFF212::Gone:orphan"]), "{}", report);
 }
+
+const RUST_ARCH: &str = r#"
+(defarchitecture rust-sample
+  :root "src"
+  :layers [(layer core :roles [judgment] :imports [core])]
+  :design-evidence {:files ["src/**/*.rs"] :except ["src/**/tests/**"] :existing "design-existing.toml" :review-pattern r"^rv-[0-9]+$"})
+"#;
+
+const RUST_EXISTING: &str = r#"
+pub struct User {
+    pub id: u64,
+    pub name: String,
+}
+
+pub enum Role {
+    Admin,
+    Member(String),
+}
+"#;
+
+const RUST_USER_EVIDENCE: &str = r#"schema = 1
+
+[[element]]
+name = "User"
+kind = "record"
+concern = "an authenticated user"
+key = ["id"]
+fan_out = 1
+review = "rv-1"
+
+[[element.field]]
+name = "id"
+type = "u64"
+fact = "unique identifier"
+
+[[element.field]]
+name = "name"
+type = "String"
+fact = "user display name"
+
+[[element.rejected]]
+shape = "tuple struct User(u64, String)"
+why = "named fields are clearer"
+
+[[element]]
+name = "Role"
+kind = "record"
+concern = "user access role"
+key = []
+fan_out = 1
+review = "rv-2"
+
+[[element.field]]
+name = "Admin"
+fact = "administrative role"
+
+[[element.field]]
+name = "Member"
+type = "(String)"
+fact = "regular member with team id"
+
+[[element.rejected]]
+shape = "boolean is_admin field"
+why = "need to support team id for members"
+"#;
+
+#[test]
+fn rust_struct_and_enum_evidence_and_ledger() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF212\"]\n").unwrap();
+    std::fs::write(dir.path().join("architecture.hy"), RUST_ARCH).unwrap();
+    let src_dir = dir.path().join("src/core");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    std::fs::write(src_dir.join("user.rs"), RUST_EXISTING).unwrap();
+
+    // 1. Generate ledger with --print-existing-shapes
+    let (code, ledger, stderr) = linter(dir.path(), &["--print-existing-shapes"], None);
+    assert_eq!(code, 0, "{}", stderr);
+    assert!(ledger.contains("\"src/core/user.rs::User\""), "{}", ledger);
+    assert!(ledger.contains("\"src/core/user.rs::Role\""), "{}", ledger);
+    std::fs::write(dir.path().join("design-existing.toml"), &ledger).unwrap();
+
+    // Existing types in ledger are green
+    let report = editor(dir.path(), &[], None);
+    assert_eq!(keys(&report), set(&[]), "existing types in ledger are green: {}", report);
+
+    // 2. Add new struct without evidence -> error
+    std::fs::write(src_dir.join("item.rs"), "pub struct Item {\n    pub count: u32,\n}\n").unwrap();
+    let report = editor(dir.path(), &[], None);
+    assert_eq!(keys(&report), set(&["src/core/item.rs::DOEFF212::Item"]), "new type error: {}", report);
+
+    // 3. Add evidence matching Item -> green
+    let item_evidence = r#"schema = 1
+
+[[element]]
+name = "Item"
+kind = "record"
+concern = "inventory item"
+key = ["count"]
+fan_out = 1
+review = "rv-3"
+
+[[element.field]]
+name = "count"
+type = "u32"
+fact = "count of items"
+
+[[element.rejected]]
+shape = "u32 directly"
+why = "typed container needed"
+"#;
+    std::fs::write(src_dir.join("item.evidence.toml"), item_evidence).unwrap();
+    let report = editor(dir.path(), &[], None);
+    assert_eq!(keys(&report), set(&[]), "complete evidence is green: {}", report);
+
+    // 4. Change shape of User (existing type in ledger) without evidence -> error
+    let modified_user = RUST_EXISTING.replace("pub name: String,", "pub name: String,\n    pub email: Option<String>,");
+    std::fs::write(src_dir.join("user.rs"), &modified_user).unwrap();
+    let report = editor(dir.path(), &[], None);
+    assert_eq!(keys(&report), set(&["src/core/user.rs::DOEFF212::User"]), "reshaped existing type without evidence: {}", report);
+
+    // 5. Evidence with mismatching shape -> error
+    std::fs::write(src_dir.join("user.evidence.toml"), RUST_USER_EVIDENCE).unwrap();
+    // User in user.rs has email field not in evidence
+    let report = editor(dir.path(), &[], None);
+    let found = hits(&report);
+    assert!(found.iter().any(|(k, m)| k.contains("User:shape") && m.contains("email")), "shape difference detected: {:?}", found);
+}

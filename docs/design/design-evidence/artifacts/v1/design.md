@@ -286,3 +286,15 @@ store (to stay fast and deterministic), so existence is checked outside the lint
 | ADD | performed | the quality requirement is "callable from an authoring-time hook"; the design reads three files (module, evidence, ledger) and no whole-repo index (§4, `evidence.md`) |
 | SAAM | performed | the three change cases above each touch one place |
 | C4 | performed | Figure 1 (structure) and Figure 2 (flow) |
+
+## 8. Round 2: Rust struct and enum
+
+See [`../v2/rust_design.md`](../v2/rust_design.md) for full design rationale, placement comparison, and one-file measurement.
+
+Summary:
+- Placement decision: Added to `doeff-linter` directly (`rust_record_shapes` and `shapes_of` dispatch). Provides single source of truth for evidence model, reuses DOEFF212 verification logic, and ensures hook-level execution speed.
+- Rust `struct` and `enum` shape extraction:
+  - `struct`: named fields, tuple fields (0-indexed), unit structs. `Option<T>` fields marked `optional = true`.
+  - `enum`: sum-type variants mapped to `element.field` entries (`name`, `type`, `fact`).
+- Next round proposal: Extending to `pub fn`, trait methods, and `mod` placement in §3 of `rust_design.md`.
+
