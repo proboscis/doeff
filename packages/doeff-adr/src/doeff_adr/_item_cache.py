@@ -49,7 +49,7 @@ from doeff_adr._source_dependencies import (
 
 TYPE_CHECKING = False  # the type checker reads branches on this name as true (a public name used only for the annotation of the record type)
 if TYPE_CHECKING:
-    from doeff_hy_bytecode_guard import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
 # Raise this when the record shape or the way of deciding the key changes (caches of older versions are not read). 2 = find the macro provider by the way doeff_hy_bytecode_guard traces.
 # 3 = add module fixture records.
