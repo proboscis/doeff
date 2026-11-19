@@ -1213,22 +1213,7 @@
   },
   "doeff-hy": {
    "scope": "in scope",
-   "names": {
-    "Violation — move to an inner module": {
-     "doeff_hy_bytecode_guard.expansion_trees": [
-      "MacroRecord"
-     ],
-     "doeff_hy_bytecode_guard.macro_hints": [
-      "MacroRecord"
-     ],
-     "doeff_hy_bytecode_guard.macro_use": [
-      "MacroRecord"
-     ],
-     "doeff_hy_bytecode_guard.records": [
-      "MacroRecord"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-hy-pytest": {
    "scope": "in scope",

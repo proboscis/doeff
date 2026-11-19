@@ -47,7 +47,7 @@ from doeff_hy_bytecode_guard._loader_hooks import (
 )
 
 if TYPE_CHECKING:
-    from doeff_hy_bytecode_guard import MacroRecord
+    from doeff_hy_bytecode_guard._records import MacroRecord
 
 # Version of the storage format (raise it when the format changes; it is part of the location name, so entries of old versions are not read).
 # 2 = verify against the record of files whose expansion succeeded.
