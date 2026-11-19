@@ -2190,7 +2190,7 @@
 
 
 (defk numbering-switched [store numbering]
-  {:pre [(: store PreparedStore) (in numbering NUMBERINGS)] :post [(: % str)]
+  {:pre [(: store PreparedStore) (: numbering str) (in numbering NUMBERINGS)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "置き場全体の錠を排他で持つ transaction の中で、置き場の番号の形を numbering へ替えるため(pg_sql の頭の註の「番号の形」): 今の形と
    番号を読み(numbering-state-statement)、同じ形なら何もしない。'xact' へは、この transaction の xid の範囲の頭が錠の形の番号の上の端より
@@ -2214,7 +2214,7 @@
 
 
 (defk switch-numbering [store gated numbering]
-  {:pre [(: store PreparedStore) (: gated bool) (in numbering NUMBERINGS)] :post [(: % str)]
+  {:pre [(: store PreparedStore) (: gated bool) (: numbering str) (in numbering NUMBERINGS)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "置き場の番号の形を numbering('lock' | 'xact')へ替えるため(pg_sql の頭の註の「番号の形」— 置き場の全部の process が形を読む版に
    なった後に、組み立ての側の設定で 1 度流す)。置き場全体の錠を排他で持ち(全部の書きと互いを待つ — 書きの途中で形が変わらない)、

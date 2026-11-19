@@ -1640,7 +1640,7 @@
 
 
 (defk switch-numbering-statements [prefix numbering fence]
-  {:pre [(: prefix str) (in numbering NUMBERINGS) (: fence int) (> fence 0)] :post [(: % (get tuple #(Statement ...)))]
+  {:pre [(: prefix str) (: numbering str) (in numbering NUMBERINGS) (: fence int) (> fence 0)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "置き場の番号の形を numbering へ替える文の並びを作るため(頭の註の「番号の形」— 置き場全体の錠を排他で持つ transaction の中で、
    numbering-state-statement で今の形と番号を読んだ後に流す)。'xact' へは、変更の列の sequence の上限(MAXVALUE)を今の値 fence に
