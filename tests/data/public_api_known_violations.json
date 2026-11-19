@@ -1178,16 +1178,7 @@
   },
   "doeff-events": {
    "scope": "in scope",
-   "names": {
-    "Violation — annotate the factory arguments or move inside": {
-     "doeff_events.handlers.memory_notices": [
-      "KeptReaders"
-     ],
-     "doeff_events.handlers.redis_notices": [
-      "KeptReaders"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-flow": {
    "scope": "in scope",

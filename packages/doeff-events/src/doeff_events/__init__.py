@@ -100,7 +100,6 @@ __all__ = [
     "FileWatch",
     "FilesChanged",
     "GapAnswer",
-    "KeptReaders",
     "MarkGap",
     "MemoryBroker",
     "MemoryFiles",
@@ -176,7 +175,6 @@ if TYPE_CHECKING:
     from doeff_events._handlers.memory_files import (
         memory_file_watch_handler as memory_file_watch_handler,
     )
-    from doeff_events._handlers.memory_notices import KeptReaders as KeptReaders
     from doeff_events._handlers.os_files import os_file_watch_handler as os_file_watch_handler
     from doeff_events._handlers.redis_notices import BrokerAnswerMalformed as BrokerAnswerMalformed
 
@@ -188,7 +186,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WatchFiles": "doeff_events._effects.files",
     "WatchRefused": "doeff_events._effects.files",
     "BrokerAnswerMalformed": "doeff_events._handlers.redis_notices",
-    "KeptReaders": "doeff_events._handlers.memory_notices",
     "MemoryFiles": "doeff_events._handlers.memory_files",
     "memory_file_watch_handler": "doeff_events._handlers.memory_files",
     "os_file_watch_handler": "doeff_events._handlers.os_files",
