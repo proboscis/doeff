@@ -130,7 +130,7 @@
    dsn = PostgreSQL の DSN・prefix = 表の名の接頭辞・origin-host = 行に刻む機体の名・pool-size = 要求に同時に貸す
    接続の上限(手入れの係の 1 本は別に足す)・address = 待ち受けの宛先・maintenance = 手入れの周期・callers = 一覧の読みを呼び手ごとに
    数える呼び手の job の名(RecordsServing の callers)・numbering = 起動の表の用意で置き場を替える変更の列の番号の形('lock' | 'xact' —
-   _pg_sql.hy の頭の註の「番号の形」・"" = 置き場のまま)。資源(接続の貸し出しと pool)は持たない — records-connected が開いて閉じる。"
+   _pg_sql.hy の頭の註の「番号の形」・空 = 置き場のまま)。資源(接続の貸し出しと pool)は持たない — records-connected が開いて閉じる。"
   {:check [(> (len dsn) 0) (> (len prefix) 0) (> (len origin-host) 0) (> pool-size 0)]}
   (#^ str dsn)
   (#^ str prefix)
