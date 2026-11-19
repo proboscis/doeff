@@ -27,14 +27,7 @@
  "packages": {
   "doeff-adr": {
    "scope": "in scope",
-   "names": {
-    "Boundary — pytest plugin registration": {
-     "doeff_adr.pytest_plugin": [
-      "DEFAULT_FILE_PATTERNS",
-      "DoeffAdrHyFile"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-cluster": {
    "scope": "in scope",
