@@ -143,12 +143,14 @@
 
 
 ;; --- 死んだ行の上の刈り ------------------------------------------------------------------------------------------------
-;; 2026-11-19: 本番の変更の列(生きた行 350 万・刈った後まだ vacuum されていない死んだ行 46.8 万)で、錠の中の DELETE が下限の無い部分の読み
-;; (`seq <= :upto_seq ORDER BY seq LIMIT :limit`)で主鍵を頭から辿り、死んだ行を毎回 heap まで読んで、番号の錠を持ったまま disk の読みで
-;; 1.5 秒止まった(その間 書き 7 本が錠を待った)。死んだ行 DEAD-CHANGES 個(本文 DEAD-PAYLOAD-BLOCKS 個の md5 の塊 — heap に収まる大きさ)を
-;; 床の下に置き(vacuum を止めた表)、その上に刈る変更と刈らない変更を積んで、直す前の DELETE と今の DELETE・境の読みが触る page を比べる。
+;; 2026-11-19: 本番の変更の列(生きた行 350 万・刈った後まだ vacuum されていない死んだ行 46.8 万・heap 2.4 GB — 1 行 約 600 byte)で、錠の中の
+;; DELETE が下限の無い部分の読み(`seq <= :upto_seq ORDER BY seq LIMIT :limit`)で主鍵を頭から辿り、死んだ行を毎回 heap まで読んで、番号の
+;; 錠を持ったまま disk の読みで 1.5 秒止まった(その間 書き 7 本が錠を待った)。vacuum を止めた表に、死んだ行 DEAD-CHANGES 個を床の下に置き、
+;; その上に刈る変更と刈らない変更を積んで(どれも本番の 1 行の大きさ — 本文 ROW-PAYLOAD-BLOCKS 個の md5 の塊)、直す前の DELETE と今の
+;; DELETE・境の読みが、変更の列を読む走査の節で触る page を比べる。本番の行より大きい本文(約 3 KB)の文全体の page は、上の 100 万行の
+;; 置き場の検が冷えた cache の上限で見る。
 (val DEAD-CHANGES 100000)
-(val DEAD-PAYLOAD-BLOCKS 8)
+(val ROW-PAYLOAD-BLOCKS 16)
 (val DEAD-AT 500)
 ;; 床の上の境より古い変更(直す前の DELETE と今の DELETE が 1 batch ずつ消して、まだ残る数)と、刈らない新しい変更の数。
 (val LIVE-OLD (+ (* 2 PRUNE-BATCH) 7))
@@ -161,25 +163,76 @@
                                        SET floor = greatest(floor, (SELECT coalesce(max(seq), 0) FROM removed))
                                        WHERE id = 1 RETURNING floor)
                        SELECT (SELECT floor FROM raised), (SELECT count(*) FROM removed)")
-;; 直す前の版が読む page の下限と、今の版が読む page の上限。
+;; 変更の列を読む走査の節が触る page の、直す前の版の下限と今の版の上限。
 (val UNFLOORED-PAGES 1000)
 (val FLOORED-PAGES 100)
+;; 走査の節の種類。
+(val SCAN-NODES #("Seq Scan" "Index Scan" "Index Only Scan" "Bitmap Heap Scan" "Bitmap Index Scan"))
+
+
+(defk node-pages [node]
+  {:pre [(: node dict)] :post [(: % int)]
+   :tags {:context "records" :role "program"}}
+  "計画の節 node の共有の buffer の hit + read(子の節と loops の和を含む)を作るため。"
+  (+ (.get node "Shared Hit Blocks" 0) (.get node "Shared Read Blocks" 0)))
+
+
+(defk own-pages [node]
+  {:pre [(: node dict)] :post [(: % int)]
+   :tags {:context "records" :role "program"}}
+  "計画の節 node が自分で触った page(node-pages から直ぐ下の子の節 — InitPlan も — の page を引いた数)を作るため。"
+  (<- total (node-pages node))
+  (var children 0)
+  (for [child (.get node "Plans" #())]
+    (<- pages (node-pages child))
+    (:= children (+ children pages)))
+  (- total children))
+
+
+(defk explained-reads [prefix statement]
+  {:pre [(: prefix str) (: statement Statement)] :post [(: % tuple)]
+   :tags {:context "records" :role "program"}}
+  "文 statement を EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) つきで流し(本当に流れる)、#(文全体の page 変更の列を読む走査の節の page の和)
+   を返すため。文全体は explained-pages と同じ数え方(最大の節)。走査の節の page は、表 row_changes とその索引を読む節ごとに自分で触った
+   page(own-pages)の和 — 消した行を外す書き(ModifyTable の節)は数えない。"
+  (<- rows (run-statement (Statement :text (+ "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) " statement.text) :params statement.params)))
+  (val plan (get rows 0 0))
+  (val explained (get (if (isinstance plan str) (json.loads plan) plan) 0))
+  (<- nodes (plan-nodes (get explained "Plan")))
+  (var whole 0)
+  (var scanned 0)
+  (for [node nodes]
+    (<- pages (node-pages node))
+    (:= whole (max whole pages))
+    (when (and (in (get node "Node Type") SCAN-NODES)
+               (or (= (.get node "Relation Name") (+ prefix "row_changes"))
+                   (.startswith (.get node "Index Name" "") (+ prefix "row_changes"))))
+      (<- own (own-pages node))
+      (:= scanned (+ scanned own))))
+  #(whole scanned))
+
+
+(defk sized-seed-statement [prefix label count at]
+  {:pre [(: prefix str) (: label str) (: count int) (: at int)] :post [(: % Statement)]
+   :tags {:context "records" :role "program"}}
+  "刻 at の変更を count 個(鍵 {label}-1 …)、本番の 1 行の大きさの本文(md5 の塊 ROW-PAYLOAD-BLOCKS 個)で積む文を作るため。"
+  (Statement :text (.format "INSERT INTO {p}row_changes (ledger, key, version, payload, at, epoch)
+                       SELECT 'journal', CAST(:label AS text) || '-' || n, 1,
+                              (SELECT string_agg(md5(n::text || ':' || k::text), '') FROM generate_series(1, :blocks) AS k), :at, 1
+                       FROM generate_series(1, :count) AS n" :p prefix)
+             :params #((SqlParam :name "label" :value label) (SqlParam :name "blocks" :value ROW-PAYLOAD-BLOCKS)
+                       (SqlParam :name "at" :value at) (SqlParam :name "count" :value count))))
 
 
 (defk dead-store [prefix]
   {:pre [(: prefix str)] :post [(: % int)]
    :tags {:context "records" :role "program"}}
   "変更の列の vacuum を止め、死んだ行にする変更 DEAD-CHANGES 個(番号の頭)と、境より古い変更 LIVE-OLD 個・新しい変更 LIVE-YOUNG 個を積み、
-   頭の DEAD-CHANGES 個を消して床をその最大の番号に上げる(前の刈りが消した形 — 索引の印も付けない Seq Scan の DELETE)ため。答え = 床。"
+   頭の DEAD-CHANGES 個を消して床をその最大の番号に上げる(前の刈りが消した形 — 主鍵の索引に印を付けない DELETE)ため。答え = 床。"
   (<- (run-statement (Statement :text (.format "ALTER TABLE {p}row_changes SET (autovacuum_enabled = false)" :p prefix) :params #())))
-  (<- (run-statement (Statement :text (.format "INSERT INTO {p}row_changes (ledger, key, version, payload, at, epoch)
-                                                SELECT 'journal', 'dead-' || n, 1,
-                                                       (SELECT string_agg(md5(n::text || ':' || k::text), '')
-                                                          FROM generate_series(1, :blocks) AS k), :at, 1
-                                                FROM generate_series(1, :count) AS n" :p prefix)
-                                :params #((SqlParam :name "blocks" :value DEAD-PAYLOAD-BLOCKS) (SqlParam :name "at" :value DEAD-AT)
-                                          (SqlParam :name "count" :value DEAD-CHANGES)))))
-  (<- (seeded-store prefix LIVE-OLD LIVE-YOUNG))
+  (for [#(label count at) #(#("dead" DEAD-CHANGES DEAD-AT) #("old" LIVE-OLD OLD-AT) #("young" LIVE-YOUNG YOUNG-AT))]
+    (<- seed (sized-seed-statement prefix label count at))
+    (<- (run-statement seed)))
   (<- rows (run-statement (Statement :text (.format "WITH gone AS (DELETE FROM {p}row_changes WHERE key LIKE 'dead-%' RETURNING seq)
                                                      UPDATE {p}store_epoch SET floor = (SELECT max(seq) FROM gone) WHERE id = 1 RETURNING floor"
                                                     :p prefix)
@@ -192,17 +245,17 @@
   {:pre [(: prefix str)] :post [(: % dict)]
    :tags {:context "records" :role "program"}}
   "死んだ行の上の置き場(dead-store)で、直す前の DELETE・今の境の読み・今の DELETE を 1 度ずつ EXPLAIN (ANALYZE, BUFFERS) つきで流し(本当に
-   流れる — 直す前の DELETE が先に PRUNE-BATCH 個を消す)、{名 値} で文ごとの #(page ms) と床と残った変更を返すため。"
+   流れる — 直す前の DELETE が先に PRUNE-BATCH 個を消す)、{名 値} で文ごとの #(文全体の page 走査の節の page) と床と残った変更を返すため。"
   (<- floor (dead-store prefix))
-  (<- unfloored-cost (explained-pages (Statement :text (.format UNFLOORED-PRUNE :p prefix)
-                                                 :params #((SqlParam :name "upto_seq" :value UNBOUNDED-SEQ)
-                                                           (SqlParam :name "limit" :value PRUNE-BATCH)))))
+  (<- unfloored-cost (explained-reads prefix (Statement :text (.format UNFLOORED-PRUNE :p prefix)
+                                                        :params #((SqlParam :name "upto_seq" :value UNBOUNDED-SEQ)
+                                                                  (SqlParam :name "limit" :value PRUNE-BATCH)))))
   (<- bound-statement (prune-bound-statement prefix BEFORE UNBOUNDED-SEQ PRUNE-BATCH))
-  (<- bound-cost (explained-pages bound-statement))
+  (<- bound-cost (explained-reads prefix bound-statement))
   (<- bound-rows (run-statement bound-statement))
   (val bound (int (get bound-rows 0 0)))
   (<- delete (prune-changes-statement prefix bound PRUNE-BATCH))
-  (<- delete-cost (explained-pages delete))
+  (<- delete-cost (explained-reads prefix delete))
   (<- left (run-statement (Statement :text (.format "SELECT count(*) FILTER (WHERE at <= :before_at), count(*), min(seq),
                                                             (SELECT floor FROM {p}store_epoch WHERE id = 1)
                                                      FROM {p}row_changes" :p prefix)
@@ -224,9 +277,11 @@
                                        (+ floor (* 2 PRUNE-BATCH) 1) (+ floor (* 2 PRUNE-BATCH))))
             (repr measured))
     ;; 直す前の DELETE は床の下の死んだ行を読む。今の境の読みと DELETE は床の上だけを読む。
-    (assert (>= (get measured "unfloored" 0) UNFLOORED-PAGES) (repr measured))
+    (assert (>= (get measured "unfloored" 1) UNFLOORED-PAGES) (repr measured))
     (for [name #("bound" "delete")]
-      (assert (<= (get measured name 0) FLOORED-PAGES) (repr measured)))
+      (assert (<= (get measured name 1) FLOORED-PAGES) (repr measured))
+      ;; 文全体(消した行の TOAST を外す書きも含む)も、冷えた cache で読んで手入れの文の上限に収まる。
+      (assert (<= (* (get measured name 0) COLD-PAGE-MS) PRUNE-STATEMENT-MILLISECONDS) (repr measured)))
     (finally
       (run-sql connections (drop-records-tables store))
       (.close connections))))

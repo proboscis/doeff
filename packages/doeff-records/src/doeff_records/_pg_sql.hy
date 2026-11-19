@@ -1550,15 +1550,20 @@
    :tags {:context "records" :role "foundation"}}
   "番号 upto-seq(刈りの 1 周の境 — prune-bound-statement)以下の変更を番号の順に limit 件まで変更の列から消し(刈る範囲は番号の前方の
    連なり — 刻が番号の順と揃わなくても floor の下に取り残しを作らない)、floor を消した最大の番号まで上げ、#(floor 消した数) を返す文を
-   作るため(書きの錠の中で流す — 錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。消す行は主鍵 seq の
-   索引を床(store_epoch.floor)の直ぐ上から limit 件だけ辿る(頭の註の「変更の列の刈り」)。床以下の変更は在らない(番号は番号の錠の中で
-   採って COMMIT まで錠を持つので、床より小さい番号の変更が後から見える事は無く、版を進める時は変更の列を全部忘れる)ので、下限は消す
-   行を変えず、前の刈りが消してまだ vacuum されていない死んだ行を錠の中で読まないためだけに在る(2026-11-19 — 下限の無い形は主鍵を
-   頭から辿って死んだ行 約 47 万を毎回読み、錠を持ったまま disk の読みで 1.5 秒止まった)。"
+   作るため(書きの錠の中で流す — 錠の外だと、消した後・floor を上げる前に読んだ読み手が消えた変更を黙って飛ばす)。消す範囲は床
+   (store_epoch.floor)の直ぐ上から、床の上の limit 件目の番号(limit 件に満たなければ upto-seq)までの番号の範囲 1 つで、主鍵 seq の
+   索引を床の直ぐ上から limit 件だけ辿って上限を読み、同じ索引の範囲 1 回の走査で消す(番号ごとに索引を引き直さない — 頭の註の「変更の列の
+   刈り」)。床以下の変更は在らない(番号は番号の錠の中で採って COMMIT まで錠を持つので、床より小さい番号の変更が後から見える事は無く、
+   版を進める時は変更の列を全部忘れる)ので、下限は消す行を変えず、前の刈りが消してまだ vacuum されていない死んだ行を錠の中で読まない
+   ためだけに在る(2026-11-19 — 下限の無い形は主鍵を頭から辿って死んだ行 約 47 万を毎回読み、錠を持ったまま disk の読みで 1.5 秒
+   止まった)。"
   (Statement :text (.format "WITH removed AS (DELETE FROM {p}row_changes
-                                        WHERE seq IN (SELECT seq FROM {p}row_changes
-                                                       WHERE seq > (SELECT floor FROM {p}store_epoch WHERE id = 1) AND seq <= :upto_seq
-                                                       ORDER BY seq LIMIT :limit)
+                                        WHERE seq > (SELECT floor FROM {p}store_epoch WHERE id = 1)
+                                          AND seq <= coalesce((SELECT seq FROM {p}row_changes
+                                                                WHERE seq > (SELECT floor FROM {p}store_epoch WHERE id = 1)
+                                                                  AND seq <= :upto_seq
+                                                                ORDER BY seq OFFSET CAST(:limit AS bigint) - 1 LIMIT 1),
+                                                              :upto_seq)
                                         RETURNING seq),
                             raised AS (UPDATE {p}store_epoch
                                        SET floor = greatest(floor, (SELECT coalesce(max(seq), 0) FROM removed))
