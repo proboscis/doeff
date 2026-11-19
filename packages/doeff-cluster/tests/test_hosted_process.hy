@@ -17,12 +17,12 @@
 (import sys)
 (import pathlib [Path])
 (import doeff [Program with-handlers])
-(import doeff_core_effects [state slog-handler scheduled Spawn])
+(import doeff_core_effects [await-handler state slog-handler scheduled Spawn])
 (import doeff_core_effects [os-file-handler os-proc-table-handler os-random-handler subprocess-handler])
 (import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath])
 (import doeff_core_effects [EnvEntry EnvMode PollProcess ProcessExited ProcessNotChild ProcessRunning ProcessStarted ProcessNotStarted StartProcess
                             StopProcess ReadProcTable])
-(import doeff_time [Delay sync-time-handler])
+(import doeff_time [Delay async-time-handler])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster._shared.intent.hosted_model [HostedLaunch HostedProcess HostedRefused LaunchHosted ListHosted StopHosted])
 (import doeff_cluster._worker.intent.worker_model [DesiredJobs ProcessView ReadDesired ObserveWorld WorldView])
@@ -94,7 +94,7 @@
 (defk on-real-host [program [beat None]]
   {:pre [(: program Program) (: beat (| Beat None))] :post [(: % (| tuple dict HostedProcess HostedRefused))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "Program を本物の答え手(子 process・process の表・file・乱数)と宿の下で回すため(本番の組の順 — 宿は一番内側)。"
-  (<- answer (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler os-proc-table-handler os-random-handler
+  (<- answer (scheduled (with-handlers [await-handler (async-time-handler) (state) slog-handler os-file-handler os-proc-table-handler os-random-handler
                                         subprocess-handler #* (if (is beat None) [] [(stub-beat beat)])]
                           program)))
   answer)
@@ -122,7 +122,8 @@
     (when (isinstance text str)
       (return (json.loads text)))
     (<- (Delay 0.05)))
-  (raise (AssertionError (.format "{} が {} 秒の内に現れない" path WAIT-SECONDS))))
+  (<- log (| str FileFailed) (ReadText (+ path ".log")))
+  (raise (AssertionError (.format "{} が {} 秒の内に現れない — job の出力: {}" path WAIT-SECONDS log))))
 
 
 (defk ended-code [pid]
@@ -141,7 +142,7 @@
   "job の本体を本物の shim の下に起こし、shim の pid を返すため(shim は標準入力の EOF を worker の消失と読むので、標準入力を握る)。"
   (<- started (| ProcessStarted ProcessNotStarted)
       (StartProcess :argv #(sys.executable "-m" SHIM "0.5" "--" sys.executable "-c" JOB-SCRIPT inbox.path out owner op)
-                    :env #() :env-mode EnvMode.EXTEND :process-group True :hold-stdin True))
+                    :env #() :env-mode EnvMode.EXTEND :process-group True :hold-stdin True :stdout-path (+ out ".log") :stderr-path (+ out ".log")))
   (assert (isinstance started ProcessStarted) started)
   started.pid)
 
@@ -170,6 +171,7 @@
   {:skip-if (not LINUX) :skip-reason NOT-LINUX}
   (<- settings HostedSettings (settings-of tmp-path))
   (<- socket str (hosted-socket-of settings.root settings.generation))
+  (<- socket-dir str (hosted-socket-dir-of settings.root))
   (val inbox (open-line-inbox socket))
   (try
     (val got (! (on-real-host (with-handlers [(hosted-host settings (HostedCell))] (job-end-and-handoff inbox tmp-path)))))
@@ -198,7 +200,7 @@
     (assert (not (.exists (Path (get process "place")))) process)
     (finally
       (.close inbox)
-      (shutil.rmtree (hosted-socket-dir-of settings.root) :ignore-errors True))))
+      (shutil.rmtree socket-dir :ignore-errors True))))
 
 
 (defk launched-one [owner [layer None]]
