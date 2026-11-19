@@ -16,7 +16,7 @@
 (import signal)
 (import sys)
 (import pathlib [Path])
-(import doeff [with-handlers])
+(import doeff [Program with-handlers])
 (import doeff_core_effects [state slog-handler scheduled Spawn])
 (import doeff_core_effects [os-file-handler os-proc-table-handler os-random-handler subprocess-handler])
 (import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath])
@@ -92,7 +92,7 @@
 
 
 (defk on-real-host [program [beat None]]
-  {:pre [(: beat (| Beat None))] :post [(: % (| tuple dict HostedProcess HostedRefused))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  {:pre [(: program Program) (: beat (| Beat None))] :post [(: % (| tuple dict HostedProcess HostedRefused))] :tags {:context "doeff-cluster-test" :role "entry"}}
   "Program を本物の答え手(子 process・process の表・file・乱数)と宿の下で回すため(本番の組の順 — 宿は一番内側)。"
   (<- answer (scheduled (with-handlers [(state) (sync-time-handler) slog-handler os-file-handler os-proc-table-handler os-random-handler
                                         subprocess-handler #* (if (is beat None) [] [(stub-beat beat)])]
