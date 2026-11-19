@@ -7,6 +7,7 @@
 ;;; 待ち手は読み直さず手元の静かな答えで返る(memory の置き場の memory-watch もこの判断を使う)。
 (require doeff-hy.macros [defk <- var val])
 (require doeff-hy.record [defrecord])
+(import dataclasses [dataclass])
 (val MODULE-TAGS {:context "records" :role "foundation"})
 (import collections.abc [Callable])
 (import doeff_time [GetMonotonic GetTime WaitWithin])
