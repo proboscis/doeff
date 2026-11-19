@@ -40,8 +40,6 @@ if TYPE_CHECKING:
     from doeff_adr._effects import (
         adr_registry as adr_registry,
     )
-    from doeff_adr._pytest_plugin import DEFAULT_FILE_PATTERNS as DEFAULT_FILE_PATTERNS
-    from doeff_adr._pytest_plugin import DoeffAdrHyFile as DoeffAdrHyFile
     from doeff_adr._registry import (
         AdrSpec as AdrSpec,
     )
@@ -88,8 +86,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "AdrStatus": "doeff_adr._registry",
     "EnforcementMode": "doeff_adr._registry",
     "FixtureSpec": "doeff_adr._registry",
-    "DEFAULT_FILE_PATTERNS": "doeff_adr._pytest_plugin",
-    "DoeffAdrHyFile": "doeff_adr._pytest_plugin",
     "HyScanExpansionError": "doeff_adr._semgrep_hy",
 }
 
