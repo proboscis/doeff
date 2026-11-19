@@ -42,6 +42,7 @@ from doeff_records import (
     Written,
     pg_records_handler,
 )
+from doeff_records._admission import key_text
 from doeff_records._laws import LAW_SCHEMA, MAKER
 from doeff_records._pg import drop_records_tables, prepare_records_store, switch_numbering
 from doeff_records._pg_sql import (
@@ -122,7 +123,7 @@ class EarlyWriter:
 
     def __init__(self, store, key):
         self.db = psycopg.connect(dsn())
-        statement = run(append_change_statement(store.store.prefix, "parts", key, 1, '{"id":"' + key + '","label":"early"}',
+        statement = run(append_change_statement(store.store.prefix, "parts", key_text((key,)), 1, '{"id":"' + key + '","label":"early"}',
                                                 1, 0))
         epoch = self.db.execute(f"SELECT epoch FROM {store.store.prefix}store_epoch WHERE id = 1").fetchone()[0]
         params = {param.name: param.value for param in statement.params}
