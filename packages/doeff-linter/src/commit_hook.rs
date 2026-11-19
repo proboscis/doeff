@@ -640,7 +640,10 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
 //   write the tree out into this run's temporary dir and use that (do not touch the placed tree -- the fact cache does not work, but it does not stop).
 //   Cleanup: delete trees per sha in the previous form (`<sha>`, `<sha>-<16 digits>`, and leftover write-outs `.partial-…`) when found. Also delete repo dirs whose recorded `repo.path` common dir
 //   no longer exists (only those whose lock could be taken). Only dirs of this name shape are deleted (other things in this location are not touched).
-//   The location dir itself is given the mark that facts_cache uses, and is included in the cleanup of the overall cap on the fact cache's root (sweep_over_cap).
+//   The location dir itself is given the mark that facts_cache uses, and is included in the cleanup of the overall cap on the fact cache's root (sweep_over_cap) — it carries
+//   the `units` marker and each repo dir its own used marker (refreshed whenever its lock is taken), so the cap sweep deletes idle repo dirs oldest first
+//   and skips one whose lock is held. Before, the location dir as a whole was the unit and every commit refreshed it, so trees of working trees with separate
+//   git dirs (clones sharing objects by alternates) were never deleted while the clone existed.
 
 /// The name of the dir where the HEAD tree is placed (directly under the fact cache's root).
 pub const TREE_HOME_DIR: &str = "commit-hook-tree";
@@ -649,7 +652,7 @@ pub const TREE_DIR: &str = "tree";
 /// The record, inside the repo's dir, of the tree's current sha and the overlaid declaration files.
 pub const TREE_RECORD: &str = "tree.sha";
 /// The lock file inside the repo's dir.
-pub const TREE_LOCK: &str = "lock";
+pub const TREE_LOCK: &str = crate::project::facts_cache::UNIT_LOCK;
 /// The record, inside the repo's dir, of the absolute path of the repo's git common dir.
 pub const REPO_RECORD: &str = "repo.path";
 /// The dir, inside the repo's dir, of the whole-repo answers (answer_key).
@@ -786,6 +789,7 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
     let common = common.canonicalize().unwrap_or(common);
     std::fs::create_dir_all(home).map_err(|e| format!("cannot create {}: {}", home.display(), e))?;
     let home = home.canonicalize().map_err(|e| format!("cannot read {}: {}", home.display(), e))?;
+    crate::project::facts_cache::mark_units(&home);
     retire_sha_trees(&home);
     // The tree is the contents of the root's dir, so even for the same repo a different root position gives a different tree (the position goes into the name -- for a working tree root, the same name as before).
     let prefix = root_prefix(root)?;
@@ -799,6 +803,7 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
         write_whole_tree(root, &head, overlay, &path)?;
         return Ok(Some(HeadTree { path, update: TreeUpdate::Temporary, answers: None, _lock: None }));
     };
+    crate::project::facts_cache::mark_used(&repo_dir);
     let recorded = common.to_string_lossy();
     if std::fs::read_to_string(repo_dir.join(REPO_RECORD)).ok().as_deref().map(str::trim) != Some(recorded.as_ref()) {
         std::fs::write(repo_dir.join(REPO_RECORD), format!("{}\n", recorded)).map_err(|e| format!("cannot write {}: {}", REPO_RECORD, e))?;

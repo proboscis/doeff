@@ -1128,6 +1128,9 @@ fn worktrees_of_one_repo_share_the_tree_and_vanished_repos_are_removed() {
     let main_tree = place(root, &[], &home, &scratch).path;
     let linked_tree = place(&linked, &[], &home, &scratch).path;
     assert_eq!(main_tree, linked_tree);
+    // The cap sweep of the facts cache deletes repo dirs one by one: the home carries the units marker and the repo dir its own used marker.
+    assert!(home.join("units").is_file(), "the home of HEAD trees is not marked as holding separate units");
+    assert!(main_tree.parent().unwrap().join("used").is_file(), "the repo dir of the HEAD tree has no used marker of its own");
     let gone = home.join(format!("{:016x}", 5));
     std::fs::create_dir_all(&gone).unwrap();
     std::fs::write(gone.join("repo.path"), side.path().join("no-such-repo/.git").to_string_lossy().as_bytes()).unwrap();

@@ -274,6 +274,57 @@ fn a_dir_last_used_more_than_ten_minutes_ago_goes_over_the_cap() {
     assert!(busy.join("hy-index.bin.d").join("00").is_file(), "a dir used within 10 minutes remains");
 }
 
+// -- A dir whose children are swept one by one (the commit hook's HEAD trees) --------------------------
+// The commit hook keeps one HEAD tree per repo git dir under `commit-hook-tree/`, and every commit refreshes that dir's used marker. As one unit it was never
+// idle, so trees of working trees with separate git dirs piled up while their clones existed (1,469 working trees of one repo on node-h, 456MB per tree). A dir
+// with the `units` marker is swept per child dir: idle children go oldest first like root dirs, and a child whose `lock` another run holds stays.
+
+/// Places a child dir of the HEAD-tree home (marked `units`, its own used marker refreshed now) with a file of size bytes, last used ago seconds before.
+fn stale_tree(cache: &Path, name: &str, bytes: usize, ago: u64) -> PathBuf {
+    let home = cache.join("commit-hook-tree");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("units"), b"").unwrap();
+    std::fs::write(home.join("used"), b"").unwrap();
+    let dir = home.join(name);
+    std::fs::create_dir_all(dir.join("tree")).unwrap();
+    std::fs::write(dir.join("tree").join("big.hy"), vec![b'x'; bytes]).unwrap();
+    std::fs::write(dir.join("lock"), b"").unwrap();
+    stamped(&dir.join("used"), "", ago);
+    dir
+}
+
+#[test]
+fn idle_head_trees_go_oldest_first_even_though_their_home_is_used_by_every_commit() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let oldest = stale_tree(cache.path(), "00000000000000e1", 4000, 30 * 86400);
+    let older = stale_tree(cache.path(), "00000000000000e2", 4000, 20 * 86400);
+    let recent = stale_tree(cache.path(), "00000000000000e3", 4000, 10 * 86400);
+    interval_passes(cache.path());
+    run_with_cap(live.path(), cache.path(), 6000);
+    assert!(!oldest.exists(), "over the cap, the HEAD tree with the oldest last-used time is deleted although its home was used just now");
+    assert!(!older.exists(), "the next oldest HEAD tree is also deleted until back within the cap");
+    assert!(recent.join("tree").join("big.hy").is_file(), "once back within the cap, newer HEAD trees remain");
+    assert!(cache.path().join("commit-hook-tree").join("units").is_file(), "the home itself stays (only its children are units)");
+}
+
+#[test]
+fn a_head_tree_whose_lock_is_held_or_used_within_ten_minutes_stays_over_the_cap() {
+    let cache = tempfile::TempDir::new().unwrap();
+    let live = repo();
+    let locked = stale_tree(cache.path(), "00000000000000f1", 4000, 30 * 86400);
+    let busy = stale_tree(cache.path(), "00000000000000f2", 4000, 60);
+    let idle = stale_tree(cache.path(), "00000000000000f3", 4000, 20 * 86400);
+    let held = std::fs::OpenOptions::new().write(true).open(locked.join("lock")).unwrap();
+    held.lock().unwrap();
+    interval_passes(cache.path());
+    run_with_cap(live.path(), cache.path(), 1000);
+    assert!(locked.join("tree").join("big.hy").is_file(), "a HEAD tree whose lock another run holds (measuring it) is not deleted");
+    assert!(busy.join("tree").join("big.hy").is_file(), "a HEAD tree used within 10 minutes is not deleted");
+    assert!(!idle.exists(), "an idle HEAD tree is deleted over the cap");
+    drop(held);
+}
+
 // -- The fact store `objects`, shared across working trees --------------------------
 // Facts are one file each and are not deleted per root dir. When the total exceeds the cap, root dirs go first (oldest last-used time first), and if it is still
 // exceeded, facts are deleted oldest last-used time (file mtime) first. Facts used within the interval and the store's used marker are not deleted.

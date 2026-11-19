@@ -1,7 +1,7 @@
 //! Lifetime of the store (M-sweep) — cap, oldest first, vanished roots, temporary files. It does not know the shape of the store's contents (facts and tables).
 //!
-//! Knowledge it holds: the cap (default 4 GiB), the 10 minutes during which a root counts as in use and is protected, the interval between turns and the record file, the order of deleting root dirs first and then, if still over, deleting facts oldest first, and the
-//! `objects` used-marker. It does not know the layout of facts; for facts it only deletes what `store::list` returns with `store::remove` (it cannot build a fact's path).
+//! Knowledge it holds: the cap (default 4 GiB), the 10 minutes during which a root counts as in use and is protected, the interval between turns and the record file, the order of deleting root dirs first and then, if still over, deleting facts oldest first, the
+//! `objects` used-marker, and the `units` marker of a dir whose child dirs are swept one by one (the commit hook's HEAD trees). It does not know the layout of facts; for facts it only deletes what `store::list` returns with `store::remove` (it cannot build a fact's path).
 //! Deleting does not change answers (unreadable chunks and facts are rebuilt — see the parent's header note).
 
 use std::path::{Path, PathBuf};
@@ -79,6 +79,38 @@ pub fn mark_used(root_dir: &Path) {
     if std::fs::create_dir_all(root_dir).is_ok() {
         let _ = std::fs::write(root_dir.join(USED_RECORD), b"");
     }
+}
+
+/// A marker (empty contents) in a dir directly under the store root whose child dirs are separate units of the cap sweep — the commit hook's HEAD trees
+/// (`commit-hook-tree/<name representing the repo>/`). That dir's own used marker is refreshed by every commit, so as one unit it was never idle long enough
+/// to delete, and the trees grew by the number of working trees whose git dir differs (node-h 2026-11-20: 1,469 working trees of one repo, each a separate
+/// clone sharing objects by alternates, 456MB per tree). Each child carries its own `used` marker and goes oldest first like a root dir.
+/// Older linters without this marker still treat the whole dir as one unit (they only see it as used).
+pub const UNITS_RECORD: &str = "units";
+/// The lock file inside a unit (the commit hook's TREE_LOCK). While another run holds it (measuring the tree), the cap sweep does not delete that unit.
+pub const UNIT_LOCK: &str = "lock";
+
+/// Marks dir as holding separate units of the cap sweep (UNITS_RECORD — does not write if already present).
+pub fn mark_units(dir: &Path) {
+    let record = dir.join(UNITS_RECORD);
+    if !record.is_file() && std::fs::create_dir_all(dir).is_ok() {
+        let _ = std::fs::write(record, b"");
+    }
+}
+
+/// The units of the cap sweep for a dir directly under the store root — its child dirs if it has UNITS_RECORD (symlinks excluded), otherwise the dir itself.
+fn units_of(dir: PathBuf) -> Vec<PathBuf> {
+    if !dir.join(UNITS_RECORD).is_file() {
+        return vec![dir];
+    }
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    entries.flatten().filter(|entry| std::fs::symlink_metadata(entry.path()).is_ok_and(|meta| meta.is_dir())).map(|entry| entry.path()).collect()
+}
+
+/// Takes the unit's lock without waiting, if the unit has one. Some(held lock or None for a unit without a lock file) = may be deleted; None = another run holds it.
+fn unit_free(dir: &Path) -> Option<Option<std::fs::File>> {
+    let Ok(file) = std::fs::OpenOptions::new().write(true).open(dir.join(UNIT_LOCK)) else { return Some(None) };
+    file.try_lock().ok().map(|()| Some(file))
 }
 
 /// The cap on the whole store (the default if the environment variable has an unreadable value).
@@ -224,10 +256,8 @@ fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64, with_objects
     let mut dirs: Vec<(u64, u64, PathBuf)> = entries
         .flatten()
         .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_dir()) && entry.file_name() != OBJECTS_DIR)
-        .map(|entry| {
-            let dir = entry.path();
-            (last_used(&dir), dir_bytes(&dir), dir)
-        })
+        .flat_map(|entry| units_of(entry.path()))
+        .map(|dir| (last_used(&dir), dir_bytes(&dir), dir))
         .collect();
     let mut objects = if with_objects { store::list(&base.join(OBJECTS_DIR), now) } else { Vec::new() };
     let mut total: u64 = dirs.iter().map(|(_, bytes, _)| bytes).sum::<u64>() + objects.iter().map(|object| object.bytes).sum::<u64>();
@@ -242,6 +272,8 @@ fn sweep_over_cap(base: &Path, root_dir: &Path, cap: u64, now: u64, with_objects
         if dir == root_dir || now.saturating_sub(used) < IN_USE_SECONDS {
             continue;
         }
+        // A unit whose lock another run holds is in use (the commit hook measuring its tree) — leave it to the next scan.
+        let Some(_held) = unit_free(&dir) else { continue };
         // If it cannot be deleted, try again on the next scan (it does not affect answers)
         if std::fs::remove_dir_all(&dir).is_ok() {
             total = total.saturating_sub(bytes);
