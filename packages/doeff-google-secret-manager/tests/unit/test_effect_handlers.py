@@ -17,10 +17,10 @@ if str(SECRET_PACKAGE_ROOT) not in sys.path:
 
 import pytest  # noqa: E402
 from doeff_google_secret_manager import (  # noqa: E402
-    SecretManagerClient,
     mock_handlers,
     production_handlers,
 )
+from doeff_google_secret_manager._client import SecretManagerClient  # noqa: E402
 from doeff_secret import DeleteSecret, GetSecret, ListSecrets, SetSecret  # noqa: E402
 
 from doeff import do, run  # noqa: E402

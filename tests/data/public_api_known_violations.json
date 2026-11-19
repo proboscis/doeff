@@ -1194,13 +1194,7 @@
   },
   "doeff-google-secret-manager": {
    "scope": "in scope",
-   "names": {
-    "Violation — move into a handler": {
-     "doeff_google_secret_manager.client": [
-      "SecretManagerClient"
-     ]
-    }
-   }
+   "names": {}
   },
   "doeff-hy": {
    "scope": "in scope",

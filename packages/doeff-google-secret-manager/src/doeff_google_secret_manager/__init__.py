@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 from doeff_secret import DeleteSecret, GetSecret, ListSecrets, SetSecret
 
-from ._client import SecretManagerClient
 from ._handlers import mock_handlers, production_handlers
 
 __all__ = [
@@ -12,7 +11,6 @@ __all__ = [
     "GetSecret",
     "ListSecrets",
     "SecretEffectBase",
-    "SecretManagerClient",
     "SetSecret",
     "mock_handlers",
     "production_handlers",
