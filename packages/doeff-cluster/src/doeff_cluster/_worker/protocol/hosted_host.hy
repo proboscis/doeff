@@ -141,6 +141,26 @@
                  :ended wire.ended :exit-code wire.exit-code))
 
 
+(defk process-wires-of [processes]
+  {:pre [(: processes tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
+  "答えの process の列を口の綴りの列にするため。"
+  (var wires #())
+  (for [process processes]
+    (<- wire HostedProcessWire (process-wire-of process))
+    (:= wires (+ wires #(wire))))
+  wires)
+
+
+(defk processes-of-wires [wires]
+  {:pre [(: wires tuple)] :post [(: % tuple)] :tags {:context "worker" :role "protocol"}}
+  "口の綴りの process の列を型の列に戻すため。"
+  (var processes #())
+  (for [wire wires]
+    (<- process HostedProcess (process-of-wire wire))
+    (:= processes (+ processes #(process))))
+  processes)
+
+
 (defk hosted-request-text [request]
   {:pre [(: request (| LaunchHosted StopHosted ListHosted))] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "頼みの効果を口の 1 行にするため(頼む側 — worker/entry/hosted_socket の hosted-client)。"
@@ -173,12 +193,14 @@
 (defk hosted-answer-text [answer]
   {:pre [(: answer (| HostedProcess HostedRefused tuple))] :post [(: % str)] :tags {:context "worker" :role "protocol"}}
   "答えを口の 1 行にするため(受ける側)。"
-  (<- text str
-      (dump-json
-        (match answer
-          (HostedProcess) (HostedAnswerWire :v WIRE-VERSION :process (! (process-wire-of answer)))
-          (HostedRefused) (HostedAnswerWire :v WIRE-VERSION :refused answer.detail)
-          _ (HostedAnswerWire :v WIRE-VERSION :processes (tuple (gfor p answer (! (process-wire-of p))))))))
+  (var wire (HostedAnswerWire :v WIRE-VERSION))
+  (match answer
+    (HostedProcess) (do (<- one HostedProcessWire (process-wire-of answer))
+                        (:= wire (HostedAnswerWire :v WIRE-VERSION :process one)))
+    (HostedRefused) (:= wire (HostedAnswerWire :v WIRE-VERSION :refused answer.detail))
+    _ (do (<- many tuple (process-wires-of answer))
+          (:= wire (HostedAnswerWire :v WIRE-VERSION :processes many))))
+  (<- text str (dump-json wire))
   text)
 
 
@@ -189,7 +211,7 @@
   (cond
     (isinstance wire Malformed) (HostedRefused :detail (.format "答えの形が違う: {}" wire))
     (is-not wire.refused None) (HostedRefused :detail wire.refused)
-    (and listing (is-not wire.processes None)) (tuple (gfor w wire.processes (! (process-of-wire w))))
+    (and listing (is-not wire.processes None)) (! (processes-of-wires wire.processes))
     (and (not listing) (is-not wire.process None)) (! (process-of-wire wire.process))
     True (HostedRefused :detail "答えに頼みの欄が無い")))
 
@@ -434,7 +456,10 @@
                     (resume view))))))
   (ListHosted []
     (<- (cell-refreshed settings cell))
-    (val views (tuple (gfor id (sorted cell.entries) (! (view-of (get cell.entries id))))))
+    (var views #())
+    (for [id (sorted cell.entries)]
+      (<- view HostedProcess (view-of (get cell.entries id)))
+      (:= views (+ views #(view))))
     (resume views))
   (ReadDesired [env-report stopping]
     ;; 拍の宣言の読みを外側へ渡し、答えを持ち主の判じに覚える(読めない回は前の宣言のまま — 途絶の間に止めない)。
