@@ -142,6 +142,96 @@
       (.close connections))))
 
 
+;; --- 死んだ行の上の刈り ------------------------------------------------------------------------------------------------
+;; 2026-11-19: 本番の変更の列(生きた行 350 万・刈った後まだ vacuum されていない死んだ行 46.8 万)で、錠の中の DELETE が下限の無い部分の読み
+;; (`seq <= :upto_seq ORDER BY seq LIMIT :limit`)で主鍵を頭から辿り、死んだ行を毎回 heap まで読んで、番号の錠を持ったまま disk の読みで
+;; 1.5 秒止まった(その間 書き 7 本が錠を待った)。死んだ行 DEAD-CHANGES 個(本文 DEAD-PAYLOAD-BLOCKS 個の md5 の塊 — heap に収まる大きさ)を
+;; 床の下に置き(vacuum を止めた表)、その上に刈る変更と刈らない変更を積んで、直す前の DELETE と今の DELETE・境の読みが触る page を比べる。
+(val DEAD-CHANGES 100000)
+(val DEAD-PAYLOAD-BLOCKS 8)
+(val DEAD-AT 500)
+;; 床の上の境より古い変更(直す前の DELETE と今の DELETE が 1 batch ずつ消して、まだ残る数)と、刈らない新しい変更の数。
+(val LIVE-OLD (+ (* 2 PRUNE-BATCH) 7))
+(val LIVE-YOUNG 30)
+;; 直す前の版の DELETE(下限の無い部分の読み — 2026-11-19 までの prune-changes-statement の字面)。
+(val UNFLOORED-PRUNE "WITH removed AS (DELETE FROM {p}row_changes
+                                        WHERE seq IN (SELECT seq FROM {p}row_changes WHERE seq <= :upto_seq ORDER BY seq LIMIT :limit)
+                                        RETURNING seq),
+                            raised AS (UPDATE {p}store_epoch
+                                       SET floor = greatest(floor, (SELECT coalesce(max(seq), 0) FROM removed))
+                                       WHERE id = 1 RETURNING floor)
+                       SELECT (SELECT floor FROM raised), (SELECT count(*) FROM removed)")
+;; 直す前の版が読む page の下限と、今の版が読む page の上限。
+(val UNFLOORED-PAGES 1000)
+(val FLOORED-PAGES 100)
+
+
+(defk dead-store [prefix]
+  {:pre [(: prefix str)] :post [(: % int)]
+   :tags {:context "records" :role "program"}}
+  "変更の列の vacuum を止め、死んだ行にする変更 DEAD-CHANGES 個(番号の頭)と、境より古い変更 LIVE-OLD 個・新しい変更 LIVE-YOUNG 個を積み、
+   頭の DEAD-CHANGES 個を消して床をその最大の番号に上げる(前の刈りが消した形 — 索引の印も付けない Seq Scan の DELETE)ため。答え = 床。"
+  (<- (run-statement (Statement :text (.format "ALTER TABLE {p}row_changes SET (autovacuum_enabled = false)" :p prefix) :params #())))
+  (<- (run-statement (Statement :text (.format "INSERT INTO {p}row_changes (ledger, key, version, payload, at, epoch)
+                                                SELECT 'journal', 'dead-' || n, 1,
+                                                       (SELECT string_agg(md5(n::text || ':' || k::text), '')
+                                                          FROM generate_series(1, :blocks) AS k), :at, 1
+                                                FROM generate_series(1, :count) AS n" :p prefix)
+                                :params #((SqlParam :name "blocks" :value DEAD-PAYLOAD-BLOCKS) (SqlParam :name "at" :value DEAD-AT)
+                                          (SqlParam :name "count" :value DEAD-CHANGES)))))
+  (<- (seeded-store prefix LIVE-OLD LIVE-YOUNG))
+  (<- rows (run-statement (Statement :text (.format "WITH gone AS (DELETE FROM {p}row_changes WHERE key LIKE 'dead-%' RETURNING seq)
+                                                     UPDATE {p}store_epoch SET floor = (SELECT max(seq) FROM gone) WHERE id = 1 RETURNING floor"
+                                                    :p prefix)
+                                     :params #())))
+  (<- (run-statement (Statement :text (.format "ANALYZE {p}row_changes" :p prefix) :params #())))
+  (int (get rows 0 0)))
+
+
+(defk prune-over-dead-rows [prefix]
+  {:pre [(: prefix str)] :post [(: % dict)]
+   :tags {:context "records" :role "program"}}
+  "死んだ行の上の置き場(dead-store)で、直す前の DELETE・今の境の読み・今の DELETE を 1 度ずつ EXPLAIN (ANALYZE, BUFFERS) つきで流し(本当に
+   流れる — 直す前の DELETE が先に PRUNE-BATCH 個を消す)、{名 値} で文ごとの #(page ms) と床と残った変更を返すため。"
+  (<- floor (dead-store prefix))
+  (<- unfloored-cost (explained-pages (Statement :text (.format UNFLOORED-PRUNE :p prefix)
+                                                 :params #((SqlParam :name "upto_seq" :value UNBOUNDED-SEQ)
+                                                           (SqlParam :name "limit" :value PRUNE-BATCH)))))
+  (<- bound-statement (prune-bound-statement prefix BEFORE UNBOUNDED-SEQ PRUNE-BATCH))
+  (<- bound-cost (explained-pages bound-statement))
+  (<- bound-rows (run-statement bound-statement))
+  (val bound (int (get bound-rows 0 0)))
+  (<- delete (prune-changes-statement prefix bound PRUNE-BATCH))
+  (<- delete-cost (explained-pages delete))
+  (<- left (run-statement (Statement :text (.format "SELECT count(*) FILTER (WHERE at <= :before_at), count(*), min(seq),
+                                                            (SELECT floor FROM {p}store_epoch WHERE id = 1)
+                                                     FROM {p}row_changes" :p prefix)
+                                     :params #((SqlParam :name "before_at" :value BEFORE)))))
+  {"unfloored" unfloored-cost "bound" bound-cost "delete" delete-cost "floor" floor "bound-seq" bound "left" (tuple (get left 0))})
+
+
+(deftest test-a-prune-batch-reads-from-the-floor-and-not-the-dead-rows-below-it
+  {:skip-if (not PG-DSN) :skip-reason PG-SKIP-REASON}
+  (val connections (postgres-connections 2))
+  (val store (prepared-store connections (fresh-prefix)))
+  (try
+    (val measured (run-sql connections (prune-over-dead-rows store.prefix)))
+    (val floor (get measured "floor"))
+    ;; 直す前の DELETE が床の上の PRUNE-BATCH 個を消し、境の読みは次の PRUNE-BATCH 個の最大の番号、今の DELETE はちょうどそこまでを消して
+    ;; 床を境に上げた(刈る範囲は床の上の番号の前方の連なり — 刈らない変更は残る)。
+    (assert (= (get measured "bound-seq") (+ floor (* 2 PRUNE-BATCH))) (repr measured))
+    (assert (= (get measured "left") #((- LIVE-OLD (* 2 PRUNE-BATCH)) (- (+ LIVE-OLD LIVE-YOUNG) (* 2 PRUNE-BATCH))
+                                       (+ floor (* 2 PRUNE-BATCH) 1) (+ floor (* 2 PRUNE-BATCH))))
+            (repr measured))
+    ;; 直す前の DELETE は床の下の死んだ行を読む。今の境の読みと DELETE は床の上だけを読む。
+    (assert (>= (get measured "unfloored" 0) UNFLOORED-PAGES) (repr measured))
+    (for [name #("bound" "delete")]
+      (assert (<= (get measured name 0) FLOORED-PAGES) (repr measured)))
+    (finally
+      (run-sql connections (drop-records-tables store))
+      (.close connections))))
+
+
 ;; --- 錠の持ち方 ------------------------------------------------------------------------------------------------------
 ;; 境より古い変更の数(PRUNE-BATCH を 2 回越える — 錠の transaction 3 つに分かれる)と、残る新しい変更の数。
 (val MANY-OLD (+ (* 2 PRUNE-BATCH) 7))
