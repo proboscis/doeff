@@ -1152,7 +1152,7 @@ fn type_substitute_drafts(rel: &str, path: &Path, source: &str, excess: Vec<type
             e.hits.into_iter().map(move |hit| (hit, total, allowed))
         })
         .map(|(hit, total, allowed)| {
-            let base = format!("{}:{}", hit.kind.word(), hit.owner);
+            let base = format!("{}{}:{}", if hit.boundary { "boundary." } else { "" }, hit.kind.word(), hit.owner);
             let n = seen.entry(base.clone()).and_modify(|n| *n += 1).or_insert(1);
             let boundary = if hit.boundary { " (in a definition that spells or reads an outside shape)" } else { "" };
             let reason = format!(

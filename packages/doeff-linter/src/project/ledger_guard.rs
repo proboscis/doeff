@@ -88,13 +88,20 @@ pub struct Approval {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Approvals {
+    /// The file's schema (1; absent = 1).
+    #[serde(default)]
+    pub schema: Option<u32>,
     #[serde(default)]
     pub approval: Vec<Approval>,
 }
 
 impl Approvals {
     pub fn parse(text: &str) -> Result<Self, String> {
-        toml::from_str(text).map_err(|error| error.to_string().trim().to_string())
+        let approvals: Approvals = toml::from_str(text).map_err(|error| error.to_string().trim().to_string())?;
+        match approvals.schema {
+            None | Some(1) => Ok(approvals),
+            Some(other) => Err(format!("schema = {} (this linter reads schema = 1)", other)),
+        }
     }
 
     /// Whether an approval with a review and a why covers (ledger, key, value).
@@ -221,27 +228,50 @@ pub fn declaration_fingerprint(spelling: &str) -> String {
     Sha256::digest(spelling.as_bytes()).iter().take(8).map(|b| format!("{:02x}", b)).collect()
 }
 
-/// The judgment of the whole guard (Err with the reason if the base or a file at the base cannot be read — then nothing is judged).
+/// A file the guard reads that cannot be read as what it should be (reported as a hit, not as an error: a guard that passes on an unreadable ledger is a way around it).
+fn unreadable(rel: &str, reason: String) -> GuardHit {
+    GuardHit { rel: rel.to_string(), detail: format!("unreadable:{}", rel), reason: format!("{} cannot be read by DOEFF214 ({}) — the ledgers are not judged while it cannot", rel, reason) }
+}
+
+/// Parses a file of the tree and its version at the base (a missing file is empty; a file that cannot be parsed is a hit).
+fn both<T: Default>(rel: &str, now: Option<String>, was: Option<String>, parse: impl Fn(&str) -> Result<T, String>, hits: &mut Vec<GuardHit>) -> Option<(T, T)> {
+    let now = now.map(|t| parse(&t)).transpose().map_err(|r| unreadable(rel, r));
+    let was = was.map(|t| parse(&t)).transpose().map_err(|r| unreadable(rel, format!("at the base: {}", r)));
+    match (now, was) {
+        (Ok(now), Ok(was)) => Some((now.unwrap_or_default(), was.unwrap_or_default())),
+        (now, was) => {
+            hits.extend(now.err());
+            hits.extend(was.err());
+            None
+        }
+    }
+}
+
+/// The judgment of the whole guard (Err with the reason only if the base cannot be resolved — then nothing is judged).
 pub fn judge(root: &Path, architecture_rel: &str, decl: &DesignEvidenceDecl) -> Result<Vec<GuardHit>, String> {
     let Some(guard) = &decl.guard else { return Ok(Vec::new()) };
     let base = Base::resolve(root, &guard.base).map_err(|reason| format!("cannot read the DOEFF214 base {} ({})", guard.base, reason))?;
-    let approvals = base_approvals(guard, &base)?;
-    let mut hits = Vec::new();
     let read_now = |rel: &str| std::fs::read_to_string(root.join(rel)).ok();
+    let mut hits = Vec::new();
+    let approvals_rel = guard.approvals.clone().unwrap_or_default();
+    let approvals = match &guard.approvals {
+        None => Some((Approvals::default(), Approvals::default())),
+        Some(rel) => both(rel, read_now(rel), base.read(rel), Approvals::parse, &mut hits),
+    };
+    let Some((approvals_now, approvals)) = approvals else { return Ok(hits) };
     if let Some(rel) = &decl.existing {
-        let now = read_now(rel).map(|t| ExistingShapes::parse(&t)).transpose().map_err(|r| format!("{}: {}", rel, r))?.unwrap_or_default();
-        let was = base.read(rel).map(|t| ExistingShapes::parse(&t)).transpose().map_err(|r| format!("{} at the base: {}", rel, r))?.unwrap_or_default();
-        hits.extend(grown_shapes(rel, &now, &was, &approvals));
+        if let Some((now, was)) = both(rel, read_now(rel), base.read(rel), ExistingShapes::parse, &mut hits) {
+            hits.extend(grown_shapes(rel, &now, &was, &approvals));
+        }
     }
     if let Some(rel) = &decl.existing_substitutes {
-        let now = read_now(rel).map(|t| SubstituteCounts::parse(&t)).transpose().map_err(|r| format!("{}: {}", rel, r))?.unwrap_or_default();
-        let was = base.read(rel).map(|t| SubstituteCounts::parse(&t)).transpose().map_err(|r| format!("{} at the base: {}", rel, r))?.unwrap_or_default();
-        hits.extend(grown_substitutes(rel, &now, &was, &approvals));
+        if let Some((now, was)) = both(rel, read_now(rel), base.read(rel), SubstituteCounts::parse, &mut hits) {
+            hits.extend(grown_substitutes(rel, &now, &was, &approvals));
+        }
     }
-    if let Some(rel) = &guard.approvals {
-        let now = read_now(rel).map(|t| Approvals::parse(&t)).transpose().map_err(|r| format!("{}: {}", rel, r))?.unwrap_or_default();
+    if guard.approvals.is_some() {
         let pattern = guard.approval_pattern.as_deref().and_then(|p| regex::Regex::new(p).ok());
-        hits.extend(unspelled_approvals(rel, &now, &approvals, pattern.as_ref()));
+        hits.extend(unspelled_approvals(&approvals_rel, &approvals_now, &approvals, pattern.as_ref()));
     }
     if let (Some(now), Some(was)) = (read_now(architecture_rel).and_then(|t| declaration_spelling(&t)), base.read(architecture_rel).and_then(|t| declaration_spelling(&t))) {
         let fingerprint = declaration_fingerprint(&now);
@@ -310,6 +340,15 @@ mod tests {
         assert_eq!(details, vec!["approval:shapes:k2:v", "approval:shapes:k3:v"]);
         // An approval added on the branch does not let the ledger line pass: only the base's approvals are consulted (the caller passes base_approvals).
         assert!(!Approvals::default().covers("shapes", "k", "v"));
+    }
+
+    #[test]
+    fn an_approvals_file_with_a_schema_reads_and_an_unreadable_ledger_is_a_hit() {
+        assert!(Approvals::parse("schema = 1\n").is_ok());
+        assert!(Approvals::parse("schema = 2\n").is_err());
+        let mut hits = Vec::new();
+        assert!(both("l.toml", Some("[shapes]\nx = 1\n".to_string()), None, ExistingShapes::parse, &mut hits).is_none());
+        assert_eq!(hits.iter().map(|h| h.detail.as_str()).collect::<Vec<_>>(), vec!["unreadable:l.toml"]);
     }
 
     #[test]

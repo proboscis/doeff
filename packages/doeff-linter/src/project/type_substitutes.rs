@@ -53,7 +53,7 @@ impl SubstituteCounts {
     pub fn spell<'a>(files: impl Iterator<Item = (&'a str, &'a [SubstituteHit])>) -> String {
         let mut counts = BTreeMap::new();
         for (rel, hits) in files {
-            for hit in hits {
+            for hit in hits.iter().filter(|h| h.kind.stops()) {
                 *counts.entry(Self::key(rel, hit.kind)).or_insert(0) += 1;
             }
         }
@@ -73,7 +73,7 @@ pub struct Excess {
 pub fn judge(rel: &str, source: &str, counts: &SubstituteCounts) -> Result<Vec<Excess>, String> {
     let hits = substitute_hits(source)?;
     let mut by_kind: BTreeMap<SubstituteKind, Vec<SubstituteHit>> = BTreeMap::new();
-    for hit in hits {
+    for hit in hits.into_iter().filter(|h| h.kind.stops()) {
         by_kind.entry(hit.kind).or_default().push(hit);
     }
     Ok(by_kind
@@ -131,6 +131,14 @@ pub fn existing_counts(root: &Path, decl: &DesignEvidenceDecl) -> (String, Vec<S
         |rel, _, source| substitute_hits(&source).map(|hits| Some((rel.clone(), hits))).map_err(|reason| format!("{}: {}", rel, reason)),
     );
     found.sort_by(|a, b| a.0.cmp(&b.0));
+    // DOEFF_LINTER_SUBSTITUTE_SITES=1: one line per value on stderr (`<rel>:<byte> <kind> <owner> [boundary]`) — for measuring what the counts hold before turning the rule on.
+    if std::env::var_os("DOEFF_LINTER_SUBSTITUTE_SITES").is_some() {
+        for (rel, hits) in &found {
+            for hit in hits {
+                eprintln!("site {}:{} {} {}{}", rel, hit.start, hit.kind.word(), hit.owner, if hit.boundary { " boundary" } else { "" });
+            }
+        }
+    }
     (SubstituteCounts::spell(found.iter().map(|(rel, hits)| (rel.as_str(), hits.as_slice()))), errors)
 }
 
@@ -156,6 +164,15 @@ mod tests {
   {"links" (list gap.links)})
 (defn _pair [a b]
   (fn [x] #(a x)))
+(defeffect Ask {:fields [(: x str)] :tags {:context "x" :role "intent"}})
+(defk ordered [rows]
+  {:pre [(: rows list)] :post [(: % list)]}
+  (sorted rows :key (fn [r] #(r.at r.id))))
+(setv BY-NAME (dfor v VARS v.name v))
+(val MODULE-TAGS {:context "x" :role "judgment"})
+(defrecord Parts
+  {:check [(<= (len (lfor p parts :if p.main p)) 1)]}
+  (#^ (get tuple #(str ...)) parts))
 (defmacro m [x] `{:x ~x})
 "#;
 
@@ -164,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn values_that_stand_in_for_a_type_are_found_and_id_maps_are_not() {
+    fn values_that_stand_in_for_a_type_are_found_and_id_maps_sort_keys_and_form_options_are_not() {
         assert_eq!(
             kinds(HY),
             vec![
@@ -188,6 +205,7 @@ mod tests {
         let more = HY.replace("#(card extra))", "#(card {:a 1}))");
         let excess = judge("m.hy", &more, &ledger).unwrap();
         assert!(matches!(excess.as_slice(), [Excess { kind: SubstituteKind::StaticKeyDict, allowed: 3, hits }] if hits.len() == 4), "{:?}", excess);
-        assert_eq!(judge("m.hy", HY, &SubstituteCounts::default()).unwrap().len(), 4);
+        // answer-tuple is found but not stopped: 3 kinds above an empty ledger.
+        assert_eq!(judge("m.hy", HY, &SubstituteCounts::default()).unwrap().len(), 3);
     }
 }
