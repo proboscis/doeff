@@ -6,7 +6,7 @@ kind = "record"
 concern = "the commit the ledgers are compared with, and the checkout to read it from"
 key = ["commit"]
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "git_root"
@@ -24,11 +24,11 @@ why = "the ref moves during a run; one resolved commit keeps all reads at the sa
 
 [[element]]
 name = "ApprovalLedger"
-kind = "record"
+kind = "sum"
 concern = "what an approval lets pass"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "Shapes"
@@ -56,7 +56,7 @@ kind = "record"
 concern = "one approval of the user for one ledger line, field, or declaration"
 key = ["ledger", "key", "value"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "ledger"
@@ -93,7 +93,7 @@ kind = "record"
 concern = "the approvals file"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "schema"
@@ -111,12 +111,29 @@ shape = "approvals inside each ledger file"
 why = "an approval of a field or the declaration belongs to no ledger"
 
 [[element]]
+name = "BaseApprovals"
+kind = "record"
+concern = "the approvals that let something pass: those at the base without a problem"
+key = []
+fan_out = 2
+review = "design-evidence-review-2026-11-20"
+
+[[element.field]]
+name = "approval"
+type = "Vec<Approval>"
+fact = "the approvals of the base's file whose review is a request id of the declared spelling and that say why"
+
+[[element.rejected]]
+shape = "Approvals with a covers method, filtered by the caller"
+why = "an unfiltered file of the tree could be asked what it covers; a type made only by filtering the base's file says which approvals count"
+
+[[element]]
 name = "GuardHit"
 kind = "record"
 concern = "one DOEFF214 finding at a file the guard reads"
 key = ["rel", "detail"]
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "rel"

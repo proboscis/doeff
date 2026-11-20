@@ -6,7 +6,7 @@ kind = "record"
 concern = "the ledger of the values that stood in for a type when the rule was turned on"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "counts"
@@ -23,7 +23,7 @@ kind = "record"
 concern = "one kind of value above its ledger count in one file"
 key = ["kind"]
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "kind"
@@ -50,7 +50,7 @@ kind = "record"
 concern = "the DOEFF213 excess of one module with what reporting needs"
 key = ["rel"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "rel"

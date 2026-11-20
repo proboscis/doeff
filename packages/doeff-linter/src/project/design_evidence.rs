@@ -43,7 +43,8 @@ pub enum ShapeKind {
     Defrecord,
     /// A Rust `struct` (fields are its named or positional fields).
     Struct,
-    /// A Rust `enum` (its "fields" are its variants — one more variant is one more case of a sum, not one more fact of a record, so `Grew` does not judge it).
+    /// A Rust `enum` (its "fields" are its variants — one more variant is one more case of a sum, not one more fact of a record, so `Grew` judges only the payloads
+    /// of the variants the base had).
     Enum,
 }
 
@@ -57,11 +58,34 @@ impl ShapeKind {
             ShapeKind::Enum => "enum\n",
         }
     }
+}
 
-    /// Whether a field added to an existing type of this kind is a new fact of the type (judged by `Grew`).
-    pub fn grows_by_fields(self) -> bool {
-        !matches!(self, ShapeKind::Enum)
+/// The members of a variant's payload as spelled (`{ a: T, b: U }` → `a`, `b`; `(T, U)` → `0`, `1`; no payload → none). Splits at the top-level commas only.
+fn payload_members(type_text: Option<&str>) -> Vec<String> {
+    let Some(text) = type_text.map(str::trim) else { return Vec::new() };
+    let named = text.starts_with('{');
+    let inner = text.get(1..text.len().saturating_sub(1)).unwrap_or("");
+    let mut parts = Vec::new();
+    let (mut depth, mut from) = (0i32, 0usize);
+    for (i, c) in inner.char_indices() {
+        match c {
+            '<' | '(' | '[' | '{' => depth += 1,
+            '>' | ')' | ']' | '}' => depth -= 1,
+            ',' if depth == 0 => {
+                parts.push(&inner[from..i]);
+                from = i + 1;
+            }
+            _ => {}
+        }
     }
+    parts.push(&inner[from..]);
+    parts
+        .into_iter()
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .enumerate()
+        .map(|(i, p)| if named { p.split(':').next().unwrap_or(p).trim().trim_start_matches("pub ").to_string() } else { i.to_string() })
+        .collect()
 }
 
 /// The shape of one type as read from the source: its name, bases, and fields in written order. `start..end` is the byte range from the form's start to the name's end.
@@ -90,6 +114,28 @@ impl RecordShape {
             }
         }
         out
+    }
+
+    /// The fields this shape has that its version at the base did not (the facts it grew). A record grows by a field; a sum grows by a member of the payload of a
+    /// variant the base had (`Variant.member`) — a new variant is a new case, not growth.
+    pub fn grown_against(&self, was: &RecordShape) -> Vec<String> {
+        match self.kind {
+            ShapeKind::Enum => self
+                .fields
+                .iter()
+                .filter_map(|variant| was.fields.iter().find(|w| w.name == variant.name).map(|w| (variant, w)))
+                .flat_map(|(variant, w)| {
+                    let before = payload_members(w.type_text.as_deref());
+                    payload_members(variant.type_text.as_deref())
+                        .into_iter()
+                        .filter(move |m| !before.contains(m))
+                        .map(move |m| format!("{}.{}", variant.name, m))
+                })
+                .collect(),
+            ShapeKind::Defrecord | ShapeKind::Struct => {
+                self.fields.iter().filter(|f| !was.fields.iter().any(|w| w.name == f.name)).map(|f| f.name.clone()).collect()
+            }
+        }
     }
 
     /// The first 16 hex digits of the sha256 of the canonical spelling (the ledger of existing shapes holds this).
@@ -648,6 +694,8 @@ pub fn shapes_of(rel: &str, source: &str) -> Result<Vec<RecordShape>, String> {
 #[serde(rename_all = "lowercase")]
 pub enum ElementKind {
     Record,
+    /// A sum type (a Rust enum — its fields are its variants).
+    Sum,
     Function,
     Interface,
     Module,
@@ -851,6 +899,10 @@ fn shape_differences(shape: &RecordShape, evidence: &ElementEvidence) -> Vec<Str
 /// The answers the evidence of a record lacks (empty = complete). `review` is checked against `review_pattern` if declared (only the spelling).
 fn answer_gaps(shape: &RecordShape, evidence: &ElementEvidence, review_pattern: Option<&regex::Regex>) -> Vec<String> {
     let mut gaps = Vec::new();
+    let kind = if shape.kind == ShapeKind::Enum { ElementKind::Sum } else { ElementKind::Record };
+    if evidence.kind != kind {
+        gaps.push(format!("kind is {:?} (write kind = \"sum\" for an enum, \"record\" for a struct or a defrecord)", evidence.kind).to_lowercase());
+    }
     if evidence.concern.trim().is_empty() {
         gaps.push("concern (the one responsibility, in one sentence) is empty".to_string());
     }
@@ -909,7 +961,7 @@ pub fn judge(
     let file_hit = |name: String, problem: Problem| Hit { name, start: 0, end: first_line_end, problem };
     let entries: Vec<ElementEvidence> = match evidence.map(parse_evidence) {
         None => Vec::new(),
-        Some(Ok(file)) => file.element.into_iter().filter(|e| e.kind == ElementKind::Record).collect(),
+        Some(Ok(file)) => file.element.into_iter().filter(|e| matches!(e.kind, ElementKind::Record | ElementKind::Sum)).collect(),
         Some(Err(reason)) => return Ok(vec![file_hit("evidence".to_string(), Problem::Unreadable { reason })]),
     };
     let mut hits = Vec::new();
@@ -945,20 +997,19 @@ pub fn judge(
     Ok(hits)
 }
 
-/// The fields each record of the base's shapes ledger (a defrecord or a struct — not an enum, see `ShapeKind::Enum`) gained against its version at the base and no
-/// approval covers (v2 §8.3). `base_source` is read only when a type of the ledger changed its fingerprint (the common case — no listed type changed — reads nothing).
+/// The fields each type of the base's shapes ledger gained against its version at the base (`RecordShape::grown_against`) and no approval covers (v2 §8.3). `base_source` is read only when a type of the ledger changed its fingerprint (the common case — no listed type changed — reads nothing).
 /// Err only if the source cannot be read.
 pub fn grown_fields(
     rel: &str,
     source: &str,
     base_ledger: &ExistingShapes,
     base_source: impl FnOnce() -> Option<String>,
-    approvals: &super::ledger_guard::Approvals,
+    approvals: &super::ledger_guard::BaseApprovals,
 ) -> Result<Vec<Hit>, String> {
     let shapes = shapes_of(rel, source)?;
     let changed: Vec<&RecordShape> = shapes
         .iter()
-        .filter(|s| s.kind.grows_by_fields() && base_ledger.fingerprint_of(rel, &s.name).is_some_and(|was| was != s.fingerprint().as_str()))
+        .filter(|s| base_ledger.fingerprint_of(rel, &s.name).is_some_and(|was| was != s.fingerprint().as_str()))
         .collect();
     if changed.is_empty() {
         return Ok(Vec::new());
@@ -968,13 +1019,8 @@ pub fn grown_fields(
     for shape in changed {
         let Some(was) = base_shapes.iter().find(|b| b.name == shape.name && b.kind == shape.kind) else { continue };
         let key = ExistingShapes::key(rel, &shape.name);
-        let fields: Vec<String> = shape
-            .fields
-            .iter()
-            .filter(|f| !was.fields.iter().any(|w| w.name == f.name))
-            .filter(|f| !approvals.covers(super::ledger_guard::ApprovalLedger::Fields, &key, &f.name))
-            .map(|f| f.name.clone())
-            .collect();
+        let fields: Vec<String> =
+            shape.grown_against(was).into_iter().filter(|f| !approvals.covers(super::ledger_guard::ApprovalLedger::Fields, &key, f)).collect();
         if !fields.is_empty() {
             hits.push(Hit { name: shape.name.clone(), start: shape.start, end: shape.end, problem: Problem::Grew { fields } });
         }
@@ -1033,7 +1079,7 @@ pub struct Judging {
 pub struct Growth {
     pub base: super::ledger_guard::Base,
     pub ledger: ExistingShapes,
-    pub approvals: super::ledger_guard::Approvals,
+    pub approvals: super::ledger_guard::BaseApprovals,
 }
 
 impl Growth {
@@ -1239,7 +1285,7 @@ mod tests {
     fn a_ledger_type_that_gains_a_field_grew_even_with_evidence_unless_approved() {
         let shapes = record_shapes(HY).expect("readable");
         let ledger = ExistingShapes::parse(&ExistingShapes::spell(std::iter::once(("m.hy", shapes.as_slice())))).expect("ledger");
-        let none = super::super::ledger_guard::Approvals::default();
+        let none = super::super::ledger_guard::BaseApprovals::default();
         assert!(grown_fields("m.hy", HY, &ledger, || panic!("an unchanged type reads no base"), &none).unwrap().is_empty());
         let added = HY.replace("merged-at))", "merged-at)\n  (#^ (| str None) gap))");
         let found = grown_fields("m.hy", &added, &ledger, || Some(HY.to_string()), &none).unwrap();
@@ -1247,7 +1293,8 @@ mod tests {
         let approved = super::super::ledger_guard::Approvals::parse(
             "[[approval]]\nledger = \"fields\"\nkey = \"m.hy::Done\"\nvalue = \"gap\"\nreview = \"req-1\"\nwhy = \"a fact of the key\"\n",
         )
-        .unwrap();
+        .unwrap()
+        .spelled(None);
         assert!(grown_fields("m.hy", &added, &ledger, || Some(HY.to_string()), &approved).unwrap().is_empty());
         // A retyped field is a reshape (evidence answers it), not growth.
         let retyped = HY.replace("(#^ str card)", "(#^ int card)");

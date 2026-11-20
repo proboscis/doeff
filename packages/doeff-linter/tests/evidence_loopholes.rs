@@ -5,7 +5,8 @@
 //!   * The ledger: a line added for a new type, and a fingerprint rewritten for a reshaped type, pass without :guard and are red (DOEFF214) with it; a removed line passes.
 //!   * A field added to a type of the ledger with complete evidence (a one-sentence concern) passes without :guard and is red (DOEFF212 Grew) with it — for a defrecord and a
 //!     Rust struct. An approval of the field added on the same branch, or one at the base whose review is not a request id of the declared spelling, does not let it pass;
-//!     an approval at the base with a request id does. A variant added to a Rust enum of the ledger is not a grown field (it needs evidence only).
+//!     an approval at the base with a request id does.
+//!   * A member added to the payload of a variant a Rust enum of the ledger already had is red the same way; a new variant is a new case, not growth (evidence only).
 
 use serde_json::Value;
 use std::collections::BTreeSet;
@@ -83,7 +84,7 @@ why = "one more type"
 
 [[element]]
 name = "Role"
-kind = "record"
+kind = "sum"
 concern = "what a user may do"
 key = []
 fan_out = 1
@@ -271,4 +272,59 @@ fn a_field_added_to_an_existing_type_with_evidence_passes_without_the_guard_and_
         set(&["app/core/user.rs::DOEFF212::User:grew"]),
         "only the approval with a request id of the declared spelling, landed first, lets the field pass"
     );
+}
+
+const OUTCOME_RS: &str = "pub enum Outcome {\n    Done,\n    Pending(u64),\n    Rejected { reason: String },\n}\n";
+const OUTCOME_GROWN_RS: &str =
+    "pub enum Outcome {\n    Done,\n    Pending(u64, String),\n    Rejected { reason: String, retry_after: Option<u64> },\n    Waiting(u64),\n}\n";
+const OUTCOME_GROWN_EVIDENCE: &str = r#"schema = 1
+
+[[element]]
+name = "Outcome"
+kind = "sum"
+concern = "how one piece of work ended"
+key = []
+fan_out = 1
+review = "rv-4"
+
+[[element.field]]
+name = "Done"
+fact = "it finished"
+
+[[element.field]]
+name = "Pending"
+type = "(u64, String)"
+fact = "it waits on a job, named"
+
+[[element.field]]
+name = "Rejected"
+type = "{ reason: String, retry_after: Option<u64> }"
+fact = "it was refused, and when to retry"
+
+[[element.field]]
+name = "Waiting"
+type = "(u64)"
+fact = "it waits on a job"
+
+[[element.rejected]]
+shape = "a status string"
+why = "a closed set"
+"#;
+
+#[test]
+fn a_member_added_to_the_payload_of_an_existing_variant_passes_without_the_guard_and_is_red_with_it() {
+    let files: &[(&str, &str)] = &[("app/core/outcome.rs", OUTCOME_RS)];
+    let grow = |root: &Path| {
+        write(root, "app/core/outcome.rs", OUTCOME_GROWN_RS);
+        write(root, "app/core/outcome.evidence.toml", OUTCOME_GROWN_EVIDENCE);
+    };
+    let open = turned_on(OPEN, files);
+    grow(open.path());
+    assert_eq!(keys(open.path()), set(&[]), "without :guard evidence lets a variant's payload grow");
+
+    let guarded = turned_on(GUARDED, files);
+    grow(guarded.path());
+    let (_, stdout, _) = linter(guarded.path(), &["--output-format", "editor-json"], None);
+    assert_eq!(keys(guarded.path()), set(&["app/core/outcome.rs::DOEFF212::Outcome:grew"]), "{}", stdout);
+    assert!(stdout.contains("Pending.1") && stdout.contains("Rejected.retry_after") && !stdout.contains("Waiting"), "the grown members are named; the new variant is not: {}", stdout);
 }

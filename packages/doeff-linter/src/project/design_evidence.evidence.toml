@@ -6,7 +6,7 @@ kind = "record"
 concern = "one field of a type as the source spells it"
 key = []
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "name"
@@ -30,11 +30,11 @@ why = "the reading differs by language; reading it once in the reader keeps the 
 
 [[element]]
 name = "ShapeKind"
-kind = "record"
+kind = "sum"
 concern = "which kind of source declaration a shape was read from"
 key = []
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "Defrecord"
@@ -58,7 +58,7 @@ kind = "record"
 concern = "the shape of one type as read from the source, the input of its fingerprint"
 key = ["name"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "name"
@@ -100,11 +100,11 @@ why = "the ledger, the evidence comparison and Grew read every language the same
 
 [[element]]
 name = "TokenKind"
-kind = "record"
+kind = "sum"
 concern = "the kind of one token of the Rust reader"
 key = []
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "Ident"
@@ -130,7 +130,7 @@ kind = "record"
 concern = "one token of the Rust reader and where it is"
 key = ["start"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "kind"
@@ -153,15 +153,19 @@ why = "a tuple's positions carry no names"
 
 [[element]]
 name = "ElementKind"
-kind = "record"
+kind = "sum"
 concern = "the kind of code element an evidence entry is about"
 key = []
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "Record"
-fact = "a type (judged)"
+fact = "a record type, a defrecord or a struct (judged)"
+
+[[element.field]]
+name = "Sum"
+fact = "a sum type, an enum (judged)"
 
 [[element.field]]
 name = "Function"
@@ -185,7 +189,7 @@ kind = "record"
 concern = "the author's answers about one field of a type"
 key = ["name"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "name"
@@ -219,7 +223,7 @@ kind = "record"
 concern = "one shape the author considered and did not choose"
 key = ["shape"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "shape"
@@ -241,7 +245,7 @@ kind = "record"
 concern = "the author's answers about one code element at the shape its fields spell"
 key = ["name", "kind"]
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "name"
@@ -306,7 +310,7 @@ kind = "record"
 concern = "one evidence file next to a module"
 key = []
 fan_out = 1
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "schema"
@@ -328,7 +332,7 @@ kind = "record"
 concern = "the ledger of the shapes that existed when the rule was turned on"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "shapes"
@@ -341,11 +345,11 @@ why = "the ledger is looked up by key and a key appears once; a map says so"
 
 [[element]]
 name = "Problem"
-kind = "record"
+kind = "sum"
 concern = "the kind of one DOEFF212 finding and its detail"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "Missing"
@@ -386,7 +390,7 @@ kind = "record"
 concern = "one DOEFF212 finding at a type of a module"
 key = ["name", "problem"]
 fan_out = 3
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "name"
@@ -418,7 +422,7 @@ kind = "record"
 concern = "the settings of one DOEFF212 run, read once"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "existing"
@@ -447,7 +451,7 @@ kind = "record"
 concern = "what judging the growth of existing types reads at the base"
 key = []
 fan_out = 2
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "base"
@@ -461,12 +465,12 @@ fact = "the shapes ledger at the base"
 
 [[element.field]]
 name = "approvals"
-type = "super::ledger_guard::Approvals"
-fact = "the approvals at the base of the declared spelling"
+type = "super::ledger_guard::BaseApprovals"
+fact = "the approvals at the base of the declared spelling (the only ones that let a field pass)"
 
 [[element.rejected]]
-shape = "read the base again per module"
-why = "one run reads the base once"
+shape = "the ledger and the approvals at the base as two Option fields of Judging"
+why = "they come from the same base and exist together or not at all; two Options would admit one without the other"
 
 [[element]]
 name = "FileHits"
@@ -474,7 +478,7 @@ kind = "record"
 concern = "the DOEFF212 findings of one module with what reporting needs"
 key = ["rel"]
 fan_out = 3
-review = "self-evidence-review-1"
+review = "design-evidence-review-2026-11-20"
 
 [[element.field]]
 name = "rel"

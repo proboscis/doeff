@@ -220,7 +220,7 @@ why = "named fields are clearer"
 
 [[element]]
 name = "Role"
-kind = "record"
+kind = "sum"
 concern = "user access role"
 key = []
 fan_out = 1
