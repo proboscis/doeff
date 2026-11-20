@@ -22,7 +22,7 @@
 (import doeff_cluster._worker.protocol.env_translation [editable-dirs hy-dist-version SHARED-SCRIPT-HEAD])
 (import posixpath)
 (import doeff_core_effects [ReadMemoryFiles MemoryFiles])
-(import doeff_core_effects [ListDirectory WriteText RemoveTree MakeDirectory])
+(import doeff_core_effects [ListDirectory WriteText RemoveTree MakeDirectory FileFailed])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn Task Gather])
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
@@ -558,7 +558,10 @@
                  (dfor #(p text) (.items own) :if (not (.endswith p SHARED-VENV-PTH)) (+ inside (cut p (len outside) None)) text)
                  {(+ inside "/bin/hy") (.format "#!{}/bin/python\nimport hy\n" inside)}))
   (for [#(path text) (.items placed)]
-    (<- (WriteText path (.replace (.replace text (+ outside "/") (+ inside "/")) (+ shared "/") (+ inside "/")))))
+    (<- made (| None FileFailed) (MakeDirectory (posixpath.dirname path)))
+    (assert (is made None) made)
+    (<- written (| None FileFailed) (WriteText path (.replace (.replace text (+ outside "/") (+ inside "/")) (+ shared "/") (+ inside "/"))))
+    (assert (is written None) written))
   (<- (RemoveTree outside))
   (<- (RemoveTree shared))
   None)
@@ -591,7 +594,7 @@
   (val copied (| (dfor #(p text) (.items files) :if (.startswith p (.format "{}/.venv/" second.root)) p text) common))
   (assert (not (any (gfor text (.values copied) (or (in (+ first.root "/") text) (in "/app/.venv/" text)))))
           #("写した venv の file は前の root の path も木の中の venv の path も持たない"
-            (lfor #(p text) (.items copied) :if (or (in (+ first.root "/") text) (in "/app/.venv/" text)) p)))
+            (lfor #(p text) (.items copied) :if (or (in (+ first.root "/") text) (in "/app/.venv/" text)) #(p text))))
   True)
 
 

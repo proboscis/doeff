@@ -558,7 +558,7 @@
 
 ;; venv の file のうち、写し元の root の絶対 path を持ちうる物(uv が書く — bin の script の頭と activate・editable の .pth・direct_url.json・
 ;; pyvenv.cfg・editable の印 __editable__*)。これだけを読んで書き換え、ほかは hardlink で写す。
-(val VENV-REWRITTEN-NAMES #("direct_url.json" "pyvenv.cfg"))
+(val VENV-REWRITTEN-NAMES #("direct_url.json" "pyvenv.cfg" "_doeff_pycache_prefix"))
 (val VENV-SCRIPT-MODE 0o755)
 
 
