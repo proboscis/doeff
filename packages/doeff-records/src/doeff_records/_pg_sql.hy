@@ -197,14 +197,23 @@
 ;;; disk を読む文の後ろに 7 本が並び、記録の書きが 2〜5 秒待った)。transaction の形('xact')は番号の錠を取らず、番号の読みの約束を snapshot で
 ;;; 守る(transactional outbox の xid8 の形 — 変更の列に transaction の id を持たせ、読み手は snapshot の xmin より前の transaction の行
 ;;; だけを読む): 変更の番号 = 書きの transaction の xid8 × XACT-NUMBER-SPAN(2^20)+ その transaction の中の順(同じ文で自分の xid の範囲の
-;;; 最大 + 1 を読む — append-change-statement)。読み手の頭 = pg_snapshot_xmin(pg_current_snapshot()) × 2^20 − 1(watermark-expression)で、
-;;; xmin より前の transaction は全部終わっているので、頭より小さい番号に後から commit が現れない。番号の順は (xid8, transaction の中の順) で、
+;;; 最大 + 1 を読む — append-change-statement)。読み手の頭 = 頭を止める transaction(下)の最小の xid × 2^20 − 1(watermark-expression)で、
+;;; それより前の transaction は終わったか変更の列に積めないので、頭より小さい番号に後から commit が現れない。番号の順は (xid8, transaction の中の順) で、
 ;;; 位置は 1 つの整数のまま(WatchCursor・Written.position・出来事の position・write_keys.last_seq の形と大小の意味を変えない)。同じ行への
 ;;; 2 つの書きは表の単位の錠で 1 本ずつに並び、xid は表の単位の錠の後の最初の行の錠で付くので、行の変更の順(版の順)と xid の順は揃う。
 ;;; 頭は行の番号でなく見張りの位置なので、書きの答えの位置(自分の番号)は commit の直後に頭を越えていることがある — 頭より後でも、
 ;;; snapshot の xmax × 2^20 より前の位置(watch-bound-expression)は Reset にせず、頭が追いつくまで空の変更で待たせる。
-;;; 変更の列の頭は xmin で決まるので、長く走る書きの transaction(PostgreSQL の全部の database の、xid を持つ transaction)の間は、
-;;; その後の変更の見え始めがその終わりまで遅れる(書きは待たない)。
+;;; 頭を止める transaction(Kafka の read_committed の last stable offset と同じ考え — 頭を止めるのは、その列に積み得る開いた transaction
+;;; だけ): 前の形は頭を snapshot の xmin にし、PostgreSQL の全部の database の xid を持つ transaction の 1 つが開いている間、その後に commit
+;;; した変更(書き手の自分の書きも — 答えの Written.position を受けた後の読み)が全部見えなかった(2026-11-19 — 16〜19 秒自分の書きが
+;;; 読めず、読みの max + 1 で決めた番号を 2 度書いた)。変更の列に積む transaction は、xid を持つ前(BEGIN の直後 — SqlTransaction の
+;;; locks)に置き場の書きの錠(writer-lock-key — 部分の書きは共有・置き場全体は排他)を取り、transaction の終わりまで持つ(契約 — 錠の外で
+;;; 変更の列に書かない)。読み手は文の snapshot の走っている xid(pg_snapshot_xip)から、同じ文の中の pg_locks の 1 つの断面で「xid の錠を
+;;; 持ち(まだ走っている)・置き場の書きの錠を持たない」と見えた transaction(free-xids-expression)を除いた最小を頭の xid にする。除いた
+;;; transaction は、snapshot の後も xid を持ったまま書きの錠を持たずに走っているので、変更の列に積めない。snapshot の後に終わった
+;;; transaction(xid の錠が消えた — 文の snapshot にはその行が見えない)は除かず頭を止める(次の読みで進む)。書きの錠を待っている書きは、
+;;; まだ xid を持たない(xid は錠の後の最初の書きで付く — snapshot の xmax 以上)。書きの transaction は文の上限で縛られるので、頭が止まるのは
+;;; 置き場の書きの長さの間だけ。
 ;;; 形の切り替え(switch-numbering-statements — 置き場全体の錠を排他で持つ transaction の中): 旧い版の読み手は全部の書きが番号の錠を
 ;;; 持つ前提で max(seq) まで読むので、旧い版の process が残っている間は 'lock' のまま。'xact' へ切り替える transaction は、変更の列の
 ;;; sequence の上限(MAXVALUE)を今の値に止める — 残った旧い版の行の書きは番号を取れずに失敗する(黙って取りこぼさない)。xid8 × 2^20 は
@@ -1092,16 +1101,39 @@
 (val XACT-BASE-EXPRESSION (.format "pg_current_xact_id()::text::bigint * {}" XACT-NUMBER-SPAN))
 
 
+(defk free-xids-expression [prefix]
+  {:pre [(: prefix str)] :post [(: % str)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の書きの錠(writer-lock-key — 共有も排他も・待ちも)を持たないまま xid を持って走っている transaction の xid(32 bit)の組を読む
+   副問いを作るため(頭の註の「頭を止める transaction」)。pg_locks を 1 回だけ読み(pg_lock_status の 1 つの断面)、仮想の transaction の id で
+   束ねて、自分の xid の錠(transactionid の ExclusiveLock — 部分 transaction の xid も)と置き場の書きの錠の有無を同じ断面で見る。
+   鍵の hashtext が別の鍵と重なっても、余計に頭を止めるだけで約束は破れない。接頭辞は checked-prefix の字(英小文字・数字・_)だけ。"
+  (.format "SELECT unnest(g.xids) FROM
+              (SELECT array_agg(l.transactionid::text::bigint)
+                        FILTER (WHERE l.locktype = 'transactionid' AND l.mode = 'ExclusiveLock' AND l.granted) AS xids,
+                      bool_or(l.locktype = 'advisory' AND l.objsubid = 1
+                              AND l.objid = (hashtext('{k}')::bigint & 4294967295)::oid
+                              AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())) AS writer
+                 FROM pg_locks AS l GROUP BY l.virtualtransaction) AS g
+             WHERE g.writer IS NOT TRUE AND g.xids IS NOT NULL"
+           :k (! (writer-lock-key (! (checked-prefix prefix))))))
+
+
 (defk watermark-expression [prefix alias]
   {:pre [(: prefix str) (: alias str)] :post [(: % str)]
    :tags {:context "records" :role "foundation"}}
   "変更の列の頭(これより小さい番号に後から commit が現れない位置 — 頭の註の「番号の形」)の式を、store_epoch の行 alias から作るため:
-   錠の形は変更の列の最大の番号(番号の錠の約束)、transaction の形は文の snapshot の xmin の xid の範囲の手前。どちらも floor を下回らない。
-   pg_current_snapshot() は文の snapshot なので、同じ文が読む行と同じ断面の頭になる。"
+   錠の形は変更の列の最大の番号(番号の錠の約束)、transaction の形は文の snapshot の走っている xid(pg_snapshot_xip)のうち、置き場の書きの
+   錠を持たずに走り続けている物(free-xids-expression — 変更の列に積めない)を除いた最小の xid の範囲の手前(残りが無ければ snapshot の
+   xmax の手前 — 頭の註の「頭を止める transaction」)。どちらも floor を下回らない。pg_current_snapshot() は文の snapshot なので、同じ文が
+   読む行と同じ断面の頭になる。"
   (.format "CASE WHEN {a}.numbering = '{x}'
-                 THEN greatest({a}.floor, pg_snapshot_xmin(pg_current_snapshot())::text::bigint * {s} - 1)
+                 THEN greatest({a}.floor,
+                               coalesce((SELECT min(r.x::text::bigint) FROM pg_snapshot_xip(pg_current_snapshot()) AS r(x)
+                                          WHERE mod(r.x::text::bigint, 4294967296) NOT IN ({f})),
+                                        pg_snapshot_xmax(pg_current_snapshot())::text::bigint) * {s} - 1)
                  ELSE greatest({a}.floor, (SELECT coalesce(max({p}row_changes.seq), 0) FROM {p}row_changes)) END"
-           :a alias :x NUMBERING-XACT :s XACT-NUMBER-SPAN :p prefix))
+           :a alias :x NUMBERING-XACT :s XACT-NUMBER-SPAN :p prefix :f (! (free-xids-expression prefix))))
 
 
 (defk watch-bound-expression [alias]
