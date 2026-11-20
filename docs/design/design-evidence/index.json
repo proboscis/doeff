@@ -1,12 +1,14 @@
 {
   "heads": {
     "design_validation": "design-evidence-v1-validation",
+    "report": "design-evidence-v2-loopholes",
     "snapshot": "snapshot-c86f12853c7f",
     "target": "design-evidence-v1"
   },
   "records": {
     "design-evidence-v1": "93da24a49eb0f0b825ca3157cc3b08d44d7c811459dd7b3f144703086ade9823",
     "design-evidence-v1-validation": "654cf6c52a073bc16af1f11fec3c332efcbfece362cc75abee072eceb6496ff8",
+    "design-evidence-v2-loopholes": "35435e78ca5b72e0498ced1d59ca51de29532eda691e818e3ae1fd655707eba0",
     "snapshot-c86f12853c7f": "640985c997df446f2bb247c46c43ec92cc0ede4c329426b34a7478646a7bda2d"
   },
   "schema_version": 1,

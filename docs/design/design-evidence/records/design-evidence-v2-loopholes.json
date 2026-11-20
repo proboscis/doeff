@@ -1,0 +1,29 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v2/design.md",
+      "sha256": "cf2d2402c9a58b7d551d6d7a10319b875427cc61ad5b2fc166805b279345c398"
+    }
+  ],
+  "body": {
+    "publication": {
+      "reference": null,
+      "status": "local"
+    },
+    "purpose": "discussion",
+    "summary": "v2 closes the ways around design evidence: DOEFF214 (ledgers only shrink against the base; approvals count only at the base), DOEFF212 Grew (a ledger type does not grow with evidence alone), DOEFF213 (static-key and attribute-keyed mappings, 0-or-1 sequences; answer tuples counted only). Measured on a downstream copy of 7,902 .hy files (design.md section 9.4).",
+    "topics": []
+  },
+  "created_at": "2026-11-20T06:23:10.579432+00:00",
+  "id": "design-evidence-v2-loopholes",
+  "inputs": [
+    {
+      "id": "design-evidence-v1",
+      "role": "basis",
+      "sha256": "93da24a49eb0f0b825ca3157cc3b08d44d7c811459dd7b3f144703086ade9823"
+    }
+  ],
+  "kind": "report",
+  "schema_version": 1,
+  "scope": "Design evidence (answers to the required design questions per code element): the model, where and how it is written, and doeff-linter's comparison with the shape of Hy defrecords (round 1)"
+}
