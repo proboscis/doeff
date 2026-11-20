@@ -8,6 +8,10 @@
 ;; 筋書き 2: worker の起き直し — 前の宿の表を持たない新しい宿が、置き場の dir を読んで覚え直し、止める頼みで止めて置き場を消す。
 ;; 筋書き 3: 持ち主不在の止め — 宣言から消えた持ち主の process は止めて置き場を消し、宣言に在る持ち主・退いた process が残る持ち主の
 ;;          process は残す。退いた世代の宣言では止めない。層を頼んだ process はその層の cgroup.procs へ移ってから起きる。
+;;
+;; 宿の外側の答え手は、本番の worker の組(worker/entry/main の production-handlers が返す組)をそのまま使う。差し替えるのは外の世界に
+;; 触れる拍の宣言の読み(coordinator-link)と世界の観測(local-host)の答えだけで、宿のすぐ外側に代役を挟む。組を検の中で並べ直すと、
+;; 本番の組に無い答え手(前は宿の id の乱数 RandomBytes の答え手)を検が補ってしまい、欠けが見えない。
 (require doeff-hy.macros [deftest defk defhandler <- val var])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "program"})
 (import json)
@@ -17,17 +21,29 @@
 (import sys)
 (import pathlib [Path])
 (import doeff [Program with-handlers])
-(import doeff_core_effects [await-handler state slog-handler scheduled Spawn])
-(import doeff_core_effects [os-file-handler os-proc-table-handler os-random-handler subprocess-handler])
+(import doeff_core_effects [scheduled Spawn])
+(import doeff_core_effects [os-proc-table-handler])
 (import doeff_core_effects [FileFailed PathKind PathStat ReadText StatPath])
 (import doeff_core_effects [EnvEntry EnvMode PollProcess ProcessExited ProcessNotChild ProcessRunning ProcessStarted ProcessNotStarted StartProcess
                             StopProcess ReadProcTable])
-(import doeff_time [Delay async-time-handler])
+(import doeff_time [Delay])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster._shared.intent.hosted_model [HostedLaunch HostedProcess HostedRefused LaunchHosted ListHosted StopHosted])
-(import doeff_cluster._worker.intent.worker_model [DesiredJobs ProcessView ReadDesired ObserveWorld WorldView])
+(import doeff_cluster._worker.intent.worker_model [CodeLayout DesiredJobs ProcessView ReadDesired ObserveWorld WorkerPolicy WorldView])
+(import doeff_cluster._worker.core.places [WorkerPlaces worker-places])
+(import doeff_cluster._worker.core.shim_timing [ShimSpans shim-spans])
+(import doeff_cluster._worker.protocol.coordinator_link [LinkState])
+(import doeff_cluster._worker.protocol.code_store [CodeSettings PREPARE-TOOL])
+(import doeff_cluster._worker.protocol.env_store [EnvSettings])
+(import doeff_cluster._worker.protocol.memory_watch [MemoryCell])
+(import doeff_cluster._worker.protocol.probes [ProbeSettings])
+(import doeff_cluster._worker.protocol.process_host [HostSettings])
+(import doeff_cluster._worker.protocol.warm_host [WarmSettings])
+(import doeff_cluster._shared.protocol.coordinator_route [CoordinatorRoute RouteCell RouteOptions route-of])
+(import doeff_cluster._foundation.host_contract [HOST-CONTRACT])
+(import doeff_cluster._worker.entry.main [production-handlers])
 (import doeff_cluster._worker.core.hosted_rules [hosted-root-of hosted-socket-of hosted-socket-dir-of])
-(import doeff_cluster._worker.protocol.hosted_host [HostedCell HostedSettings hosted-host])
+(import doeff_cluster._worker.protocol.hosted_host [HostedCell HostedSettings])
 (import doeff_cluster._worker.entry.hosted_socket [hosted-serve-loop])
 (import doeff_cluster._foundation.line_socket [LineInbox open-line-inbox])
 (import pytest)
@@ -91,12 +107,43 @@
     (resume beat.world)))
 
 
-(defk on-real-host [program [beat None]]
-  {:pre [(: program Program) (: beat (| Beat None))] :post [(: % (| tuple dict HostedProcess HostedRefused))] :tags {:context "doeff-cluster-test" :role "entry"}}
-  "Program を本物の答え手(子 process・process の表・file・乱数)と宿の下で回すため(本番の組の順 — 宿は一番内側)。"
-  (<- answer (scheduled (with-handlers [await-handler (async-time-handler) (state) slog-handler os-file-handler os-proc-table-handler os-random-handler
-                                        subprocess-handler #* (if (is beat None) [] [(stub-beat beat)])]
-                          program)))
+(defk production-set [tmp hosted cell beat]
+  {:pre [(: tmp Path) (: hosted HostedSettings) (: cell HostedCell) (: beat Beat)] :post [(: % list)]
+   :tags {:context "doeff-cluster-test" :role "entry"}}
+  "本番の worker の組(production-handlers — 置き場は tmp の下・coordinator は届かない宛先)を作り、宿(組の一番内側)のすぐ外側に
+   拍の代役 stub-beat を挟むため。組の残りは本番のまま — 宿が出す効果は本番と同じ答え手が答える。"
+  (val state (str (/ tmp "worker")))
+  (<- places WorkerPlaces (worker-places state state hosted.generation))
+  (val policy (WorkerPolicy))
+  (<- shim ShimSpans (shim-spans policy))
+  (val layout (CodeLayout))
+  (val hy-command (str (/ (. (Path sys.executable) parent) "hy")))
+  (<- route CoordinatorRoute (route-of "http://127.0.0.1:9" 0))
+  (val link (LinkState "hosted-test" #() 10000 places.tasks hosted.generation 0 0 0))
+  (<- handlers list
+      (production-handlers (HostSettings :log-dir places.logs :generation places.generation :jobs-dir places.jobs
+                                         :program-dir places.programs :python sys.executable :hy-command hy-command :extra-env #()
+                                         :layout layout :program-env HOST-CONTRACT.program-env :notice-env HOST-CONTRACT.notice-env
+                                         :shim shim :warm-dir places.warm)
+                           (ProbeSettings :python sys.executable :hy-command hy-command :layout layout :probe-dir places.probe :shim shim)
+                           link (RouteCell route) (RouteOptions :reply-seconds 1.0 :watch-seconds 0.5 :connect-seconds 0.5 :connect-retries 0
+                                                                       :recheck-ms 1000 :actor "hosted-test" :resend-deadline-seconds 1.0
+                                                                       :resend-pause-seconds 0.1)
+                           (RouteCell route) (RouteCell route) places.status
+                           (CodeSettings :repo state :cache places.code :hy-command None :tool PREPARE-TOOL :layout layout)
+                           (EnvSettings :state state :hy-command hy-command :platform "test" :code-prepare PREPARE-TOOL
+                                        :roots-cap-bytes 0 :uv-cache state)
+                           (WarmSettings :warm-dir places.warm :log-dir places.logs :generation places.generation :uv "uv")
+                           None (MemoryCell) :hosted hosted :hosted-cell cell))
+  (+ (cut handlers -1) [(stub-beat beat) (get handlers -1)]))
+
+
+(defk on-real-host [tmp hosted cell program [beat None]]
+  {:pre [(: tmp Path) (: hosted HostedSettings) (: cell HostedCell) (: program Program) (: beat (| Beat None))]
+   :post [(: % (| tuple dict HostedProcess HostedRefused))] :tags {:context "doeff-cluster-test" :role "entry"}}
+  "Program を本番の worker の組(宿は一番内側)の下で回すため — 子 process・process の表・file・乱数は本番の答え手が答える。"
+  (<- handlers list (production-set tmp hosted cell (if (is beat None) (Beat None (WorldView :codes #() :processes #())) beat)))
+  (<- answer (scheduled (with-handlers handlers program)))
   answer)
 
 
@@ -174,7 +221,7 @@
   (<- socket-dir str (hosted-socket-dir-of settings.root))
   (val inbox (open-line-inbox socket))
   (try
-    (val got (! (on-real-host (with-handlers [(hosted-host settings (HostedCell))] (job-end-and-handoff inbox tmp-path)))))
+    (val got (! (on-real-host tmp-path settings (HostedCell) (job-end-and-handoff inbox tmp-path))))
     (val first (get got 0))
     (val listed (get got 1))
     (val code (get got 2))
@@ -224,10 +271,10 @@
 (deftest test-a-restarted-worker-adopts-a-hosted-process-from-its-place-and-stops-it [tmp-path]
   {:skip-if (not LINUX) :skip-reason NOT-LINUX}
   (<- settings HostedSettings (settings-of tmp-path))
-  (val first (! (on-real-host (with-handlers [(hosted-host settings (HostedCell))] (launched-one "turn-host")))))
+  (val first (! (on-real-host tmp-path settings (HostedCell) (launched-one "turn-host"))))
   (assert (isinstance first HostedProcess) first)
   ;; 起き直した worker: 表を持たない新しい宿(新しい入れ物)。
-  (val again (! (on-real-host (with-handlers [(hosted-host settings (HostedCell))] (adopted-and-stopped first.id)))))
+  (val again (! (on-real-host tmp-path settings (HostedCell) (adopted-and-stopped first.id))))
   (val listed (get again 0))
   (val stopped (get again 1))
   (val after (get again 2))
@@ -291,7 +338,7 @@
   (.write-text (Path procs) "")
   (<- settings HostedSettings (settings-of tmp-path {"clis" procs}))
   (val beat (Beat None (WorldView :codes #() :processes #())))
-  (val seen (! (on-real-host (with-handlers [(hosted-host settings (HostedCell))] (owner-absent-scene beat procs)) beat)))
+  (val seen (! (on-real-host tmp-path settings (HostedCell) (owner-absent-scene beat procs) beat)))
   (val kept (get seen "kept"))
   (val old (get seen "old"))
   (val gone (get seen "gone"))
