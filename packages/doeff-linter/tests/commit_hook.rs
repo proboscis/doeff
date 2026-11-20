@@ -1115,10 +1115,11 @@ fn a_tree_in_use_is_not_rewritten_and_a_temporary_tree_is_used() {
     assert_eq!(std::fs::read_to_string(after.path.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 2)\n");
 }
 
-/// Different working trees of the same repo share one tree (the name for the repo comes from its root commits). Repo dirs of the previous form, named by the path of git's
-/// shared dir (record `repo.path`), are deleted whether or not that dir still exists; things with other names and repo dirs of the current form are not touched.
+/// Different working trees of the same repo share one tree (the name for the repo comes from its root commits). A repo dir of the previous form, named by the path of git's
+/// shared dir (record `repo.path`), is deleted once that dir no longer exists; one whose working tree still exists stays (a linter of the previous version in that working
+/// tree's environment still uses it -- deleting it would make its next commit write a whole tree). Things with other names and repo dirs of the current form are not touched.
 #[test]
-fn worktrees_of_one_repo_share_the_tree_and_path_named_trees_are_removed() {
+fn worktrees_of_one_repo_share_the_tree_and_vanished_path_named_trees_are_removed() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
@@ -1146,7 +1147,7 @@ fn worktrees_of_one_repo_share_the_tree_and_path_named_trees_are_removed() {
     std::fs::write(other_repo.join("repo.id"), format!("{}\n\n", "e".repeat(40))).unwrap();
     place(root, &[], &home, &scratch);
     assert!(!gone.exists(), "the path-named repo dir whose shared dir is gone remained");
-    assert!(!alive.exists(), "the path-named repo dir whose shared dir still exists remained");
+    assert!(alive.join("tree").is_dir(), "deleted the path-named repo dir whose shared dir still exists (a previous linter there writes it whole again)");
     assert!(unrecorded.is_dir(), "deleted a dir with no record");
     assert!(other_repo.is_dir(), "deleted the tree of another repo");
 }

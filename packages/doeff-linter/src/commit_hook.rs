@@ -644,7 +644,9 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
 //   Two at the same time: while using the tree (from the rewrite until the child linter finishes measuring), hold the exclusive lock of `lock`. If it cannot be taken after waiting LOCK_WAIT,
 //   write the tree out into this run's temporary dir and use that (do not touch the placed tree -- the fact cache does not work, but it does not stop).
 //   Cleanup: delete trees per sha in the previous form (`<sha>`, `<sha>-<16 digits>`, and leftover write-outs `.partial-…`) when found. Also delete repo dirs of the previous form named by
-//   the git common dir's path (those with the record `repo.path` -- only those whose lock could be taken). Only dirs of these shapes are deleted (other things in this location are not touched).
+//   the git common dir's path (record `repo.path`) whose recorded common dir no longer exists (only those whose lock could be taken). One whose working tree still exists is left to
+//   the cap sweep: a linter of the previous version still in that working tree's environment keeps using it, and deleting it would make its next commit write a whole tree.
+//   Only dirs of these shapes are deleted (other things in this location are not touched).
 //   The location dir itself is given the mark that facts_cache uses, and is included in the cleanup of the overall cap on the fact cache's root (sweep_over_cap) — it carries
 //   the `units` marker and each repo dir its own used marker (refreshed whenever its lock is taken), so the cap sweep deletes idle repo dirs oldest first
 //   and skips one whose lock is held. Before, the location dir as a whole was the unit and every commit refreshed it, so trees of working trees with separate
@@ -662,7 +664,7 @@ pub const TREE_LOCK: &str = crate::project::facts_cache::UNIT_LOCK;
 pub const TREE_LIST: &str = "tree.list";
 /// The record, inside the repo's dir, of the repo's identity (repo_identity).
 pub const REPO_RECORD: &str = "repo.id";
-/// The record of a repo dir of the previous form, named by the path of the repo's git common dir (retire_path_named_repos).
+/// The record, in a repo dir of the previous form named by the path of the repo's git common dir, of that path (retire_vanished_repos).
 pub const PATH_RECORD: &str = "repo.path";
 /// The dir, inside the repo's dir, of the whole-repo answers (answer_key).
 pub const ANSWERS_DIR: &str = "answers";
@@ -791,15 +793,15 @@ pub fn retire_sha_trees(home: &Path) -> usize {
     home_dirs(home).into_iter().filter(|(name, path)| is_sha_tree_name(name) && std::fs::remove_dir_all(path).is_ok()).count()
 }
 
-/// Deletes, in the location home, the repo dirs of the previous form named by the path of the git common dir (those with the record `repo.path`), and returns the number deleted (the note
-/// above) -- keep (the current repo), dirs with no such record, and dirs whose lock cannot be taken are not touched.
-pub fn retire_path_named_repos(home: &Path, keep: &str) -> usize {
+/// Deletes, in the location home, the repo dirs of the previous form (record `repo.path`) whose recorded git common dir no longer exists, and returns the number deleted (the note above) --
+/// keep (the current repo), dirs with no such record, and dirs whose lock cannot be taken are not touched.
+pub fn retire_vanished_repos(home: &Path, keep: &str) -> usize {
     home_dirs(home)
         .into_iter()
         .filter(|(name, path)| {
             name != keep
                 && is_hex(name, 16)
-                && path.join(PATH_RECORD).is_file()
+                && std::fs::read_to_string(path.join(PATH_RECORD)).is_ok_and(|recorded| !Path::new(recorded.trim()).exists())
                 && acquire_lock(&path.join(TREE_LOCK), Duration::ZERO).is_ok_and(|lock| lock.is_some())
                 && std::fs::remove_dir_all(path).is_ok()
         })
@@ -839,7 +841,7 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
     let roots = git(root, &["rev-list", "--max-parents=0", "HEAD"])?;
     let identity = repo_identity(&split_lines(&roots), &root_prefix(root)?);
     let key = repo_key(&identity);
-    retire_path_named_repos(&home, &key);
+    retire_vanished_repos(&home, &key);
     let repo_dir = home.join(&key);
     std::fs::create_dir_all(&repo_dir).map_err(|e| format!("cannot create {}: {}", repo_dir.display(), e))?;
     let Some(lock) = acquire_lock(&repo_dir.join(TREE_LOCK), wait)? else {
