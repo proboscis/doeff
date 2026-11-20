@@ -4,7 +4,7 @@
 ;;; 直す前: 止めの見張り(watch-stop)は待ち受けを閉じる(HttpShutdown)だけで、保留中の long-poll は置き場の待ちのまま上限の秒
 ;;; (WATCH-MAX-SECONDS = 25 秒)まで答えず、受けの loop はそれを Gather で待つ — 入口の run は止めの合図から 25 秒近く終わらない
 ;;; (本番では worker の猶予 10 秒を使い切って SIGKILL)。
-;;; 直した後: 止めの合図で、保留中の待ちは直ぐに空の答え(changes の空・eventsQuiet)を受け、run は合図から止めの見張りの間隔の内に終わる。
+;;; 直した後: 止めの合図で、保留中の待ちは直ぐに空の答え(changes の空・eventsQuiet)を受け、run は合図の刻に終わる。
 ;;; 空の答えの位置(cursor)は頼んだ位置のままなので、client が今の取り決めのまま(同じ位置から)次の置き場へ撃ち直すと、止めの後の書きを
 ;;; 読める。
 ;;;
@@ -21,7 +21,7 @@
 (import doeff_core_effects [inline-compute-handler])
 (import doeff_core_effects [state])
 (import doeff_core_effects [Spawn scheduled])
-(import doeff_core_effects [RaiseStop])
+(import doeff_core_effects [AwaitStop RaiseStop StopRequested])
 (import doeff_core_effects [scripted-stop-handler])
 (import doeff_core_effects [scripted-http-server])
 (import doeff_core_effects [HttpAddress HttpHeader HttpRequestArrived HttpScript ReadHttpServed ScriptedBody])
@@ -43,9 +43,8 @@
 (val PG-DSN (session-dsn PG-DSN-VARIABLE))
 (val PG-SKIP-REASON (pg-skip-reason))
 
-;; 止めの合図を撃つ仮想の秒・止めの見張りが合図を問い直す間隔・止めの理由。
+;; 止めの合図を撃つ仮想の秒・止めの理由。
 (val STOP-AT 2.0)
-(val STOP-POLL 0.5)
 (val STOP-REASON "検の止め")
 ;; 止めの合図の後に待たない筋書き(撃ち直し)で、止めの合図を撃つ仮想の秒(待ちの上限より後 — 待ちが止めで終わったのではない事を見る)。
 (val LATE-STOP-AT (* 2 WATCH-MAX-SECONDS))
@@ -149,7 +148,7 @@
   {:pre [(: handler-for Callable)] :post [(: % RecordsServing)] :tags {:context "records" :role "judgment"}}
   "書き手の名 → 記録の handler の関数 handler-for の上の入口の設定を作るため(用意の I/O は無い・手入れは立てない)。"
   (RecordsServing :address (HttpAddress :host "127.0.0.1" :port 0) :schema LAW-SCHEMA :prepare (prepared-now handler-for)
-                  :request-handlers #() :max-bytes 65536 :maintenance None :stop-poll-seconds STOP-POLL :drain-seconds 0.0))
+                  :request-handlers #() :max-bytes 65536 :maintenance None :drain-seconds 0.0))
 
 
 (defk prepared-now [handler-for]
@@ -201,10 +200,10 @@
 
 (defk stopped-quickly-with-empty-answers [ran]
   {:pre [(: ran StoppedRun)] :post [(: % None)] :tags {:context "records" :role "judgment"}}
-  "止めの筋書きの断言: run は止めの合図から見張りの間隔の内に 0 で終わり(待ちの上限の 25 秒を待たない)、保留の札はどれも空の答えを
+  "止めの筋書きの断言: run は止めの合図の刻に 0 で終わり(待ちの上限の 25 秒を待たない)、保留の札はどれも空の答えを
    ちょうど 1 つ受ける(changes は頼んだ位置のまま)。"
   (assert (= ran.code 0) ran)
-  (assert (<= ran.seconds (+ STOP-AT STOP-POLL)) #("止めの合図から待ちの上限まで待った" ran.seconds))
+  (assert (<= ran.seconds STOP-AT) #("止めの合図から待ちの上限まで待った" ran.seconds))
   (for [ticket CHANGES-TICKETS]
     (<- changes (decoded ran ticket "watch-changes"))
     (assert (= changes (Changes #() ran.cursor #())) #(ticket changes)))
@@ -224,10 +223,39 @@
   None)
 
 
+(defclass [(dataclass)] StopTrace []
+  "止めの見張りが発行した止めの問い・待ちの控え(検の覗き手が書き、走った後に検が読む):
+   asks = StopRequested / AwaitStop の列。"
+  (setv #^ (get tuple #(str ...)) asks #()))
+
+
+(defhandler stop-asks-tap [#^ StopTrace trace]
+  {:tags {:context "records" :role "foundation"}}
+  ;; 引数に残す理由: trace は検ごとに新しく作る控えの箱。
+  (StopRequested []
+    (setv trace.asks (+ trace.asks #("StopRequested")))
+    (<- asked (| str None) effect)
+    (resume asked))
+  (AwaitStop []
+    (setv trace.asks (+ trace.asks #("AwaitStop")))
+    (<- awaited str effect)
+    (resume awaited)))
+
+
 (defk on-memory [program]
   {:pre [(: program (| Program EffectBase))] :post [(: % "program の答え")] :tags {:context "records" :role "foundation"}}
   "memory の置き場の筋書きの土台: scheduler・session の値の置き場・仮想の時計・台本の止めの合図。"
   (run (scheduled (with-handlers [(state) (sim-time-handler :clock (SimClock)) inline-compute-handler scripted-stop-handler] program))))
+
+
+(deftest test-watch-stop-awaits-stop-once-without-polling
+  ;; 止めの見張り(watch-stop)は StopRequested と Delay で問い直さず、AwaitStop を 1 度だけ出して合図の刻に待ち受けを閉じる。
+  (val store (MemoryStore LAW-SCHEMA))
+  (val handler-for (fn [writer] (memory-records-handler store writer)))
+  (val trace (StopTrace))
+  (<- stopped StoppedRun (on-memory (with-handlers [(stop-asks-tap trace)] (long-polls-stopped handler-for))))
+  (assert (= trace.asks #("AwaitStop")) trace)
+  (<- (stopped-quickly-with-empty-answers stopped)))
 
 
 (deftest test-stop-answers-pending-long-polls-at-once-on-memory

@@ -41,7 +41,7 @@
 (import doeff_core_effects [PostgresConnections PostgresDatabase PostgresTimeouts postgres-sql-handler]
         doeff_core_effects._postgres_sql [DEFAULT-TIMEOUTS])
 (import doeff_core_effects [SqlQuery SqlTransaction SqlFailed SqlNotify])
-(import doeff_core_effects [StopRequested])
+(import doeff_core_effects [AwaitStop StopRequested])
 (import doeff_time [SimClock sim-time-handler async-time-handler])
 (import doeff_records [RecordsSchema Row Page NotIndexed ExpectAbsent Written Unreachable])
 (import doeff_records [ReadRow ListRows PutRow])
@@ -53,7 +53,7 @@
                                ordered-index-name ordered-within-index-name index-name index-lock-key])
 (import doeff_records._main [RecordsSettings DDL-DATABASE DDL-TIMEOUTS PG-STORE records-serving records-connected records-process])
 (import doeff_records [RecordsListening]
-        doeff_records._http_server [MaintenancePlan])
+        doeff_records._http_server [MaintenancePlan ShellStop await-shell-stop])
 (import doeff_records [RecordsEndpoint http-records-handler records-unwaited])
 (import tests.interpreters [session-dsn PG-DSN-VARIABLE pg-skip-reason DATABASE ORIGIN-HOST open-postgres fresh-prefix])
 
@@ -603,12 +603,15 @@
 
 ;; --- 記録の service(本番の土台の口)-------------------------------------------------------------------------------------------------
 
-(defhandler stop-when [#^ object stopping]
-  "止めの合図を、検の殻の合図(threading.Event)が立ったら答えるため。"
+(defhandler stop-when [#^ ShellStop stopping]
+  "止めの合図を、検の殻の合図(ShellStop)が立ったら答えるため。"
   {:tags {:context "records" :role "foundation"}}
   ;; 引数に残す理由: stopping は thread をまたぐ検の殻の合図。
   (StopRequested []
-    (resume (if (.is-set stopping) "検の止め" None))))
+    (resume stopping.reason))
+  (AwaitStop []
+    (<- reason str (await-shell-stop stopping))
+    (resume reason)))
 
 
 (defhandler listening-into [#^ object opened]
@@ -657,7 +660,7 @@
             watcher (open-postgres)
             opened (queue.Queue)
             ended (queue.Queue)
-            stopping (threading.Event))
+            stopping (ShellStop))
       (try
         (setv writer-pid (hold-writer writer prefix))
         (setv thread (serve-in-thread prefix opened stopping ended))
@@ -685,10 +688,10 @@
           (setv after (over-http url (ListRows "parts" :where {"note" "n1"}))))
         (assert (= (listed-keys after) #(#("p1"))) (repr after))
         (assert (.is-alive thread) "記録の service が終わった")
-        (.set stopping)
+        (.raise-stop stopping "検の止め")
         (assert (= (.get ended :timeout 30) 0) "記録の service が 0 で終わらなかった")
         (finally
-          (.set stopping)
+          (.raise-stop stopping "検の止め")
           (.close writer)
           (.close watcher))))))
 
@@ -702,7 +705,7 @@
       (setv watcher (open-postgres)
             opened (queue.Queue)
             ended (queue.Queue)
-            stopping (threading.Event))
+            stopping (ShellStop))
       (try
         (create-declared-note-index watcher prefix)
         (.execute watcher (.format "ANALYZE {}state_rows" prefix))
@@ -721,8 +724,8 @@
         (setv by-note (over-http url (ListRows "parts" :where {"note" "n1"})))
         (assert (= (listed-keys by-note) #(#("p1"))) (repr by-note))
         (assert (.is-alive thread) "記録の service が終わった")
-        (.set stopping)
+        (.raise-stop stopping "検の止め")
         (assert (= (.get ended :timeout 30) 0) "記録の service が 0 で終わらなかった")
         (finally
-          (.set stopping)
+          (.raise-stop stopping "検の止め")
           (.close watcher))))))

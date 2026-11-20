@@ -30,7 +30,7 @@
 ;;;     (sys.exit (run (with-handlers [subprocess-handler os-file-handler] (serve-records-service SCHEMA dsn-of)))))
 ;;;
 ;;; 自分の process の外側を持つ系は、records-settings と records-serving(置き場の選びを渡す)で値を作り、(records-process (fn [body] (<自分の外側>
-;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・StopRequested の答え手が要る)。
+;;; (records-connected settings body))) serving) を撃つ(外側に scheduled・await-handler・state・時計・AwaitStop の答え手が要る)。
 ;;;
 ;;; DSN の得方は呼び手が決める: records-settings は DSN を返す Program(dsn-source)を受け、接続 URL がどこに在るか(file・cluster の Secret
 ;;; など)を知らない。file から読む呼び手は (records-settings (pg-url-file-dsn dsn-of)) と書く(単独の入口 serve-records-service はこの形)。
@@ -118,8 +118,7 @@
 (val COMPUTE-WORKERS 4)
 ;; 書き手の名 → 記録の handler の覚えの上限(pg-handlers-of — 本番の書き手の名は job の数ほど。越えた名は古い方から組み直す)。
 (val WRITER-HANDLERS-KEPT 256)
-;; 止めの合図を問い直す間隔の秒と、待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
-(val STOP-POLL-SECONDS 0.5)
+;; 待ち受けを閉じる時に送りの箱を流し切る上限の秒(ws を持たないので 0)。
 ;; scheduler の混みの探りの拍の秒(_http_server.hy の頭の註 — 1 秒に 1 回計器へ積む)。
 (val LAG-PROBE-SECONDS 1.0)
 (val DRAIN-SECONDS 0.0)
@@ -361,7 +360,7 @@
   (RecordsServing :address settings.address :schema schema
                   :prepare (choice.prepare-of schema settings.prefix settings.origin-host settings.numbering) :request-handlers #()
                   :max-bytes REQUEST-MAX-BYTES :maintenance settings.maintenance
-                  :stop-poll-seconds STOP-POLL-SECONDS :drain-seconds DRAIN-SECONDS :readiness choice.readiness
+                  :drain-seconds DRAIN-SECONDS :readiness choice.readiness
                   :pressure choice.pressure :callers settings.callers
                   ;; 土台の口 records-connected が開く計算の pool の thread の数(GET /metrics の利用率の割る数)。
                   :compute-workers COMPUTE-WORKERS
