@@ -1115,10 +1115,10 @@ fn a_tree_in_use_is_not_rewritten_and_a_temporary_tree_is_used() {
     assert_eq!(std::fs::read_to_string(after.path.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 2)\n");
 }
 
-/// Different working trees of the same repo share one tree (the name for the repo comes from git's shared dir). A repo dir whose recorded shared dir no longer exists is
-/// deleted; things with other names are not touched.
+/// Different working trees of the same repo share one tree (the name for the repo comes from its root commits). Repo dirs of the previous form, named by the path of git's
+/// shared dir (record `repo.path`), are deleted whether or not that dir still exists; things with other names and repo dirs of the current form are not touched.
 #[test]
-fn worktrees_of_one_repo_share_the_tree_and_vanished_repos_are_removed() {
+fn worktrees_of_one_repo_share_the_tree_and_path_named_trees_are_removed() {
     let dir = baseline_repo();
     let root = dir.path();
     let side = tempfile::TempDir::new().unwrap();
@@ -1131,14 +1131,83 @@ fn worktrees_of_one_repo_share_the_tree_and_vanished_repos_are_removed() {
     // The cap sweep of the facts cache deletes repo dirs one by one: the home carries the units marker and the repo dir its own used marker.
     assert!(home.join("units").is_file(), "the home of HEAD trees is not marked as holding separate units");
     assert!(main_tree.parent().unwrap().join("used").is_file(), "the repo dir of the HEAD tree has no used marker of its own");
-    let gone = home.join(format!("{:016x}", 5));
-    std::fs::create_dir_all(&gone).unwrap();
-    std::fs::write(gone.join("repo.path"), side.path().join("no-such-repo/.git").to_string_lossy().as_bytes()).unwrap();
+    let previous = |n: u64, recorded: &Path| {
+        let dir = home.join(format!("{:016x}", n));
+        std::fs::create_dir_all(dir.join("tree")).unwrap();
+        std::fs::write(dir.join("repo.path"), recorded.to_string_lossy().as_bytes()).unwrap();
+        dir
+    };
+    let gone = previous(5, &side.path().join("no-such-repo/.git"));
+    let alive = previous(7, &root.join(".git"));
     let unrecorded = home.join(format!("{:016x}", 6));
     std::fs::create_dir_all(&unrecorded).unwrap();
+    let other_repo = home.join(format!("{:016x}", 8));
+    std::fs::create_dir_all(&other_repo).unwrap();
+    std::fs::write(other_repo.join("repo.id"), format!("{}\n\n", "e".repeat(40))).unwrap();
     place(root, &[], &home, &scratch);
-    assert!(!gone.exists(), "the repo dir whose shared dir is gone remained");
+    assert!(!gone.exists(), "the path-named repo dir whose shared dir is gone remained");
+    assert!(!alive.exists(), "the path-named repo dir whose shared dir still exists remained");
     assert!(unrecorded.is_dir(), "deleted a dir with no record");
+    assert!(other_repo.is_dir(), "deleted the tree of another repo");
+}
+
+/// Failure case (2026-11-19, a machine where each working tree has a git dir of its own -- clones sharing objects by alternates): the tree was named after the path of git's
+/// shared dir, so each working tree got its own tree and its first commit wrote a whole tree (about 400MB of agora-controllers per working tree, about 92GB a day to one SSD).
+/// Two clones of one repo, each with a commit the other does not have, share one tree: the second clone's run rewrites only the files that differ from the first clone's HEAD
+/// (unchanged files keep their inode and mtime), although the first clone's commit is not among the second clone's objects.
+#[test]
+fn clones_with_separate_git_dirs_share_the_tree_and_rewrite_only_the_difference() {
+    let dir = baseline_repo();
+    let side = tempfile::TempDir::new().unwrap();
+    let (home, scratch) = (side.path().join("commit-hook-tree"), side.path().join("scratch"));
+    let (first, second) = (side.path().join("first"), side.path().join("second"));
+    for clone in [&first, &second] {
+        git(side.path(), &["clone", "-q", &dir.path().to_string_lossy(), &clone.to_string_lossy()]);
+    }
+    write(&first, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(&first, &["commit", "-q", "-am", "first"]);
+    write(&second, "app/queue/extra.py", "import sys\n");
+    git(&second, &["add", "-A"]);
+    git(&second, &["commit", "-q", "-m", "second"]);
+    let first_head = format!("{}^{{commit}}", head_sha(&first));
+    let seen = Command::new("git").args(["cat-file", "-e", &first_head]).current_dir(&second).env_remove("GIT_DIR").output().unwrap();
+    assert!(!seen.status.success(), "the premise: the first clone's commit is not among the second clone's objects");
+    use doeff_linter::commit_hook::TreeUpdate;
+    let placed = place(&first, &[], &home, &scratch);
+    assert_eq!(placed.update, TreeUpdate::Rebuilt);
+    let tree = placed.path.clone();
+    let untouched = file_stamp(&tree.join("app/foundation/host.hy"));
+    drop(placed);
+    let shared = place(&second, &[], &home, &scratch);
+    assert_eq!(shared.path, tree, "the second clone wrote a tree of its own");
+    assert_eq!(shared.update, TreeUpdate::Advanced { rewritten: 2, removed: 0 }, "the second clone did not advance the shared tree by the difference");
+    assert_eq!(file_stamp(&tree.join("app/foundation/host.hy")), untouched, "rewrote an unchanged file");
+    assert_eq!(std::fs::read_to_string(tree.join("app/queue/main.hy")).unwrap(), "(defk cycle [] 1)\n");
+    assert_eq!(std::fs::read_to_string(tree.join("app/queue/extra.py")).unwrap(), "import sys\n");
+}
+
+/// Failure case: a tree placed without the listing of its files (by a previous version) is advanced from git's listing of the recorded sha when this repo has that commit, and is
+/// written out again when it does not.
+#[test]
+fn a_tree_without_its_listing_advances_from_the_recorded_sha_or_is_rebuilt() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    let side = tempfile::TempDir::new().unwrap();
+    let (home, scratch) = (side.path().join("commit-hook-tree"), side.path().join("scratch"));
+    use doeff_linter::commit_hook::TreeUpdate;
+    let listing = place(root, &[], &home, &scratch).path.parent().unwrap().join("tree.list");
+    std::fs::remove_file(&listing).unwrap();
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(root, &["commit", "-q", "-am", "next"]);
+    assert_eq!(place(root, &[], &home, &scratch).update, TreeUpdate::Advanced { rewritten: 1, removed: 0 });
+    assert!(listing.is_file(), "the advanced tree has no listing");
+    let clone = side.path().join("clone");
+    git(side.path(), &["clone", "-q", &root.to_string_lossy(), &clone.to_string_lossy()]);
+    write(root, "app/queue/main.hy", "(defk cycle [] 3)\n");
+    git(root, &["commit", "-q", "-am", "only in the first repo"]);
+    place(root, &[], &home, &scratch);
+    std::fs::remove_file(&listing).unwrap();
+    assert_eq!(place(&clone, &[], &home, &scratch).update, TreeUpdate::Rebuilt);
 }
 
 // ------------------------------------------------------------------ One HEAD tree per repo

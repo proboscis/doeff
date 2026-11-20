@@ -260,6 +260,8 @@ The HEAD tree is placed under the fact cache's root, where the relative paths of
   3. `Confirm that this command exits with code 0 (0 hits that stop the commit) before committing again. Do not use --no-verify`
 - The judgment when not cut off is unchanged.
 - The tree that measures the HEAD version is placed one per repo under the cache root and advanced by diffs (#3858), so from the second run only changed files are rewritten.
+  The repo is named by its root commits and the root's position, so every working tree and clone of it shares the one tree even when each has a git dir of its own; the diff is taken
+  between the kept listing of the tree's files (`git ls-tree -r`, path to object) and HEAD's, so it does not need the tree's commit among this working tree's objects.
 
 ### Commit hook report (`--report-out`)
 

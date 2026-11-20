@@ -33,8 +33,9 @@
 //! re-verify commits that passed. When stopping, it writes in one line which comparison, on which tree, which rules, and
 //! cut off at what limit in seconds, followed by a command that redoes the same comparison without a limit (unbounded_command -- in a form that can be pasted and run as is) and guidance to
 //! commit again after confirming the result is 0 hits (do not use --no-verify).
-//! The tree on which the HEAD version is measured is placed, one per repo, at `commit-hook-tree/<name representing the repo>/tree` under the fact cache's root, and when HEAD advances only the files changed by git's diff
-//! are rewritten (head_tree -- the root path and the mtimes of unchanged files are preserved, so the fact cache works even for the single run that measures the HEAD version).
+//! The tree on which the HEAD version is measured is placed, one per repo (shared by every working tree and clone of it), at `commit-hook-tree/<name representing the repo>/tree` under the
+//! fact cache's root, and when HEAD advances only the files whose git object changed are rewritten (head_tree -- the root path and the mtimes of unchanged files are preserved, so the fact
+//! cache works even for the single run that measures the HEAD version).
 //! The pure parts (the split of rules, the difference of identifiers, the selection of hits that stop, the sentence for a comparison that could not be measured, and the command without a limit) are separated into functions and verified by unit tests.
 //!
 //! Report output (argument `--report-out <file>`): the two measurements (the HEAD version and the staged paths) are written, each as the list of measured paths,
@@ -620,26 +621,30 @@ fn unique_dir(base: &Path, prefix: &str) -> Result<PathBuf, String> {
 
 // Where the HEAD tree is placed. doeff-linter's fact cache (project::facts_cache) is placed in a dir per root path, keyed by each file's
 // size and mtime. If the tree were written out to a temporary dir or a dir per sha, then in the usual usage where HEAD advances at every commit, every run would be
-// a new root = a first run with no cache (about 66 seconds of CPU in agora-controllers). The tree is placed at one fixed path per repo, and when HEAD advances only the files changed by
-// git's diff are rewritten -- unchanged files are not touched, so mtimes are preserved and the fact cache hits.
+// a new root = a first run with no cache (about 66 seconds of CPU in agora-controllers). The tree is placed at one fixed path per repo, and when HEAD advances only the files whose
+// git object changed are rewritten -- unchanged files are not touched, so mtimes are preserved and the fact cache hits.
 // The shape is aligned with agora-controllers' pre-merge check for main (repo-base-tree in scripts/land_lint_gate.hy):
 //   Location = under the fact cache's root (facts_cache::cache_base -- by default `$XDG_CACHE_HOME/doeff-linter`, otherwise `~/.cache/doeff-linter`)
-//   `commit-hook-tree/<name representing the repo>/`: the tree `tree/`, the record `tree.sha` of the tree's current sha and the declaration files overlaid on it, the lock file `lock`, and
-//   the record `repo.path` of the absolute path of the repo's git common dir.
-//   The tree is the contents of the root (--root) dir, and if the root is a dir under the working tree's root, the name is the first 16 hex digits of the sha256 of the path made by joining that position (`git rev-parse --show-prefix`)
-//   to the common dir (roots at different positions do not fight over one tree).
-//   Name representing the repo = the first 16 hex digits of the sha256 of the absolute, normalized path of the repo's git common dir (`git rev-parse --git-common-dir`). Other
-//   working trees of the same repo have the same name and share one tree -- there are hundreds of working trees (561 for agora-controllers on node-h), so per-working-tree trees would run out of disk (one tree is
-//   about 35MB), and even the first commit in a new working tree can advance, by a diff only, from a tree advanced by other working trees (near the main line).
+//   `commit-hook-tree/<name representing the repo>/`: the tree `tree/`, the record `tree.sha` of the tree's current sha and the declaration files overlaid on it, the listing `tree.list` of
+//   the files of that sha (listing_of), the lock file `lock`, and the record `repo.id` of the repo's identity (repo_identity).
+//   Name representing the repo = the first 16 hex digits of the sha256 of the repo's identity: its root commits (`git rev-list --max-parents=0 HEAD`) and the root's position below the
+//   working tree's root (`git rev-parse --show-prefix` -- roots at different positions do not fight over one tree). Every working tree and clone of the same repo has the same name and
+//   shares one tree -- there are hundreds of working trees (561 for agora-controllers on node-h), so per-working-tree trees would run out of disk (one tree of agora-controllers is about 400MB),
+//   and even the first commit in a new working tree advances, by a diff only, from a tree advanced by other working trees (near the main line). The name used to be the path of the git
+//   common dir: on machines where each working tree has a git dir of its own (clones sharing objects by alternates -- 2,369 working trees of agora-controllers on another machine), every
+//   working tree got its own name, and its first commit wrote a whole tree (about 92GB a day to one SSD, 2026-11-19).
+//   The diff is taken between the listing of the tree's sha and the listing of HEAD (path -> mode, type and object), not by git from the recorded sha: the tree's sha is often a commit made
+//   in another working tree, which is not among this working tree's objects when the git dirs are separate. A tree placed without a listing is diffed from git's listing of the recorded sha.
 //   The mtime of rewritten files is set to the time they were written (tar's -m) -- with the commit's time (second granularity), two commits in the same second would give
 //   files of the same size with different contents the same key, and the facts of the previous contents would be read.
-//   During a rewrite the record `tree.sha` is removed, and after finishing it is put in place by renaming a temporary file. A tree where the record is absent or unreadable, or the diff cannot
-//   be taken from the recorded sha, is treated as a tree that crashed midway and everything is written out again (everything is written only in this case and the very first time). The overlaid declaration files (the one-time directive
+//   During a rewrite the record `tree.sha` is removed, and after finishing the listing and then the record are put in place by renaming a temporary file. A tree where the record is absent
+//   or unreadable, or whose files cannot be listed (no listing, and the recorded sha is not among this repo's objects), is treated as a tree that crashed midway and everything is written
+//   out again (everything is written only in this case and the very first time). The overlaid declaration files (the one-time directive
 //   Lint-Baseline) are put in the record, and restored to the contents of the tree's sha when next advancing.
 //   Two at the same time: while using the tree (from the rewrite until the child linter finishes measuring), hold the exclusive lock of `lock`. If it cannot be taken after waiting LOCK_WAIT,
 //   write the tree out into this run's temporary dir and use that (do not touch the placed tree -- the fact cache does not work, but it does not stop).
-//   Cleanup: delete trees per sha in the previous form (`<sha>`, `<sha>-<16 digits>`, and leftover write-outs `.partial-…`) when found. Also delete repo dirs whose recorded `repo.path` common dir
-//   no longer exists (only those whose lock could be taken). Only dirs of this name shape are deleted (other things in this location are not touched).
+//   Cleanup: delete trees per sha in the previous form (`<sha>`, `<sha>-<16 digits>`, and leftover write-outs `.partial-…`) when found. Also delete repo dirs of the previous form named by
+//   the git common dir's path (those with the record `repo.path` -- only those whose lock could be taken). Only dirs of these shapes are deleted (other things in this location are not touched).
 //   The location dir itself is given the mark that facts_cache uses, and is included in the cleanup of the overall cap on the fact cache's root (sweep_over_cap) — it carries
 //   the `units` marker and each repo dir its own used marker (refreshed whenever its lock is taken), so the cap sweep deletes idle repo dirs oldest first
 //   and skips one whose lock is held. Before, the location dir as a whole was the unit and every commit refreshed it, so trees of working trees with separate
@@ -653,8 +658,12 @@ pub const TREE_DIR: &str = "tree";
 pub const TREE_RECORD: &str = "tree.sha";
 /// The lock file inside the repo's dir.
 pub const TREE_LOCK: &str = crate::project::facts_cache::UNIT_LOCK;
-/// The record, inside the repo's dir, of the absolute path of the repo's git common dir.
-pub const REPO_RECORD: &str = "repo.path";
+/// The listing, inside the repo's dir, of the files of the tree's sha (line 1 the sha, then `git ls-tree -r -z <sha>` fired from the root).
+pub const TREE_LIST: &str = "tree.list";
+/// The record, inside the repo's dir, of the repo's identity (repo_identity).
+pub const REPO_RECORD: &str = "repo.id";
+/// The record of a repo dir of the previous form, named by the path of the repo's git common dir (retire_path_named_repos).
+pub const PATH_RECORD: &str = "repo.path";
 /// The dir, inside the repo's dir, of the whole-repo answers (answer_key).
 pub const ANSWERS_DIR: &str = "answers";
 /// How many whole-repo answers are kept per repo (the oldest are removed when one is stored).
@@ -713,11 +722,49 @@ pub fn render_tree_record(record: &TreeRecord) -> String {
     std::iter::once(record.sha.as_str()).chain(record.overlay.iter().map(String::as_str)).map(|line| format!("{}\n", line)).collect()
 }
 
-/// Pure: the name representing the repo -- the first 16 hex digits of the sha256 of the absolute path of the git common dir (the note above).
-pub fn repo_key(common_dir: &Path) -> String {
+/// Pure: the repo's identity -- its root commits (sorted, one per line) and the root's position below the working tree's root (`pkg/`, empty for the working tree's root) on the last line
+/// (the note above). The same for every working tree and clone of the repo, wherever its git dir is.
+pub fn repo_identity(roots: &[String], prefix: &str) -> String {
+    let roots: BTreeSet<&str> = roots.iter().map(|root| root.trim()).filter(|root| !root.is_empty()).collect();
+    roots.into_iter().chain(std::iter::once(prefix)).map(|line| format!("{}\n", line)).collect()
+}
+
+/// Pure: the name representing the repo -- the first 16 hex digits of the sha256 of the repo's identity (repo_identity -- the note above).
+pub fn repo_key(identity: &str) -> String {
     use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(common_dir.as_os_str().as_encoded_bytes());
+    let digest = Sha256::digest(identity.as_bytes());
     digest.iter().take(8).map(|b| format!("{:02x}", b)).collect()
+}
+
+/// The files of one commit below the root: path -> `<mode> <type> <object>` (the output of `git ls-tree -r -z <sha>` fired from the root).
+pub type Listing = std::collections::BTreeMap<String, String>;
+
+/// Pure: reads the output of `git ls-tree -r -z` (`<mode> <type> <object>\t<path>` separated by NUL). None if an entry has no tab (not a listing).
+pub fn parse_listing(out: &[u8]) -> Option<Listing> {
+    out.split(|b| *b == 0)
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| {
+            let tab = entry.iter().position(|b| *b == b'\t')?;
+            Some((String::from_utf8_lossy(&entry[tab + 1..]).into_owned(), String::from_utf8_lossy(&entry[..tab]).into_owned()))
+        })
+        .collect()
+}
+
+/// Pure: the paths whose mode, type or object differ between two listings, and the paths in only one of them.
+pub fn differing_paths(before: &Listing, now: &Listing) -> BTreeSet<String> {
+    let changed = now.iter().filter(|(path, entry)| before.get(*path) != Some(*entry)).map(|(path, _)| path.clone());
+    changed.chain(before.keys().filter(|path| !now.contains_key(*path)).cloned()).collect()
+}
+
+/// Pure: the contents of the listing file -- line 1 the sha, then git's listing as it is.
+pub fn render_listing_file(sha: &str, out: &[u8]) -> Vec<u8> {
+    [format!("{}\n", sha).as_bytes(), out].concat()
+}
+
+/// Pure: reads the listing file of the tree whose sha is `sha`. None if it is for another sha or not a listing.
+pub fn parse_listing_file(contents: &[u8], sha: &str) -> Option<Listing> {
+    let newline = contents.iter().position(|b| *b == b'\n')?;
+    (contents[..newline] == *sha.as_bytes()).then(|| parse_listing(&contents[newline + 1..])).flatten()
 }
 
 /// Pure: whether it is the name of a tree per sha in the previous form (`<40 digits>`, `<40 digits>-<16 digits>`, and leftover write-outs `.partial-…`).
@@ -744,15 +791,15 @@ pub fn retire_sha_trees(home: &Path) -> usize {
     home_dirs(home).into_iter().filter(|(name, path)| is_sha_tree_name(name) && std::fs::remove_dir_all(path).is_ok()).count()
 }
 
-/// Deletes, in the location home, the repo dirs whose recorded git common dir no longer exists, and returns the number deleted (the note above) -- keep (the current repo), dirs with no record, and
-/// dirs whose lock cannot be taken are not touched.
-pub fn retire_vanished_repos(home: &Path, keep: &str) -> usize {
+/// Deletes, in the location home, the repo dirs of the previous form named by the path of the git common dir (those with the record `repo.path`), and returns the number deleted (the note
+/// above) -- keep (the current repo), dirs with no such record, and dirs whose lock cannot be taken are not touched.
+pub fn retire_path_named_repos(home: &Path, keep: &str) -> usize {
     home_dirs(home)
         .into_iter()
         .filter(|(name, path)| {
             name != keep
                 && is_hex(name, 16)
-                && std::fs::read_to_string(path.join(REPO_RECORD)).is_ok_and(|recorded| !Path::new(recorded.trim()).exists())
+                && path.join(PATH_RECORD).is_file()
                 && acquire_lock(&path.join(TREE_LOCK), Duration::ZERO).is_ok_and(|lock| lock.is_some())
                 && std::fs::remove_dir_all(path).is_ok()
         })
@@ -778,23 +825,21 @@ fn acquire_lock(path: &Path, wait: Duration) -> Result<Option<std::fs::File>, St
     }
 }
 
-/// Prepares the HEAD tree at one fixed path per repo (`<name representing the repo>/tree` in the location home) and returns its root (the note above). If the tree exists, only the files that changed from the record's
-/// sha to HEAD are rewritten; if it is absent or crashed, everything is written out. If another run at the same time does not release the tree until wait,
+/// Prepares the HEAD tree at one fixed path per repo (`<name representing the repo>/tree` in the location home) and returns its root (the note above). If the tree exists, only the files whose
+/// git object differs between the tree's listing and HEAD's are rewritten; if it is absent or crashed, everything is written out. If another run at the same time does not release the tree until wait,
 /// returns a temporary tree written out under scratch. None if there is no HEAD (the first commit).
 pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, wait: Duration) -> Result<Option<HeadTree>, String> {
     let Ok(head) = git(root, &["rev-parse", "--verify", "-q", "HEAD^{commit}"]) else { return Ok(None) };
     let head = String::from_utf8_lossy(&head).trim().to_string();
-    let common = git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?;
-    let common = PathBuf::from(String::from_utf8_lossy(&common).trim());
-    let common = common.canonicalize().unwrap_or(common);
     std::fs::create_dir_all(home).map_err(|e| format!("cannot create {}: {}", home.display(), e))?;
     let home = home.canonicalize().map_err(|e| format!("cannot read {}: {}", home.display(), e))?;
     crate::project::facts_cache::mark_units(&home);
     retire_sha_trees(&home);
-    // The tree is the contents of the root's dir, so even for the same repo a different root position gives a different tree (the position goes into the name -- for a working tree root, the same name as before).
-    let prefix = root_prefix(root)?;
-    let key = if prefix.is_empty() { repo_key(&common) } else { repo_key(&common.join(prefix.trim_end_matches('/'))) };
-    retire_vanished_repos(&home, &key);
+    // The tree is the contents of the root's dir, so even for the same repo a different root position gives a different tree (the position goes into the identity).
+    let roots = git(root, &["rev-list", "--max-parents=0", "HEAD"])?;
+    let identity = repo_identity(&split_lines(&roots), &root_prefix(root)?);
+    let key = repo_key(&identity);
+    retire_path_named_repos(&home, &key);
     let repo_dir = home.join(&key);
     std::fs::create_dir_all(&repo_dir).map_err(|e| format!("cannot create {}: {}", repo_dir.display(), e))?;
     let Some(lock) = acquire_lock(&repo_dir.join(TREE_LOCK), wait)? else {
@@ -804,33 +849,39 @@ pub fn head_tree(root: &Path, overlay: &[String], home: &Path, scratch: &Path, w
         return Ok(Some(HeadTree { path, update: TreeUpdate::Temporary, answers: None, _lock: None }));
     };
     crate::project::facts_cache::mark_used(&repo_dir);
-    let recorded = common.to_string_lossy();
-    if std::fs::read_to_string(repo_dir.join(REPO_RECORD)).ok().as_deref().map(str::trim) != Some(recorded.as_ref()) {
-        std::fs::write(repo_dir.join(REPO_RECORD), format!("{}\n", recorded)).map_err(|e| format!("cannot write {}: {}", REPO_RECORD, e))?;
+    if std::fs::read_to_string(repo_dir.join(REPO_RECORD)).ok().as_deref() != Some(identity.as_str()) {
+        std::fs::write(repo_dir.join(REPO_RECORD), &identity).map_err(|e| format!("cannot write {}: {}", REPO_RECORD, e))?;
     }
-    let tree = repo_dir.join(TREE_DIR);
-    let record_path = repo_dir.join(TREE_RECORD);
-    let record = std::fs::read_to_string(&record_path).ok().and_then(|text| parse_tree_record(&text)).filter(|_| tree.is_dir());
+    let place = Place { tree: repo_dir.join(TREE_DIR), record: repo_dir.join(TREE_RECORD), listing: repo_dir.join(TREE_LIST) };
+    let record = std::fs::read_to_string(&place.record).ok().and_then(|text| parse_tree_record(&text)).filter(|_| place.tree.is_dir());
     let update = match record {
-        Some(record) => match advance_tree(root, &record, &head, overlay, &tree, &record_path) {
+        Some(record) => match advance_tree(root, &record, &head, overlay, &place) {
             Ok(update) => update,
-            // A tree whose diff cannot be taken or that failed midway through a rewrite is written out again in full (the record is gone).
-            Err(_) => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
+            // A tree whose files cannot be listed or that failed midway through a rewrite is written out again in full (the record is gone).
+            Err(_) => rebuild_tree(root, &head, overlay, &place)?,
         },
-        None => rebuild_tree(root, &head, overlay, &tree, &record_path)?,
+        None => rebuild_tree(root, &head, overlay, &place)?,
     };
-    Ok(Some(HeadTree { path: tree, update, answers: Some(repo_dir.join(ANSWERS_DIR)), _lock: Some(lock) }))
+    Ok(Some(HeadTree { path: place.tree, update, answers: Some(repo_dir.join(ANSWERS_DIR)), _lock: Some(lock) }))
 }
 
-/// Deletes the tree, writes out all of HEAD again, and places the record.
-fn rebuild_tree(root: &Path, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
-    remove_record(record_path)?;
-    if std::fs::symlink_metadata(tree).is_ok() {
-        std::fs::remove_dir_all(tree).map_err(|e| format!("cannot delete {}: {}", tree.display(), e))?;
+/// The files of the placed tree inside the repo's dir: the tree, the record of its sha, and the listing of that sha's files.
+struct Place {
+    tree: PathBuf,
+    record: PathBuf,
+    listing: PathBuf,
+}
+
+/// Deletes the tree, writes out all of HEAD again, and places the listing and the record.
+fn rebuild_tree(root: &Path, head: &str, overlay: &[String], place: &Place) -> Result<TreeUpdate, String> {
+    remove_record(&place.record)?;
+    if std::fs::symlink_metadata(&place.tree).is_ok() {
+        std::fs::remove_dir_all(&place.tree).map_err(|e| format!("cannot delete {}: {}", place.tree.display(), e))?;
     }
-    std::fs::create_dir_all(tree).map_err(|e| format!("cannot create {}: {}", tree.display(), e))?;
-    write_whole_tree(root, head, overlay, tree)?;
-    write_record(record_path, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
+    std::fs::create_dir_all(&place.tree).map_err(|e| format!("cannot create {}: {}", place.tree.display(), e))?;
+    write_whole_tree(root, head, overlay, &place.tree)?;
+    write_listing(&place.listing, head, &listing_of(root, head)?)?;
+    write_record(&place.record, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
     Ok(TreeUpdate::Rebuilt)
 }
 
@@ -840,45 +891,64 @@ fn write_whole_tree(root: &Path, head: &str, overlay: &[String], tree: &Path) ->
     lay_overlay(root, overlay, tree)
 }
 
-/// Rewrites to HEAD's contents only the paths that changed from the record's sha to HEAD, plus the declaration files overlaid before and to be overlaid now (deleted paths are deleted).
-/// The record is removed during the rewrite. If too many paths changed, Err (the caller writes everything out again).
-fn advance_tree(root: &Path, record: &TreeRecord, head: &str, overlay: &[String], tree: &Path, record_path: &Path) -> Result<TreeUpdate, String> {
-    // Read relative to the root (the tree is the contents of the root's dir -- when git archive is fired from the root dir, it writes out that dir's contents relative to the root).
-    let changed = git(root, &["diff-tree", "-r", "-z", "--no-renames", "--name-only", "--relative", &record.sha, head])?;
-    let refresh: BTreeSet<String> = split_z(&changed).into_iter().chain(record.overlay.iter().cloned()).chain(overlay.iter().cloned()).collect();
-    if refresh.is_empty() {
+/// Rewrites to HEAD's contents only the paths whose git object differs between the tree's listing and HEAD's, plus the declaration files overlaid before and to be overlaid now (deleted
+/// paths are deleted). The record is removed during the rewrite. If the tree's files cannot be listed (no listing, and the recorded sha is not among this repo's objects) or too many paths
+/// changed, Err (the caller writes everything out again).
+fn advance_tree(root: &Path, record: &TreeRecord, head: &str, overlay: &[String], place: &Place) -> Result<TreeUpdate, String> {
+    let kept = std::fs::read(&place.listing).ok().and_then(|contents| parse_listing_file(&contents, &record.sha));
+    let listed_for_head = kept.is_some() && record.sha == head;
+    if listed_for_head && record.overlay.is_empty() && overlay.is_empty() {
+        return Ok(TreeUpdate::Unchanged);
+    }
+    // The tree's sha is often a commit of another working tree; when the git dirs are separate it is not among this repo's objects, so the diff is taken from the kept listing.
+    let had_listing = kept.is_some();
+    let before = match kept {
+        Some(before) => before,
+        None => parse_listing(&listing_of(root, &record.sha)?).ok_or("cannot read the listing of the tree's sha")?,
+    };
+    let listed = listing_of(root, head)?;
+    let now = parse_listing(&listed).ok_or("cannot read the listing of HEAD")?;
+    let refresh: BTreeSet<String> = differing_paths(&before, &now).into_iter().chain(record.overlay.iter().cloned()).chain(overlay.iter().cloned()).collect();
+    if refresh.is_empty() && had_listing {
         return Ok(TreeUpdate::Unchanged);
     }
     if refresh.len() > REWRITE_LIMIT {
         return Err(format!("{} paths changed (limit {})", refresh.len(), REWRITE_LIMIT));
     }
-    let refresh: Vec<String> = refresh.into_iter().collect();
-    let present: Vec<String> = present_paths(root, head, &refresh)?.into_iter().collect::<BTreeSet<String>>().into_iter().collect();
-    remove_record(record_path)?;
+    let present: Vec<String> = refresh.iter().filter(|rel| now.contains_key(*rel)).cloned().collect();
+    remove_record(&place.record)?;
     for rel in &refresh {
-        remove_path(tree, rel)?;
+        remove_path(&place.tree, rel)?;
     }
     if !present.is_empty() {
-        extract(root, head, &present, tree)?;
+        extract(root, head, &present, &place.tree)?;
     }
-    lay_overlay(root, overlay, tree)?;
-    write_record(record_path, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
-    Ok(TreeUpdate::Advanced { rewritten: present.len(), removed: refresh.len().saturating_sub(present.len()) })
+    lay_overlay(root, overlay, &place.tree)?;
+    if !listed_for_head {
+        write_listing(&place.listing, head, &listed)?;
+    }
+    write_record(&place.record, &TreeRecord { sha: head.to_string(), overlay: overlay.to_vec() })?;
+    Ok(match refresh.len() {
+        0 => TreeUpdate::Unchanged,
+        n => TreeUpdate::Advanced { rewritten: present.len(), removed: n - present.len() },
+    })
 }
 
-/// Turns NUL-separated git output into a list of paths.
-fn split_z(out: &[u8]) -> Vec<String> {
-    out.split(|b| *b == 0).filter(|n| !n.is_empty()).map(|n| String::from_utf8_lossy(n).into_owned()).collect()
+/// Git's listing of the files of commit sha below the root (`git ls-tree -r -z <sha>` fired from the root -- relative to the root, like git archive).
+fn listing_of(root: &Path, sha: &str) -> Result<Vec<u8>, String> {
+    git(root, &["ls-tree", "-r", "-z", sha])
 }
 
-/// Among paths, those that exist in commit sha (git ls-tree).
-fn present_paths(root: &Path, sha: &str, paths: &[String]) -> Result<Vec<String>, String> {
-    let mut present = Vec::new();
-    for chunk in paths.chunks(ARCHIVE_CHUNK) {
-        let args: Vec<&str> = ["--literal-pathspecs", "ls-tree", "-r", "-z", "--name-only", sha, "--"].into_iter().chain(chunk.iter().map(String::as_str)).collect();
-        present.extend(split_z(&git(root, &args)?));
-    }
-    Ok(present)
+/// Places the listing file of the tree's sha by rename (so a half-written listing is not read).
+fn write_listing(path: &Path, sha: &str, listed: &[u8]) -> Result<(), String> {
+    let partial = path.with_extension(format!("partial-{}", std::process::id()));
+    std::fs::write(&partial, render_listing_file(sha, listed)).map_err(|e| format!("cannot write {}: {}", partial.display(), e))?;
+    std::fs::rename(&partial, path).map_err(|e| format!("cannot place {}: {}", path.display(), e))
+}
+
+/// Turns newline-separated git output into its non-empty lines.
+fn split_lines(out: &[u8]) -> Vec<String> {
+    String::from_utf8_lossy(out).lines().filter(|line| !line.trim().is_empty()).map(str::to_string).collect()
 }
 
 /// Deletes a path in the tree (the whole thing if a dir), and deletes emptied parent dirs up to just before the tree's root.
@@ -1828,7 +1898,7 @@ mod tests {
     }
 
     #[test]
-    fn commit_hook_names_only_the_old_sha_trees_and_keys_repos_by_the_common_dir() {
+    fn commit_hook_names_only_the_old_sha_trees_and_keys_repos_by_their_root_commits() {
         let sha = "0".repeat(40);
         for old in [sha.clone(), format!("{}-{}", sha, "f".repeat(16)), ".partial-x".to_string()] {
             assert!(is_sha_tree_name(&old), "{}", old);
@@ -1836,9 +1906,30 @@ mod tests {
         for other in ["notes", "0123456789abcdef", &format!("{}-x", sha), &"0".repeat(39)] {
             assert!(!is_sha_tree_name(other), "{}", other);
         }
-        let key = repo_key(Path::new("/repos/a/.git"));
+        let (a, b) = ("a".repeat(40), "b".repeat(40));
+        let identity = repo_identity(&[b.clone(), a.clone()], "");
+        assert_eq!(identity, format!("{}\n{}\n\n", a, b), "roots sorted, then the root's position");
+        assert_eq!(identity, repo_identity(&[a.clone(), format!("{}\n", b), a.clone()], ""), "the order and repeats of git's lines do not change the identity");
+        let key = repo_key(&identity);
         assert!(is_hex(&key, 16), "{}", key);
-        assert_eq!(key, repo_key(Path::new("/repos/a/.git")));
-        assert_ne!(key, repo_key(Path::new("/repos/b/.git")));
+        assert_ne!(key, repo_key(&repo_identity(&[a.clone()], "")), "another set of root commits is another repo");
+        assert_ne!(key, repo_key(&repo_identity(&[a, b], "pkg/")), "a root below the working tree's root is another tree");
+    }
+
+    #[test]
+    fn commit_hook_listing_diff_names_changed_added_and_removed_paths() {
+        let entry = |mode: &str, object: char, path: &str| format!("{} blob {}\t{}\0", mode, object.to_string().repeat(40), path);
+        let before = [entry("100644", '1', "same.py"), entry("100644", '2', "changed.py"), entry("100644", '3', "mode.sh"), entry("100644", '4', "gone.py"), entry("100644", '5', "a b.py")].concat();
+        let now = [entry("100644", '1', "same.py"), entry("100644", '9', "changed.py"), entry("100755", '3', "mode.sh"), entry("100644", '6', "new.py"), entry("100644", '5', "a b.py")].concat();
+        let (before, now) = (parse_listing(before.as_bytes()).unwrap(), parse_listing(now.as_bytes()).unwrap());
+        assert_eq!(before.get("a b.py").map(String::as_str), Some(format!("100644 blob {}", "5".repeat(40)).as_str()));
+        assert_eq!(differing_paths(&before, &now).into_iter().collect::<Vec<_>>(), ids(&["changed.py", "gone.py", "mode.sh", "new.py"]));
+        assert!(differing_paths(&now, &now).is_empty());
+        assert_eq!(parse_listing(b"no tab here\0"), None);
+        assert_eq!(parse_listing(b""), Some(Listing::new()));
+        let sha = "c".repeat(40);
+        let file = render_listing_file(&sha, entry("100644", '1', "same.py").as_bytes());
+        assert_eq!(parse_listing_file(&file, &sha).map(|l| l.into_keys().collect::<Vec<_>>()), Some(ids(&["same.py"])));
+        assert_eq!(parse_listing_file(&file, &"d".repeat(40)), None, "a listing of another sha is not read");
     }
 }
