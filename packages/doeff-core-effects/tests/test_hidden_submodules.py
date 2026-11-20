@@ -133,9 +133,13 @@ LAZY_NAMES = {
     "aiohttp_ws_link_handler": "doeff_core_effects._aiohttp_ws_client",
     "scripted_ws_link_handler": "doeff_core_effects._scripted_ws_client",
     "SqlQuery": "doeff_core_effects._sql_effects",
+    "SqlReadTransaction": "doeff_core_effects._sql_effects",
     "PostgresConnections": "doeff_core_effects._postgres_sql",
     "sqlite_sql_handler": "doeff_core_effects._sqlite_sql",
     "SqliteFiles": "doeff_core_effects._sqlite_file_sql",
+    "open_or_create_sqlite_files": "doeff_core_effects._sqlite_file_sql",
+    "open_sqlite_readers": "doeff_core_effects._sqlite_file_sql",
+    "sqlite_file_reader_handler": "doeff_core_effects._sqlite_file_sql",
     "ClickHouseDatabase": "doeff_core_effects._clickhouse_http_sql",
 }
 

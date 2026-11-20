@@ -16,7 +16,7 @@
 (import sqlite3)
 (import dataclasses [dataclass])
 (import doeff [Program])
-(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed
+(import doeff_core_effects._sql_effects [SqlQuery SqlInsertRows SqlBatch SqlTransaction SqlReadTransaction SqlEnsureTables SetSqlOutage SqlRows SqlFailed
                                         SqlUnreachable SqlSchemaApplied SqlColumnType SqlText SqlPlaceholder split-statement checked-params
                                         param-value checked-identifier checked-identifiers checked-rows normalized-rows SqlTable SqlParam
                                         SqlValue])
@@ -33,6 +33,8 @@
 (val BIND-CLASS-SQLSTATES {"OverflowError" "22003"})
 ;; SQLSTATE for lock contention (transient) -- serialization_failure.
 (val BUSY-SQLSTATE "40001")
+;; SQLSTATE for read-only connection/transaction write attempts -- read_only_sql_transaction.
+(val READ-ONLY-SQLSTATE "25006")
 ;; SQLSTATE for the rest of OperationalError, such as statement errors and missing tables.
 (val OPERATIONAL-SQLSTATE "42000")
 
@@ -75,6 +77,7 @@
   (cond
     (in "closed database" lowered) (SqlUnreachable :reason message)
     (and (in "OperationalError" class-names) (or (in "locked" lowered) (in "busy" lowered))) (SqlFailed :sqlstate BUSY-SQLSTATE :reason message)
+    (and (in "OperationalError" class-names) (in "readonly" lowered)) (SqlFailed :sqlstate READ-ONLY-SQLSTATE :reason message)
     (in "OperationalError" class-names) (SqlFailed :sqlstate OPERATIONAL-SQLSTATE :reason message)
     (any (gfor name class-names (in name BIND-CLASS-SQLSTATES)))
       (SqlFailed :sqlstate (next (gfor name class-names :if (in name BIND-CLASS-SQLSTATES) (get BIND-CLASS-SQLSTATES name))) :reason message)
@@ -187,12 +190,12 @@
   answers)
 
 
-(defk sqlite-connection [target uri]
-  {:pre [(: target str) (: uri bool)] :post [(: % sqlite3.Connection)]
+(defk sqlite-connection [target uri [check-same-thread False]]
+  {:pre [(: target str) (: uri bool) (: check-same-thread bool)] :post [(: % sqlite3.Connection)]
    :tags {:context "sql" :role "foundation"}}
-  "To open the answerer's connection (the memory-DB and file-DB answerers use the same settings): autocommit (transactions are explicit with BEGIN IMMEDIATE),
-   usable from outside the scheduler's thread, reading declared types (BOOLEAN read-back). target = `:memory:` or a URI (uri = True)."
-  (sqlite3.connect target :check-same-thread False :isolation-level None :detect-types sqlite3.PARSE-DECLTYPES :uri uri))
+  "To open the answerer's connection (the memory-DB and file-DB answerers use the same settings): autocommit (transactions are explicit with BEGIN IMMEDIATE / BEGIN DEFERRED),
+   usable from outside the scheduler's thread unless check-same-thread is True, reading declared types (BOOLEAN read-back). target = `:memory:` or a URI (uri = True)."
+  (sqlite3.connect target :check-same-thread check-same-thread :isolation-level None :detect-types sqlite3.PARSE-DECLTYPES :uri uri))
 
 
 (defk with-connection [connections database]
@@ -288,6 +291,36 @@
   answer)
 
 
+(defk sqlite-answer-read-transaction [connection unreachable database program]
+  {:tp [A]
+   :pre [(: connection sqlite3.Connection) (: unreachable (of tuple str ...)) (: database str) (: program (of Program A object))]
+   :post [(: % (| A SqlFailed SqlUnreachable))]
+   :tags {:context "sql" :role "foundation"}}
+  "To answer one SqlReadTransaction with BEGIN DEFERRED ... COMMIT / ROLLBACK under PRAGMA query_only = ON (after checking the unreachable mark)."
+  (<- down (outage-of unreachable database))
+  (when (is-not down None)
+    (return down))
+  (<- current-mode (sqlite-run connection "PRAGMA query_only" #()))
+  (when (isinstance current-mode #(SqlFailed SqlUnreachable))
+    (return current-mode))
+  (val already-query-only (bool (get (get current-mode.rows 0) 0)))
+  (when (not already-query-only)
+    (<- enabled (sqlite-control connection "PRAGMA query_only = ON"))
+    (when (is-not enabled None)
+      (return enabled)))
+  (try
+    (<- answer (run-in-transaction database program
+                                   (fn [request] (sqlite-query connection request))
+                                   None
+                                   (fn [] (sqlite-control connection "BEGIN DEFERRED"))
+                                   (fn [] (sqlite-control connection "COMMIT"))
+                                   (fn [] (sqlite-control connection "ROLLBACK"))))
+    answer
+    (finally
+      (when (not already-query-only)
+        (<- (sqlite-control connection "PRAGMA query_only = OFF"))))))
+
+
 (defhandler sqlite-sql-handler [#^ (get tuple #(str ...)) databases]
   ;; Why it stays an argument: it sorts into the same set as the PostgreSQL / ClickHouse answerers by the database names it answers (Ask cannot distinguish within the set).
   "The I/O-free SQL answerer (header comment). databases = a tuple of the database names it answers (effects for other names are passed to the outside)."
@@ -322,6 +355,12 @@
     (when (is-not opened connections) (:= connections opened))
     (<- connection (connection-of connections database))
     (<- answer (sqlite-answer-transaction connection unreachable database program batched))
+    (resume answer))
+  (SqlReadTransaction [database program] :when (in database databases)
+    (<- opened (with-connection connections database))
+    (when (is-not opened connections) (:= connections opened))
+    (<- connection (connection-of connections database))
+    (<- answer (sqlite-answer-read-transaction connection unreachable database program))
     (resume answer))
   ;; A batch bundles the round trips inside a transaction -- inside a transaction the scope of SqlTransaction answers, and only batches issued outside come here.
   (SqlBatch [database queries commit] :when (in database databases)

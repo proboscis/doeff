@@ -51,8 +51,9 @@
   (#^ str reason))
 
 
-(defn #^ Callable transaction-scope [#^ str database #^ Callable execute-query #^ Callable execute-insert #^ (| Callable None) execute-notify]  ; cannot be a defk: a handler function that discards the continuation (header note)
-  "Makes the handler of the scope bound to one connection. execute-query / execute-insert = a Program of (effect) -> SqlRows | SqlFailed | SqlUnreachable;
+(defn #^ Callable transaction-scope [#^ str database #^ Callable execute-query #^ (| Callable None) execute-insert #^ (| Callable None) execute-notify]  ; cannot be a defk: a handler function that discards the continuation (header note)
+  "Makes the handler of the scope bound to one connection. execute-query = a Program of (effect) -> SqlRows | SqlFailed | SqlUnreachable;
+   execute-insert = a Program of (effect) -> SqlRows | SqlFailed | SqlUnreachable, or None (a read-only transaction refuses SqlInsertRows);
    execute-notify = a Program of (effect) -> SqlRows | SqlFailed | SqlUnreachable, or None (a handler that does not accept signals -- it resumes with None on success)."
   (defn [program-handler] scope [effect k]  ; cannot be a defk: a handler function (receives the effect and the continuation k)
     (match effect
@@ -61,7 +62,7 @@
             (if (isinstance answer #(SqlFailed SqlUnreachable))
                 (return (TransactionAborted :failure answer))
                 (return (yield (Resume k answer)))))
-      (SqlInsertRows :database name) :if (= name database)
+      (SqlInsertRows :database name) :if (and (= name database) (is-not execute-insert None))
         (do (setv answer (yield (execute-insert effect)))
             (if (isinstance answer #(SqlFailed SqlUnreachable))
                 (return (TransactionAborted :failure answer))
@@ -84,7 +85,7 @@
 
 
 (defk run-in-transaction [database program execute-query execute-insert begin commit rollback [execute-notify None]]
-  {:pre [(: database str) (: program Program) (: execute-query Callable) (: execute-insert Callable) (: begin Callable) (: commit Callable)
+  {:pre [(: database str) (: program Program) (: execute-query Callable) (: execute-insert (| Callable None)) (: begin Callable) (: commit Callable)
          (: rollback Callable) (: execute-notify (| Callable None))]
    :post [(: % "the answer of program | SqlFailed | SqlUnreachable")]
    :tags {:context "sql" :role "foundation"}}

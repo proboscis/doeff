@@ -48,6 +48,10 @@
 ;;;                             that issues no SQL sends BEGIN, locks, and COMMIT)
 ;;;                      True   Combine round trips - BEGIN and locks share the round trip of the first statement, SqlNotify is remembered and shares the round trip of COMMIT,
 ;;;                             a commit bundle (SqlBatch with commit = True) shares the round trip of COMMIT, and a program issuing no SQL at all takes 0 round trips
+;;;   SqlReadTransaction
+;;;                    Run a program inside one read-only transaction (BEGIN DEFERRED ... COMMIT / ROLLBACK in SQLite, holding one snapshot from the first query).
+;;;                    Answer = the program's answer | SqlFailed | SqlUnreachable. Inside, only SqlQuery to the same database and pure computation can be issued;
+;;;                    writes are refused by the engine (SqlFailed 25006), and forbidden effects (including SqlInsertRows) raise SqlTransactionMisuse
 ;;;   SqlBatch         Inside the program of a SqlTransaction with batched = True, sends the statement sequence queries in a single round trip (PostgreSQL = one
 ;;;                    pipeline, sqlite = in order). Answer = a tuple of SqlRows in the same order as queries (if any fails, guarantee (1) applies - the program is not
 ;;;                    resumed). If commit = True, COMMIT is sent at the end of the same round trip to end the transaction (issuing a SQL effect after that is
@@ -212,6 +216,18 @@
             (: locks (get tuple #(SqlLock ...)) #())]
    :pre [(: database str) (: program Program) (: lock-key (| str None)) (: batched bool) (: locks tuple)
          (all (gfor lock locks (isinstance lock SqlLock)))]
+   :answer (| T SqlFailed SqlUnreachable)
+   :runs-carried [program]
+   :tags {:context "sql" :role "foundation"}})
+
+
+(defeffect SqlReadTransaction
+  "Run program inside one read-only transaction (BEGIN DEFERRED ... COMMIT / ROLLBACK in SQLite, holding one snapshot from the first query).
+   Answer = the program's answer (after commit) | SqlFailed | SqlUnreachable. Inside, only SqlQuery to the same database and pure computation can be issued;
+   writes are refused by the engine (SqlFailed 25006), and forbidden effects (including SqlInsertRows) raise SqlTransactionMisuse."
+  {:tp [T]
+   :fields [(: database str) (: program (get Program #(T object)))]
+   :pre [(: database str) (: program Program)]
    :answer (| T SqlFailed SqlUnreachable)
    :runs-carried [program]
    :tags {:context "sql" :role "foundation"}})
