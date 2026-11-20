@@ -1,0 +1,501 @@
+schema = 1
+
+[[element]]
+name = "FieldShape"
+kind = "record"
+concern = "one field of a type as the source spells it"
+key = []
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "name"
+type = "String"
+fact = "the field's name in the source"
+
+[[element.field]]
+name = "type_text"
+type = "Option<String>"
+fact = "the field's type with its layout collapsed"
+absent_when = "a field written without a type (a Hy field with no annotation, a unit enum variant); no type is a fact of the source, not a missing part"
+
+[[element.field]]
+name = "optional"
+type = "bool"
+fact = "whether the type admits an absent value (None in Hy, Option in Rust)"
+
+[[element.rejected]]
+shape = "derive optional from type_text at each use"
+why = "the reading differs by language; reading it once in the reader keeps the language rules in one place"
+
+[[element]]
+name = "ShapeKind"
+kind = "record"
+concern = "which kind of source declaration a shape was read from"
+key = []
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "Defrecord"
+fact = "a Hy defrecord"
+
+[[element.field]]
+name = "Struct"
+fact = "a Rust struct"
+
+[[element.field]]
+name = "Enum"
+fact = "a Rust enum, whose fields are its variants"
+
+[[element.rejected]]
+shape = "a String field kind_tag on RecordShape with three values"
+why = "a string stands for a closed set; a misspelt value would compile, and the kind decides the fingerprint header and whether Grew judges the type"
+
+[[element]]
+name = "RecordShape"
+kind = "record"
+concern = "the shape of one type as read from the source, the input of its fingerprint"
+key = ["name"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "name"
+type = "String"
+fact = "the type's name, unique within its file"
+
+[[element.field]]
+name = "bases"
+type = "Vec<String>"
+fact = "the bases a defrecord names (empty for Rust)"
+
+[[element.field]]
+name = "fields"
+type = "Vec<FieldShape>"
+fact = "the fields in written order"
+
+[[element.field]]
+name = "start"
+type = "usize"
+fact = "where the declaration starts in the file (a hit is reported there)"
+
+[[element.field]]
+name = "end"
+type = "usize"
+fact = "where the declaration's name ends"
+
+[[element.field]]
+name = "kind"
+type = "ShapeKind"
+fact = "the declaration kind; it enters the fingerprint, so a struct that becomes an enum changes it"
+
+[[element.rejected]]
+shape = "a separate table from (file, name) to the kind"
+why = "the kind is a fact of the same shape and enters the same fingerprint; a second table would need its own key and could disagree"
+
+[[element.rejected]]
+shape = "one shape type per language"
+why = "the ledger, the evidence comparison and Grew read every language the same way; one type keeps those in one place"
+
+[[element]]
+name = "TokenKind"
+kind = "record"
+concern = "the kind of one token of the Rust reader"
+key = []
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "Ident"
+type = "(String)"
+fact = "an identifier or keyword, with its text"
+
+[[element.field]]
+name = "Punct"
+type = "(char)"
+fact = "one punctuation character"
+
+[[element.field]]
+name = "Literal"
+fact = "a string, char or number literal, whose text the reader does not need"
+
+[[element.rejected]]
+shape = "a full Rust parser crate (syn)"
+why = "the reader needs only item headers and field lists; a parser adds a dependency to the hook's binary"
+
+[[element]]
+name = "Token"
+kind = "record"
+concern = "one token of the Rust reader and where it is"
+key = ["start"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "kind"
+type = "TokenKind"
+fact = "what the token is"
+
+[[element.field]]
+name = "start"
+type = "usize"
+fact = "the token's first byte"
+
+[[element.field]]
+name = "end"
+type = "usize"
+fact = "the byte after the token"
+
+[[element.rejected]]
+shape = "a tuple (TokenKind, usize, usize)"
+why = "a tuple's positions carry no names"
+
+[[element]]
+name = "ElementKind"
+kind = "record"
+concern = "the kind of code element an evidence entry is about"
+key = []
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "Record"
+fact = "a type (judged)"
+
+[[element.field]]
+name = "Function"
+fact = "a function (read, not judged yet)"
+
+[[element.field]]
+name = "Interface"
+fact = "an interface (read, not judged yet)"
+
+[[element.field]]
+name = "Module"
+fact = "a module (read, not judged yet)"
+
+[[element.rejected]]
+shape = "a free string kind"
+why = "an unknown kind must make the evidence file unreadable, not silently skipped"
+
+[[element]]
+name = "FieldEvidence"
+kind = "record"
+concern = "the author's answers about one field of a type"
+key = ["name"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "name"
+type = "String"
+fact = "the field the answers are about"
+
+[[element.field]]
+name = "type_text"
+type = "Option<String>"
+fact = "the field's type as the author recorded it"
+absent_when = "the field has no type in the source (as FieldShape.type_text)"
+
+[[element.field]]
+name = "fact"
+type = "String"
+fact = "what the field states about the type's key"
+
+[[element.field]]
+name = "absent_when"
+type = "Option<String>"
+fact = "when the field is absent and why it is not a separate part"
+absent_when = "the field's type admits no absent value (the question does not arise)"
+
+[[element.rejected]]
+shape = "reuse FieldShape with answer fields"
+why = "FieldShape is what the source says and FieldEvidence is what the author says; comparing the two is the rule"
+
+[[element]]
+name = "RejectedShape"
+kind = "record"
+concern = "one shape the author considered and did not choose"
+key = ["shape"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "shape"
+type = "String"
+fact = "the shape considered"
+
+[[element.field]]
+name = "why"
+type = "String"
+fact = "why it was not chosen"
+
+[[element.rejected]]
+shape = "one free text of alternatives"
+why = "an alternative without its why must be a gap the rule can name"
+
+[[element]]
+name = "ElementEvidence"
+kind = "record"
+concern = "the author's answers about one code element at the shape its fields spell"
+key = ["name", "kind"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "name"
+type = "String"
+fact = "the element's name in its module"
+
+[[element.field]]
+name = "kind"
+type = "ElementKind"
+fact = "what kind of element it is"
+
+[[element.field]]
+name = "concern"
+type = "String"
+fact = "the element's one responsibility"
+
+[[element.field]]
+name = "key"
+type = "Option<Vec<String>>"
+fact = "the fields that decide the element's identity"
+absent_when = "the author left the answer out; absence is reported as a gap, so it is read rather than rejected as unreadable"
+
+[[element.field]]
+name = "field"
+type = "Vec<FieldEvidence>"
+fact = "the answers per field"
+
+[[element.field]]
+name = "bases"
+type = "Vec<String>"
+fact = "the bases as the author recorded them"
+
+[[element.field]]
+name = "parts"
+type = "Vec<String>"
+fact = "the part types the element is composed of"
+
+[[element.field]]
+name = "rejected"
+type = "Vec<RejectedShape>"
+fact = "the shapes considered and not chosen"
+
+[[element.field]]
+name = "fan_out"
+type = "Option<u32>"
+fact = "how many files a change of the element's shape touches"
+absent_when = "the author left the answer out; reported as a gap"
+
+[[element.field]]
+name = "review"
+type = "Option<String>"
+fact = "the id of the reviewer's verdict"
+absent_when = "the author left the answer out; reported as a gap"
+
+[[element.rejected]]
+shape = "required fields that fail parsing when missing"
+why = "a missing answer would make the whole file unreadable instead of naming the gap of that element"
+
+[[element]]
+name = "EvidenceFile"
+kind = "record"
+concern = "one evidence file next to a module"
+key = []
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "schema"
+type = "u32"
+fact = "the version of the file's form"
+
+[[element.field]]
+name = "element"
+type = "Vec<ElementEvidence>"
+fact = "the evidence entries of the module's elements"
+
+[[element.rejected]]
+shape = "one file per element"
+why = "a module's types are read together with the module; one sibling file keeps one place per module"
+
+[[element]]
+name = "ExistingShapes"
+kind = "record"
+concern = "the ledger of the shapes that existed when the rule was turned on"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "shapes"
+type = "BTreeMap<String, String>"
+fact = "the fingerprint per type key (file and type name); a mapping from an id to data"
+
+[[element.rejected]]
+shape = "a list of (file, type, fingerprint) rows"
+why = "the ledger is looked up by key and a key appears once; a map says so"
+
+[[element]]
+name = "Problem"
+kind = "record"
+concern = "the kind of one DOEFF212 finding and its detail"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "Missing"
+type = "{ fingerprint: String, was: Option<String> }"
+fact = "a new or reshaped type without evidence"
+
+[[element.field]]
+name = "ShapeDiffers"
+type = "{ differences: Vec<String> }"
+fact = "the evidence records another shape"
+
+[[element.field]]
+name = "Incomplete"
+type = "{ gaps: Vec<String> }"
+fact = "the evidence lacks answers"
+
+[[element.field]]
+name = "Orphan"
+fact = "the evidence names a type the module does not have"
+
+[[element.field]]
+name = "Unreadable"
+type = "{ reason: String }"
+fact = "the evidence file cannot be read"
+
+[[element.field]]
+name = "Grew"
+type = "{ fields: Vec<String> }"
+fact = "an existing type gained fields without an approval at the base"
+
+[[element.rejected]]
+shape = "a kind string with optional detail fields"
+why = "each kind has its own detail; a sum keeps each detail with its kind"
+
+[[element]]
+name = "Hit"
+kind = "record"
+concern = "one DOEFF212 finding at a type of a module"
+key = ["name", "problem"]
+fan_out = 3
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "name"
+type = "String"
+fact = "the type the finding is about"
+
+[[element.field]]
+name = "start"
+type = "usize"
+fact = "where the finding is reported"
+
+[[element.field]]
+name = "end"
+type = "usize"
+fact = "where the reported range ends"
+
+[[element.field]]
+name = "problem"
+type = "Problem"
+fact = "what is wrong"
+
+[[element.rejected]]
+shape = "the project's generic violation draft directly"
+why = "the judgment is pure and testable without the reporting layer; mod.rs turns hits into drafts in one place"
+
+[[element]]
+name = "Judging"
+kind = "record"
+concern = "the settings of one DOEFF212 run, read once"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "existing"
+type = "ExistingShapes"
+fact = "the ledger in the tree"
+
+[[element.field]]
+name = "review_pattern"
+type = "Option<regex::Regex>"
+fact = "the declared spelling of a review id"
+absent_when = "the declaration names no spelling; any non-empty review is accepted"
+
+[[element.field]]
+name = "growth"
+type = "Option<Growth>"
+fact = "what judging growth reads at the base"
+absent_when = "no :guard is declared or the base cannot be read; DOEFF214 reports why"
+
+[[element.rejected]]
+shape = "the base's ledger and approvals as more fields of Judging"
+why = "they exist together or not at all; the part type Growth says so"
+
+[[element]]
+name = "Growth"
+kind = "record"
+concern = "what judging the growth of existing types reads at the base"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "base"
+type = "super::ledger_guard::Base"
+fact = "the base commit"
+
+[[element.field]]
+name = "ledger"
+type = "ExistingShapes"
+fact = "the shapes ledger at the base"
+
+[[element.field]]
+name = "approvals"
+type = "super::ledger_guard::Approvals"
+fact = "the approvals at the base of the declared spelling"
+
+[[element.rejected]]
+shape = "read the base again per module"
+why = "one run reads the base once"
+
+[[element]]
+name = "FileHits"
+kind = "record"
+concern = "the DOEFF212 findings of one module with what reporting needs"
+key = ["rel"]
+fan_out = 3
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "rel"
+type = "String"
+fact = "the module's path from the root"
+
+[[element.field]]
+name = "path"
+type = "PathBuf"
+fact = "the module's path on disk"
+
+[[element.field]]
+name = "source"
+type = "String"
+fact = "the module's contents (for ranges)"
+
+[[element.field]]
+name = "hits"
+type = "Vec<Hit>"
+fact = "the findings"
+
+[[element.rejected]]
+shape = "a map from path to hits"
+why = "the source travels with the hits to place ranges; a record keeps them together"

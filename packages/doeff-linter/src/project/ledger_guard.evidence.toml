@@ -1,0 +1,138 @@
+schema = 1
+
+[[element]]
+name = "Base"
+kind = "record"
+concern = "the commit the ledgers are compared with, and the checkout to read it from"
+key = ["commit"]
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "git_root"
+type = "PathBuf"
+fact = "the checkout git reads from"
+
+[[element.field]]
+name = "commit"
+type = "String"
+fact = "the merge-base of HEAD and the declared base"
+
+[[element.rejected]]
+shape = "the ref name alone, resolved at each read"
+why = "the ref moves during a run; one resolved commit keeps all reads at the same base"
+
+[[element]]
+name = "ApprovalLedger"
+kind = "record"
+concern = "what an approval lets pass"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "Shapes"
+fact = "a line of the shapes ledger"
+
+[[element.field]]
+name = "Substitutes"
+fact = "a line of the substitutes ledger"
+
+[[element.field]]
+name = "Fields"
+fact = "a field added to a type of the shapes ledger"
+
+[[element.field]]
+name = "Declaration"
+fact = "the :design-evidence declaration"
+
+[[element.rejected]]
+shape = "a String ledger field with four words"
+why = "a string stands for a closed set; a misspelt word read as an approval would let nothing pass without saying why"
+
+[[element]]
+name = "Approval"
+kind = "record"
+concern = "one approval of the user for one ledger line, field, or declaration"
+key = ["ledger", "key", "value"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "ledger"
+type = "ApprovalLedger"
+fact = "what the approval lets pass"
+
+[[element.field]]
+name = "key"
+type = "String"
+fact = "the ledger key or type key it is about"
+
+[[element.field]]
+name = "value"
+type = "String"
+fact = "the fingerprint, count, or field it lets pass"
+
+[[element.field]]
+name = "review"
+type = "String"
+fact = "the id of the request the user approved"
+
+[[element.field]]
+name = "why"
+type = "String"
+fact = "why the line must stay"
+
+[[element.rejected]]
+shape = "the request id written in the type's evidence file"
+why = "the evidence is the author's answer and is written in the same change; a separate file that counts only at the base keeps the user's fact in one place the change cannot write"
+
+[[element]]
+name = "Approvals"
+kind = "record"
+concern = "the approvals file"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "schema"
+type = "Option<u32>"
+fact = "the version of the file's form"
+absent_when = "a file written before the schema line; read as schema 1"
+
+[[element.field]]
+name = "approval"
+type = "Vec<Approval>"
+fact = "the approvals"
+
+[[element.rejected]]
+shape = "approvals inside each ledger file"
+why = "an approval of a field or the declaration belongs to no ledger"
+
+[[element]]
+name = "GuardHit"
+kind = "record"
+concern = "one DOEFF214 finding at a file the guard reads"
+key = ["rel", "detail"]
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "rel"
+type = "String"
+fact = "the file the finding is reported at"
+
+[[element.field]]
+name = "detail"
+type = "String"
+fact = "the finding's key detail (which line or approval)"
+
+[[element.field]]
+name = "reason"
+type = "String"
+fact = "the message"
+
+[[element.rejected]]
+shape = "reuse design_evidence::Hit"
+why = "a guard finding is at a file's first line and names a ledger line, not a type's range"

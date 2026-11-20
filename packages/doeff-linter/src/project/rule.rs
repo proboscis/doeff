@@ -1576,6 +1576,8 @@ mod tests {
         ("DOEFF144", RuleFamily::Definition),
         ("DOEFF145", RuleFamily::Definition),
         ("DOEFF212", RuleFamily::Definition),
+        ("DOEFF213", RuleFamily::Definition),
+        ("DOEFF214", RuleFamily::Definition),
         ("DOEFF150", RuleFamily::Naming),
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF142", RuleFamily::Definition),

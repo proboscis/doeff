@@ -945,7 +945,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     }
                 }
                 if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::TypeSubstitute)) {
-                    if design_evidence::wants(rel, decl) {
+                    if type_substitutes::wants(rel, decl) {
                         let (counts, ledger_error) = type_substitutes::load(root, decl);
                         report.errors.extend(ledger_error);
                         match crate::timing::timed("single.type-substitutes", || type_substitutes::judge(rel, source, &counts)) {

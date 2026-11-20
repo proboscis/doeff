@@ -1,0 +1,7 @@
+# The declaration that applies the design-evidence rules (DOEFF212, DOEFF213) to doeff-linter's own types of the design-evidence mechanism — the mechanism passes the
+# rule it enforces. doeff's root declares no architecture.hy, so this config is named explicitly:
+#   doeff-linter --config packages/doeff-linter/self-evidence/pyproject.toml --enable DOEFF212 --enable DOEFF213 (from the doeff root)
+# tests/self_evidence.rs runs it and requires 0 hits.
+[tool.doeff-linter]
+root = "../../.."
+architecture = "architecture.hy"

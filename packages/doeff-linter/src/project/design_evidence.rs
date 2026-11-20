@@ -28,12 +28,40 @@ pub const EVIDENCE_SUFFIX: &str = "evidence.toml";
 /// The evidence schema this linter reads.
 const SCHEMA: u32 = 1;
 
-/// One field of a type as read from the source (name and type as spelled in the language; `optional` = the type admits an absent value — for Hy, `None` in the type).
+/// One field of a type as read from the source (name and type as spelled in the language; `optional` = the type admits an absent value — for Hy, `None` in the type; for Rust, `Option<T>`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldShape {
     pub name: String,
     pub type_text: Option<String>,
     pub optional: bool,
+}
+
+/// The source declaration a shape was read from (a closed set — a struct that becomes an enum changes its fingerprint).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeKind {
+    /// A Hy `defrecord`.
+    Defrecord,
+    /// A Rust `struct` (fields are its named or positional fields).
+    Struct,
+    /// A Rust `enum` (its "fields" are its variants — one more variant is one more case of a sum, not one more fact of a record, so `Grew` does not judge it).
+    Enum,
+}
+
+impl ShapeKind {
+    /// The first line of the canonical spelling. A defrecord has none, so the fingerprints of the Hy ledgers written before the Rust reader stay the same (rewriting
+    /// them would be a rewritten ledger line for DOEFF214).
+    fn header(self) -> &'static str {
+        match self {
+            ShapeKind::Defrecord => "",
+            ShapeKind::Struct => "struct\n",
+            ShapeKind::Enum => "enum\n",
+        }
+    }
+
+    /// Whether a field added to an existing type of this kind is a new fact of the type (judged by `Grew`).
+    pub fn grows_by_fields(self) -> bool {
+        !matches!(self, ShapeKind::Enum)
+    }
 }
 
 /// The shape of one type as read from the source: its name, bases, and fields in written order. `start..end` is the byte range from the form's start to the name's end.
@@ -44,13 +72,14 @@ pub struct RecordShape {
     pub fields: Vec<FieldShape>,
     pub start: usize,
     pub end: usize,
+    pub kind: ShapeKind,
 }
 
 impl RecordShape {
-    /// The canonical spelling of the shape (the fingerprint's input): `defrecord`, then `bases: a, b` if any, then one `name: type` (or `name`) line per field.
-    /// Docstrings and `:check` invariants are not part of the shape.
+    /// The canonical spelling of the shape (the fingerprint's input): `struct` or `enum` for a Rust type (nothing for a defrecord), then `bases: a, b` if any, then one
+    /// `name: type` (or `name`) line per field. Docstrings and `:check` invariants are not part of the shape.
     pub fn canonical(&self) -> String {
-        let mut out = String::from("defrecord\n");
+        let mut out = self.kind.header().to_string();
         if !self.bases.is_empty() {
             out.push_str(&format!("bases: {}\n", self.bases.join(", ")));
         }
@@ -115,9 +144,503 @@ pub fn record_shapes(source: &str) -> Result<Vec<RecordShape>, String> {
                 }
             })
             .collect();
-        out.push(RecordShape { name: text(items[1]), bases, fields, start: form.span.start, end: items[1].span.end });
+        out.push(RecordShape {
+            name: text(items[1]),
+            bases,
+            fields,
+            start: form.span.start,
+            end: items[1].span.end,
+            kind: ShapeKind::Defrecord,
+        });
     }
     Ok(out)
+}
+
+/// Whether a Rust type spelling admits None / absent value (`Option<T>`, `std::option::Option<T>`, `core::option::Option<T>`).
+fn rust_optional(type_text: &str) -> bool {
+    let trimmed = type_text.trim();
+    trimmed.starts_with("Option<")
+        || trimmed.starts_with("Option <")
+        || trimmed.starts_with("std::option::Option<")
+        || trimmed.starts_with("std::option::Option <")
+        || trimmed.starts_with("core::option::Option<")
+        || trimmed.starts_with("core::option::Option <")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TokenKind {
+    Ident(String),
+    Punct(char),
+    Literal,
+}
+
+#[derive(Debug, Clone)]
+struct Token {
+    kind: TokenKind,
+    start: usize,
+    end: usize,
+}
+
+fn tokenize_rust(source: &str) -> Vec<Token> {
+    let mut tokens = Vec::new();
+    let bytes = source.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        let b = bytes[i];
+        if b.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        // Comments
+        if b == b'/' && i + 1 < len {
+            if bytes[i + 1] == b'/' {
+                i += 2;
+                while i < len && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            } else if bytes[i + 1] == b'*' {
+                i += 2;
+                let mut depth = 1;
+                while i + 1 < len && depth > 0 {
+                    if bytes[i] == b'/' && bytes[i + 1] == b'*' {
+                        depth += 1;
+                        i += 2;
+                    } else if bytes[i] == b'*' && bytes[i + 1] == b'/' {
+                        depth -= 1;
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
+                continue;
+            }
+        }
+        // Attributes #[...] or #![...]
+        if b == b'#' && i + 1 < len {
+            let next_idx = if bytes[i + 1] == b'!' { i + 2 } else { i + 1 };
+            if next_idx < len && bytes[next_idx] == b'[' {
+                i = next_idx + 1;
+                let mut depth = 1;
+                while i < len && depth > 0 {
+                    if bytes[i] == b'[' {
+                        depth += 1;
+                    } else if bytes[i] == b']' {
+                        depth -= 1;
+                    }
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        // String literal "..."
+        if b == b'"' {
+            let start = i;
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\\' {
+                    i += 2;
+                } else if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                } else {
+                    i += 1;
+                }
+            }
+            tokens.push(Token { kind: TokenKind::Literal, start, end: i });
+            continue;
+        }
+        // Raw string r#"..."#
+        if b == b'r' && i + 1 < len && (bytes[i + 1] == b'"' || bytes[i + 1] == b'#') {
+            let start = i;
+            i += 1;
+            let mut hashes = 0;
+            while i < len && bytes[i] == b'#' {
+                hashes += 1;
+                i += 1;
+            }
+            if i < len && bytes[i] == b'"' {
+                i += 1;
+                'raw: while i < len {
+                    if bytes[i] == b'"' {
+                        let mut match_hashes = 0;
+                        while i + 1 + match_hashes < len && match_hashes < hashes && bytes[i + 1 + match_hashes] == b'#' {
+                            match_hashes += 1;
+                        }
+                        if match_hashes == hashes {
+                            i += 1 + hashes;
+                            break 'raw;
+                        }
+                    }
+                    i += 1;
+                }
+                tokens.push(Token { kind: TokenKind::Literal, start, end: i });
+                continue;
+            }
+        }
+        // Char literal or lifetime
+        if b == b'\'' {
+            let start = i;
+            i += 1;
+            if i < len && bytes[i] == b'\\' {
+                i += 2;
+                if i < len && bytes[i] == b'\'' {
+                    i += 1;
+                }
+            } else if i + 1 < len && bytes[i + 1] == b'\'' {
+                i += 2;
+            } else {
+                while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+            }
+            tokens.push(Token { kind: TokenKind::Literal, start, end: i });
+            continue;
+        }
+        // Identifier
+        if b.is_ascii_alphabetic() || b == b'_' {
+            let start = i;
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            let text = &source[start..i];
+            tokens.push(Token { kind: TokenKind::Ident(text.to_string()), start, end: i });
+            continue;
+        }
+        // Number
+        if b.is_ascii_digit() {
+            let start = i;
+            while i < len && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'.' || bytes[i] == b'_') {
+                i += 1;
+            }
+            tokens.push(Token { kind: TokenKind::Literal, start, end: i });
+            continue;
+        }
+        // Punctuation
+        let start = i;
+        i += 1;
+        tokens.push(Token { kind: TokenKind::Punct(b as char), start, end: i });
+    }
+
+    tokens
+}
+
+/// Reads the top-level or module struct and enum definitions from a Rust source.
+pub fn rust_record_shapes(source: &str) -> Result<Vec<RecordShape>, String> {
+    let tokens = tokenize_rust(source);
+    let mut out = Vec::new();
+    let n = tokens.len();
+    let mut i = 0;
+
+    let get_text = |start: usize, end: usize| -> String {
+        source.get(start..end).unwrap_or("").to_string()
+    };
+
+    while i < n {
+        let is_struct = matches!(&tokens[i].kind, TokenKind::Ident(kw) if kw == "struct");
+        let is_enum = matches!(&tokens[i].kind, TokenKind::Ident(kw) if kw == "enum");
+
+        if !is_struct && !is_enum {
+            i += 1;
+            continue;
+        }
+
+        let item_start = tokens[i].start;
+        i += 1;
+
+        if i >= n {
+            break;
+        }
+
+        let name = match &tokens[i].kind {
+            TokenKind::Ident(name) => name.clone(),
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        let name_end = tokens[i].end;
+        i += 1;
+
+        // Skip generics `<...>`
+        if i < n && matches!(&tokens[i].kind, TokenKind::Punct('<')) {
+            let mut depth = 1;
+            i += 1;
+            while i < n && depth > 0 {
+                match &tokens[i].kind {
+                    TokenKind::Punct('<') => depth += 1,
+                    TokenKind::Punct('>') => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+            }
+        }
+
+        // Skip `where ...` until '{', '(', or ';'
+        while i < n {
+            match &tokens[i].kind {
+                TokenKind::Punct('{') | TokenKind::Punct('(') | TokenKind::Punct(';') => break,
+                _ => i += 1,
+            }
+        }
+
+        if i >= n {
+            break;
+        }
+
+        if is_struct {
+            let mut fields = Vec::new();
+            match &tokens[i].kind {
+                TokenKind::Punct('{') => {
+                    i += 1;
+                    while i < n && !matches!(&tokens[i].kind, TokenKind::Punct('}')) {
+                        if matches!(&tokens[i].kind, TokenKind::Ident(kw) if kw == "pub") {
+                            i += 1;
+                            if i < n && matches!(&tokens[i].kind, TokenKind::Punct('(')) {
+                                let mut depth = 1;
+                                i += 1;
+                                while i < n && depth > 0 {
+                                    match &tokens[i].kind {
+                                        TokenKind::Punct('(') => depth += 1,
+                                        TokenKind::Punct(')') => depth -= 1,
+                                        _ => {}
+                                    }
+                                    i += 1;
+                                }
+                            }
+                            continue;
+                        }
+
+                        let field_name = match &tokens[i].kind {
+                            TokenKind::Ident(name) => name.clone(),
+                            TokenKind::Punct('}') => break,
+                            _ => {
+                                i += 1;
+                                continue;
+                            }
+                        };
+                        i += 1;
+
+                        if i < n && matches!(&tokens[i].kind, TokenKind::Punct(':')) {
+                            i += 1;
+                        } else {
+                            continue;
+                        }
+
+                        let type_start = if i < n { tokens[i].start } else { name_end };
+                        let mut depth_paren = 0;
+                        let mut depth_angle = 0;
+                        let mut depth_brace = 0;
+                        let mut type_end = type_start;
+
+                        while i < n {
+                            match &tokens[i].kind {
+                                TokenKind::Punct('(') => depth_paren += 1,
+                                TokenKind::Punct(')') if depth_paren > 0 => depth_paren -= 1,
+                                TokenKind::Punct('<') => depth_angle += 1,
+                                TokenKind::Punct('>') if depth_angle > 0 => depth_angle -= 1,
+                                TokenKind::Punct('{') => depth_brace += 1,
+                                TokenKind::Punct('}') if depth_brace > 0 => depth_brace -= 1,
+                                TokenKind::Punct(',') if depth_paren == 0 && depth_angle == 0 && depth_brace == 0 => {
+                                    type_end = tokens[i].start;
+                                    i += 1;
+                                    break;
+                                }
+                                TokenKind::Punct('}') if depth_paren == 0 && depth_angle == 0 && depth_brace == 0 => {
+                                    type_end = tokens[i].start;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            type_end = tokens[i].end;
+                            i += 1;
+                        }
+
+                        let raw_type = get_text(type_start, type_end);
+                        let type_text = squeeze(&raw_type);
+                        let optional = rust_optional(&type_text);
+                        fields.push(FieldShape {
+                            name: field_name,
+                            type_text: Some(type_text),
+                            optional,
+                        });
+                    }
+                    if i < n && matches!(&tokens[i].kind, TokenKind::Punct('}')) {
+                        i += 1;
+                    }
+                }
+                TokenKind::Punct('(') => {
+                    i += 1;
+                    let mut field_idx = 0;
+                    while i < n && !matches!(&tokens[i].kind, TokenKind::Punct(')')) {
+                        if matches!(&tokens[i].kind, TokenKind::Ident(kw) if kw == "pub") {
+                            i += 1;
+                            if i < n && matches!(&tokens[i].kind, TokenKind::Punct('(')) {
+                                let mut depth = 1;
+                                i += 1;
+                                while i < n && depth > 0 {
+                                    match &tokens[i].kind {
+                                        TokenKind::Punct('(') => depth += 1,
+                                        TokenKind::Punct(')') => depth -= 1,
+                                        _ => {}
+                                    }
+                                    i += 1;
+                                }
+                            }
+                            continue;
+                        }
+
+                        let type_start = tokens[i].start;
+                        let mut depth_paren = 0;
+                        let mut depth_angle = 0;
+                        let mut depth_brace = 0;
+                        let mut type_end = type_start;
+
+                        while i < n {
+                            match &tokens[i].kind {
+                                TokenKind::Punct('(') => depth_paren += 1,
+                                TokenKind::Punct(')') if depth_paren > 0 => depth_paren -= 1,
+                                TokenKind::Punct('<') => depth_angle += 1,
+                                TokenKind::Punct('>') if depth_angle > 0 => depth_angle -= 1,
+                                TokenKind::Punct('{') => depth_brace += 1,
+                                TokenKind::Punct('}') if depth_brace > 0 => depth_brace -= 1,
+                                TokenKind::Punct(',') if depth_paren == 0 && depth_angle == 0 && depth_brace == 0 => {
+                                    type_end = tokens[i].start;
+                                    i += 1;
+                                    break;
+                                }
+                                TokenKind::Punct(')') if depth_paren == 0 && depth_angle == 0 && depth_brace == 0 => {
+                                    type_end = tokens[i].start;
+                                    break;
+                                }
+                                _ => {}
+                            }
+                            type_end = tokens[i].end;
+                            i += 1;
+                        }
+
+                        let raw_type = get_text(type_start, type_end);
+                        let type_text = squeeze(&raw_type);
+                        let optional = rust_optional(&type_text);
+                        fields.push(FieldShape {
+                            name: field_idx.to_string(),
+                            type_text: Some(type_text),
+                            optional,
+                        });
+                        field_idx += 1;
+                    }
+                    if i < n && matches!(&tokens[i].kind, TokenKind::Punct(')')) {
+                        i += 1;
+                    }
+                    if i < n && matches!(&tokens[i].kind, TokenKind::Punct(';')) {
+                        i += 1;
+                    }
+                }
+                TokenKind::Punct(';') => {
+                    i += 1;
+                }
+                _ => {}
+            }
+
+            out.push(RecordShape {
+                name,
+                bases: Vec::new(),
+                fields,
+                start: item_start,
+                end: name_end,
+                kind: ShapeKind::Struct,
+            });
+        } else if is_enum {
+            let mut variants = Vec::new();
+            if matches!(&tokens[i].kind, TokenKind::Punct('{')) {
+                i += 1;
+                while i < n && !matches!(&tokens[i].kind, TokenKind::Punct('}')) {
+                    let variant_name = match &tokens[i].kind {
+                        TokenKind::Ident(name) => name.clone(),
+                        TokenKind::Punct('}') => break,
+                        _ => {
+                            i += 1;
+                            continue;
+                        }
+                    };
+                    i += 1;
+
+                    let mut type_text = None;
+                    if i < n && matches!(&tokens[i].kind, TokenKind::Punct('(')) {
+                        let type_start = tokens[i].start;
+                        let mut depth = 1;
+                        i += 1;
+                        while i < n && depth > 0 {
+                            match &tokens[i].kind {
+                                TokenKind::Punct('(') => depth += 1,
+                                TokenKind::Punct(')') => depth -= 1,
+                                _ => {}
+                            }
+                            i += 1;
+                        }
+                        let raw = get_text(type_start, if i > 0 { tokens[i - 1].end } else { type_start });
+                        type_text = Some(squeeze(&raw));
+                    } else if i < n && matches!(&tokens[i].kind, TokenKind::Punct('{')) {
+                        let type_start = tokens[i].start;
+                        let mut depth = 1;
+                        i += 1;
+                        while i < n && depth > 0 {
+                            match &tokens[i].kind {
+                                TokenKind::Punct('{') => depth += 1,
+                                TokenKind::Punct('}') => depth -= 1,
+                                _ => {}
+                            }
+                            i += 1;
+                        }
+                        let raw = get_text(type_start, if i > 0 { tokens[i - 1].end } else { type_start });
+                        type_text = Some(squeeze(&raw));
+                    }
+
+                    if i < n && matches!(&tokens[i].kind, TokenKind::Punct('=')) {
+                        i += 1;
+                        while i < n && !matches!(&tokens[i].kind, TokenKind::Punct(',') | TokenKind::Punct('}')) {
+                            i += 1;
+                        }
+                    }
+
+                    if i < n && matches!(&tokens[i].kind, TokenKind::Punct(',')) {
+                        i += 1;
+                    }
+
+                    variants.push(FieldShape {
+                        name: variant_name,
+                        type_text,
+                        optional: false,
+                    });
+                }
+                if i < n && matches!(&tokens[i].kind, TokenKind::Punct('}')) {
+                    i += 1;
+                }
+            }
+
+            out.push(RecordShape {
+                name,
+                bases: Vec::new(),
+                fields: variants,
+                start: item_start,
+                end: name_end,
+                kind: ShapeKind::Enum,
+            });
+        }
+    }
+
+    Ok(out)
+}
+
+/// Returns the shapes of types declared in a source file (.hy or .rs).
+pub fn shapes_of(rel: &str, source: &str) -> Result<Vec<RecordShape>, String> {
+    if rel.ends_with(".rs") {
+        rust_record_shapes(source)
+    } else {
+        record_shapes(source)
+    }
 }
 
 /// The kind of a code element (round 1 judges only records; the other kinds are read and not judged).
@@ -376,13 +899,13 @@ fn answer_gaps(shape: &RecordShape, evidence: &ElementEvidence, review_pattern: 
 /// Err only if the .hy cannot be read.
 pub fn judge(
     rel: &str,
-    hy_source: &str,
+    source: &str,
     evidence: Option<&str>,
     existing: &ExistingShapes,
     review_pattern: Option<&regex::Regex>,
 ) -> Result<Vec<Hit>, String> {
-    let shapes = record_shapes(hy_source)?;
-    let first_line_end = hy_source.find('\n').unwrap_or(hy_source.len());
+    let shapes = shapes_of(rel, source)?;
+    let first_line_end = source.find('\n').unwrap_or(source.len());
     let file_hit = |name: String, problem: Problem| Hit { name, start: 0, end: first_line_end, problem };
     let entries: Vec<ElementEvidence> = match evidence.map(parse_evidence) {
         None => Vec::new(),
@@ -422,31 +945,34 @@ pub fn judge(
     Ok(hits)
 }
 
-/// The fields each type of the base's shapes ledger gained against its version at the base and no approval covers (v2 §8.3). `base_source` is read only when a type of
-/// the ledger changed its fingerprint (the common case — no listed type changed — reads nothing). Err only if the .hy cannot be read.
+/// The fields each record of the base's shapes ledger (a defrecord or a struct — not an enum, see `ShapeKind::Enum`) gained against its version at the base and no
+/// approval covers (v2 §8.3). `base_source` is read only when a type of the ledger changed its fingerprint (the common case — no listed type changed — reads nothing).
+/// Err only if the source cannot be read.
 pub fn grown_fields(
     rel: &str,
-    hy_source: &str,
+    source: &str,
     base_ledger: &ExistingShapes,
     base_source: impl FnOnce() -> Option<String>,
     approvals: &super::ledger_guard::Approvals,
 ) -> Result<Vec<Hit>, String> {
-    let shapes = record_shapes(hy_source)?;
-    let changed: Vec<&RecordShape> =
-        shapes.iter().filter(|s| base_ledger.fingerprint_of(rel, &s.name).is_some_and(|was| was != s.fingerprint().as_str())).collect();
+    let shapes = shapes_of(rel, source)?;
+    let changed: Vec<&RecordShape> = shapes
+        .iter()
+        .filter(|s| s.kind.grows_by_fields() && base_ledger.fingerprint_of(rel, &s.name).is_some_and(|was| was != s.fingerprint().as_str()))
+        .collect();
     if changed.is_empty() {
         return Ok(Vec::new());
     }
-    let Some(base_shapes) = base_source().and_then(|source| record_shapes(&source).ok()) else { return Ok(Vec::new()) };
+    let Some(base_shapes) = base_source().and_then(|was| shapes_of(rel, &was).ok()) else { return Ok(Vec::new()) };
     let mut hits = Vec::new();
     for shape in changed {
-        let Some(was) = base_shapes.iter().find(|b| b.name == shape.name) else { continue };
+        let Some(was) = base_shapes.iter().find(|b| b.name == shape.name && b.kind == shape.kind) else { continue };
         let key = ExistingShapes::key(rel, &shape.name);
         let fields: Vec<String> = shape
             .fields
             .iter()
             .filter(|f| !was.fields.iter().any(|w| w.name == f.name))
-            .filter(|f| !approvals.covers("fields", &key, &f.name))
+            .filter(|f| !approvals.covers(super::ledger_guard::ApprovalLedger::Fields, &key, &f.name))
             .map(|f| f.name.clone())
             .collect();
         if !fields.is_empty() {
@@ -469,17 +995,29 @@ pub fn evidence_rel(rel: &str) -> String {
     }
 }
 
-/// The module next to an evidence file (`foo.evidence.toml` → `foo.hy`; None if the path is not an evidence file).
+/// The module next to an evidence file (`foo.evidence.toml` → `foo.rs` or `foo.hy`; None if the path is not an evidence file).
 pub fn module_of(evidence_rel: &str, evidence_path: &Path) -> Option<(String, PathBuf)> {
     let suffix = format!(".{}", EVIDENCE_SUFFIX);
     let stem = evidence_rel.strip_suffix(&suffix)?;
     let file_stem = evidence_path.file_name()?.to_str()?.strip_suffix(&suffix)?;
-    Some((format!("{}.hy", stem), evidence_path.with_file_name(format!("{}.hy", file_stem))))
+    let rs_path = evidence_path.with_file_name(format!("{}.rs", file_stem));
+    if rs_path.exists() {
+        return Some((format!("{}.rs", stem), rs_path));
+    }
+    let hy_path = evidence_path.with_file_name(format!("{}.hy", file_stem));
+    if hy_path.exists() {
+        return Some((format!("{}.hy", stem), hy_path));
+    }
+    if stem.ends_with(".rs") {
+        Some((format!("{}.rs", stem), rs_path))
+    } else {
+        Some((format!("{}.hy", stem), hy_path))
+    }
 }
 
-/// Whether a .hy is in the population.
+/// Whether a file (.hy or .rs) is in the population.
 pub fn wants(rel: &str, decl: &DesignEvidenceDecl) -> bool {
-    rel.ends_with(".hy") && selected(rel, &decl.selection.files, &decl.selection.except)
+    (rel.ends_with(".hy") || rel.ends_with(".rs")) && selected(rel, &decl.selection.files, &decl.selection.except)
 }
 
 /// The settings of one run: the ledger read once and the compiled review spelling (Err with the reason if the declared ledger cannot be read — the run then judges with an
@@ -510,10 +1048,10 @@ impl Growth {
 
 impl Judging {
     /// The hits of one module's types that grew (empty without a readable base).
-    fn grown(&self, rel: &str, hy_source: &str) -> Result<Vec<Hit>, String> {
+    fn grown(&self, rel: &str, source: &str) -> Result<Vec<Hit>, String> {
         match &self.growth {
             None => Ok(Vec::new()),
-            Some(growth) => grown_fields(rel, hy_source, &growth.ledger, || growth.base.read(rel), &growth.approvals),
+            Some(growth) => grown_fields(rel, source, &growth.ledger, || growth.base.read(rel), &growth.approvals),
         }
     }
 
@@ -530,20 +1068,20 @@ impl Judging {
         (Judging { existing, review_pattern, growth }, error)
     }
 
-    /// Judges one module whose evidence file is read from disk (`hy_source` is the module's contents as passed in).
-    pub fn judge_module(&self, rel: &str, path: &Path, hy_source: &str) -> Result<Vec<Hit>, String> {
+    /// Judges one module whose evidence file is read from disk (`source` is the module's contents as passed in).
+    pub fn judge_module(&self, rel: &str, path: &Path, source: &str) -> Result<Vec<Hit>, String> {
         let evidence = std::fs::read_to_string(evidence_of(path)).ok();
-        let mut hits = judge(rel, hy_source, evidence.as_deref(), &self.existing, self.review_pattern.as_ref())?;
-        hits.extend(self.grown(rel, hy_source)?);
+        let mut hits = judge(rel, source, evidence.as_deref(), &self.existing, self.review_pattern.as_ref())?;
+        hits.extend(self.grown(rel, source)?);
         Ok(hits)
     }
 
     /// Judges one evidence file's contents as passed in, against its sibling module read from disk (the hits are reported at the module).
     pub fn judge_evidence(&self, module_rel: &str, module_path: &Path, evidence: &str) -> Result<(String, Vec<Hit>), String> {
-        let hy_source = std::fs::read_to_string(module_path).map_err(|error| format!("cannot read the sibling module: {}", error))?;
-        let mut hits = judge(module_rel, &hy_source, Some(evidence), &self.existing, self.review_pattern.as_ref())?;
-        hits.extend(self.grown(module_rel, &hy_source)?);
-        Ok((hy_source, hits))
+        let source = std::fs::read_to_string(module_path).map_err(|error| format!("cannot read the sibling module: {}", error))?;
+        let mut hits = judge(module_rel, &source, Some(evidence), &self.existing, self.review_pattern.as_ref())?;
+        hits.extend(self.grown(module_rel, &source)?);
+        Ok((source, hits))
     }
 }
 
@@ -555,7 +1093,7 @@ pub struct FileHits {
     pub hits: Vec<Hit>,
 }
 
-/// Reads and judges the declared .hy files (only files under the focus if there is one). Unreadable files and an unreadable ledger return reasons.
+/// Reads and judges the declared source files (only files under the focus if there is one). Unreadable files and an unreadable ledger return reasons.
 pub fn find(root: &Path, decl: &DesignEvidenceDecl, focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
     let (judging, ledger_error) = Judging::load(root, decl);
     let (found, mut errors) = judge_files(
@@ -572,14 +1110,14 @@ pub fn find(root: &Path, decl: &DesignEvidenceDecl, focus: Option<&[PathBuf]>) -
     (found, errors)
 }
 
-/// The ledger of the current shapes of every defrecord in the population, as TOML (`--print-existing-shapes`; written once when the rule is turned on).
+/// The ledger of the current shapes of every type in the population, as TOML (`--print-existing-shapes`; written once when the rule is turned on).
 pub fn existing_shapes(root: &Path, decl: &DesignEvidenceDecl) -> (String, Vec<String>) {
     let (mut found, errors) = judge_files(
         root,
         decl.selection.files.iter(),
         None,
         |rel, _| wants(rel, decl),
-        |rel, _, source| record_shapes(&source).map(|shapes| Some((rel.clone(), shapes))).map_err(|reason| format!("{}: {}", rel, reason)),
+        |rel, _, source| shapes_of(&rel, &source).map(|shapes| Some((rel.clone(), shapes))).map_err(|reason| format!("{}: {}", rel, reason)),
     );
     found.sort_by(|a, b| a.0.cmp(&b.0));
     (ExistingShapes::spell(found.iter().map(|(rel, shapes)| (rel.as_str(), shapes.as_slice()))), errors)
@@ -588,15 +1126,17 @@ pub fn existing_shapes(root: &Path, decl: &DesignEvidenceDecl) -> (String, Vec<S
 /// Adds, to the named paths, the module next to each named evidence file — so that when only the evidence is edited, its module is judged (focus) and its hits are kept.
 pub fn with_sibling_modules(paths: Vec<PathBuf>) -> Vec<PathBuf> {
     let suffix = format!(".{}", EVIDENCE_SUFFIX);
-    let modules: Vec<PathBuf> = paths
-        .iter()
-        .filter_map(|p| p.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(&suffix)).map(|stem| p.with_file_name(format!("{}.hy", stem))))
-        .filter(|p| p.is_file())
-        .collect();
-    let mut out = paths;
-    for module in modules {
-        if !out.contains(&module) {
-            out.push(module);
+    let mut out = paths.clone();
+    for p in &paths {
+        if let Some(stem) = p.file_name().and_then(|n| n.to_str()).and_then(|n| n.strip_suffix(&suffix)) {
+            let rs_path = p.with_file_name(format!("{}.rs", stem));
+            if rs_path.is_file() && !out.contains(&rs_path) {
+                out.push(rs_path);
+            }
+            let hy_path = p.with_file_name(format!("{}.hy", stem));
+            if hy_path.is_file() && !out.contains(&hy_path) {
+                out.push(hy_path);
+            }
         }
     }
     out
@@ -630,7 +1170,7 @@ mod tests {
         assert_eq!(shapes[0].name, "Done");
         let fields: Vec<(&str, Option<&str>, bool)> = shapes[0].fields.iter().map(|f| (f.name.as_str(), f.type_text.as_deref(), f.optional)).collect();
         assert_eq!(fields, vec![("card", Some("str"), false), ("merged-at", Some("(| str None)"), true)]);
-        assert_eq!(shapes[0].canonical(), "defrecord\ncard: str\nmerged-at: (| str None)\n");
+        assert_eq!(shapes[0].canonical(), "card: str\nmerged-at: (| str None)\n", "a defrecord has no kind line (the Hy ledgers keep their fingerprints)");
     }
 
     #[test]
@@ -717,8 +1257,103 @@ mod tests {
     #[test]
     fn evidence_paths_pair_with_modules() {
         assert_eq!(evidence_of(Path::new("a/b.hy")), PathBuf::from("a/b.evidence.toml"));
+        assert_eq!(evidence_of(Path::new("a/b.rs")), PathBuf::from("a/b.evidence.toml"));
         assert_eq!(evidence_rel("a/b.hy"), "a/b.evidence.toml");
+        assert_eq!(evidence_rel("a/b.rs"), "a/b.evidence.toml");
         assert_eq!(module_of("a/b.evidence.toml", Path::new("/r/a/b.evidence.toml")), Some(("a/b.hy".to_string(), PathBuf::from("/r/a/b.hy"))));
         assert_eq!(module_of("a/b.toml", Path::new("/r/a/b.toml")), None);
+    }
+
+    #[test]
+    fn rust_shapes_are_read_with_struct_and_enum() {
+        let rust_src = r#"
+            /// A user record.
+            #[derive(Debug, Clone)]
+            pub struct User<T> where T: Clone {
+                pub id: u64,
+                pub name: String,
+                pub note: Option<String>,
+            }
+
+            pub enum Status {
+                Active,
+                Waiting(u64),
+                Custom { reason: String },
+            }
+        "#;
+        let shapes = rust_record_shapes(rust_src).expect("readable");
+        assert_eq!(shapes.len(), 2);
+        assert_eq!(shapes[0].name, "User");
+        assert_eq!(shapes[0].kind, ShapeKind::Struct);
+        assert_eq!(shapes[0].fields.len(), 3);
+        assert_eq!(shapes[0].fields[0].name, "id");
+        assert_eq!(shapes[0].fields[0].type_text.as_deref(), Some("u64"));
+        assert!(!shapes[0].fields[0].optional);
+        assert_eq!(shapes[0].fields[2].name, "note");
+        assert_eq!(shapes[0].fields[2].type_text.as_deref(), Some("Option<String>"));
+        assert!(shapes[0].fields[2].optional);
+        assert_eq!(shapes[0].canonical(), "struct\nid: u64\nname: String\nnote: Option<String>\n");
+
+        assert_eq!(shapes[1].name, "Status");
+        assert_eq!(shapes[1].kind, ShapeKind::Enum);
+        assert_eq!(shapes[1].fields.len(), 3);
+        assert_eq!(shapes[1].fields[0].name, "Active");
+        assert_eq!(shapes[1].fields[0].type_text, None);
+        assert_eq!(shapes[1].fields[1].name, "Waiting");
+        assert_eq!(shapes[1].fields[1].type_text.as_deref(), Some("(u64)"));
+        assert_eq!(shapes[1].fields[2].name, "Custom");
+        assert_eq!(shapes[1].fields[2].type_text.as_deref(), Some("{ reason: String }"));
+        assert_eq!(shapes[1].canonical(), "enum\nActive\nWaiting: (u64)\nCustom: { reason: String }\n");
+    }
+
+    #[test]
+    fn rust_matching_evidence_and_ledger_validation() {
+        let rust_src = r#"
+            pub struct Item {
+                pub key: String,
+                pub count: u32,
+            }
+        "#;
+        let evidence_toml = r#"schema = 1
+
+[[element]]
+name = "Item"
+kind = "record"
+concern = "an inventory item"
+key = ["key"]
+fan_out = 1
+review = "rv-1"
+
+[[element.field]]
+name = "key"
+type = "String"
+fact = "the unique item key"
+
+[[element.field]]
+name = "count"
+type = "u32"
+fact = "number of items"
+
+[[element.rejected]]
+shape = "add to user"
+why = "unrelated concern"
+"#;
+        let hits = judge("src/item.rs", rust_src, Some(evidence_toml), &ExistingShapes::default(), None).unwrap();
+        assert_eq!(hits, vec![], "complete evidence matches");
+
+        // New type without evidence
+        let hits = judge("src/item.rs", rust_src, None, &ExistingShapes::default(), None).unwrap();
+        assert!(matches!(hits.as_slice(), [h] if h.name == "Item" && matches!(h.problem, Problem::Missing { was: None, .. })));
+
+        // Existing type in ledger without evidence passes
+        let shapes = rust_record_shapes(rust_src).unwrap();
+        let ledger = ExistingShapes::parse(&ExistingShapes::spell(std::iter::once(("src/item.rs", shapes.as_slice())))).unwrap();
+        let hits = judge("src/item.rs", rust_src, None, &ledger, None).unwrap();
+        assert_eq!(hits, vec![], "existing type passes");
+
+        // Reshaped existing type fails
+        let reshaped = rust_src.replace("pub count: u32,", "pub count: u64,");
+        let hits = judge("src/item.rs", &reshaped, None, &ledger, None).unwrap();
+        assert!(matches!(hits.as_slice(), [h] if h.name == "Item" && matches!(h.problem, Problem::Missing { was: Some(_), .. })));
     }
 }

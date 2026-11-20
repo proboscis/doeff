@@ -69,12 +69,37 @@ impl Base {
     }
 }
 
+/// What an approval lets pass (a closed set — an approvals file naming another kind cannot be read, so it lets nothing pass).
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ApprovalLedger {
+    /// A line of the shapes ledger (key = `<rel>::<Type>`, value = the fingerprint).
+    Shapes,
+    /// A line of the substitutes ledger (key = `<rel>::<kind>`, value = the count).
+    Substitutes,
+    /// A field added to a type of the shapes ledger (key = `<rel>::<Type>`, value = the field — DOEFF212's Grew).
+    Fields,
+    /// The `:design-evidence` declaration (key = `:design-evidence`, value = its fingerprint).
+    Declaration,
+}
+
+impl ApprovalLedger {
+    /// The word of the approvals file.
+    pub fn word(self) -> &'static str {
+        match self {
+            ApprovalLedger::Shapes => "shapes",
+            ApprovalLedger::Substitutes => "substitutes",
+            ApprovalLedger::Fields => "fields",
+            ApprovalLedger::Declaration => "declaration",
+        }
+    }
+}
+
 /// One user approval: the ledger line (or field, or declaration) it lets pass, the id of the request the user approved, and why.
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Approval {
-    /// `shapes`, `substitutes`, `fields`, or `declaration`.
-    pub ledger: String,
+    pub ledger: ApprovalLedger,
     pub key: String,
     #[serde(default)]
     pub value: String,
@@ -82,6 +107,23 @@ pub struct Approval {
     pub review: String,
     #[serde(default)]
     pub why: String,
+}
+
+impl Approval {
+    /// What makes the entry not an approval (None = it names a request of the declared spelling and says why). The one place both uses read: an entry added on the
+    /// branch with a problem is red (`unspelled_approvals`), and an entry at the base with a problem lets nothing pass (`Approvals::spelled`).
+    pub fn problem(&self, pattern: Option<&regex::Regex>) -> Option<String> {
+        let review = self.review.trim();
+        if review.is_empty() {
+            Some("has no review (the id of the request the user approved)".to_string())
+        } else if pattern.is_some_and(|p| !p.is_match(review)) {
+            Some(format!("has review {} that does not have the declared spelling of an approved request", review))
+        } else if self.why.trim().is_empty() {
+            Some("has no why".to_string())
+        } else {
+            None
+        }
+    }
 }
 
 /// The approvals file.
@@ -104,17 +146,27 @@ impl Approvals {
         }
     }
 
+    /// Only the entries without a problem (an entry whose review is not of the declared spelling — a remark, a conversation id — lets nothing pass, even at the base).
+    pub fn spelled(self, pattern: Option<&regex::Regex>) -> Approvals {
+        Approvals { schema: self.schema, approval: self.approval.into_iter().filter(|a| a.problem(pattern).is_none()).collect() }
+    }
+
     /// Whether an approval with a review and a why covers (ledger, key, value).
-    pub fn covers(&self, ledger: &str, key: &str, value: &str) -> bool {
+    pub fn covers(&self, ledger: ApprovalLedger, key: &str, value: &str) -> bool {
         self.approval.iter().any(|a| a.ledger == ledger && a.key == key && a.value == value && !a.review.trim().is_empty() && !a.why.trim().is_empty())
     }
 }
 
-/// The approvals at the base (empty if the guard declares no approvals file or the file is not at the base). Only these count.
+/// The declared spelling of a request id (None = not declared, or not a regex — then any non-empty review is of the spelling).
+pub fn approval_pattern(guard: &LedgerGuardDecl) -> Option<regex::Regex> {
+    guard.approval_pattern.as_deref().and_then(|p| regex::Regex::new(p).ok())
+}
+
+/// The approvals at the base that are of the declared spelling (empty if the guard declares no approvals file or the file is not at the base). Only these count.
 pub fn base_approvals(guard: &LedgerGuardDecl, base: &Base) -> Result<Approvals, String> {
     match guard.approvals.as_deref().and_then(|rel| base.read(rel).map(|text| (rel, text))) {
         None => Ok(Approvals::default()),
-        Some((rel, text)) => Approvals::parse(&text).map_err(|reason| format!("{} at the base: {}", rel, reason)),
+        Some((rel, text)) => Approvals::parse(&text).map(|a| a.spelled(approval_pattern(guard).as_ref())).map_err(|reason| format!("{} at the base: {}", rel, reason)),
     }
 }
 
@@ -129,7 +181,7 @@ pub struct GuardHit {
 /// The lines of the shapes ledger in the tree that are new or changed against the base and have no approval.
 pub fn grown_shapes(rel: &str, now: &ExistingShapes, base: &ExistingShapes, approvals: &Approvals) -> Vec<GuardHit> {
     now.lines()
-        .filter(|(key, value)| base.line(key) != Some(*value) && !approvals.covers("shapes", key, value))
+        .filter(|(key, value)| base.line(key) != Some(*value) && !approvals.covers(ApprovalLedger::Shapes, key, value))
         .map(|(key, value)| GuardHit {
             rel: rel.to_string(),
             detail: format!("shapes:{}", key),
@@ -145,7 +197,7 @@ pub fn grown_shapes(rel: &str, now: &ExistingShapes, base: &ExistingShapes, appr
 pub fn grown_substitutes(rel: &str, now: &SubstituteCounts, base: &SubstituteCounts, approvals: &Approvals) -> Vec<GuardHit> {
     let base_of = |key: &str| base.lines().find(|(k, _)| *k == key).map(|(_, v)| v);
     now.lines()
-        .filter(|(key, count)| base_of(key).map_or(true, |was| *count > was) && !approvals.covers("substitutes", key, &count.to_string()))
+        .filter(|(key, count)| base_of(key).map_or(true, |was| *count > was) && !approvals.covers(ApprovalLedger::Substitutes, key, &count.to_string()))
         .map(|(key, count)| GuardHit {
             rel: rel.to_string(),
             detail: format!("substitutes:{}", key),
@@ -166,20 +218,10 @@ pub fn unspelled_approvals(rel: &str, now: &Approvals, base: &Approvals, pattern
         .iter()
         .filter(|a| !base.approval.contains(a))
         .filter_map(|a| {
-            let review = a.review.trim();
-            let problem = if review.is_empty() {
-                Some("has no review (the id of the request the user approved)".to_string())
-            } else if pattern.is_some_and(|p| !p.is_match(review)) {
-                Some(format!("has review {} that does not have the declared spelling of an approved request", review))
-            } else if a.why.trim().is_empty() {
-                Some("has no why".to_string())
-            } else {
-                None
-            };
-            problem.map(|problem| GuardHit {
+            a.problem(pattern).map(|problem| GuardHit {
                 rel: rel.to_string(),
-                detail: format!("approval:{}:{}:{}", a.ledger, a.key, a.value),
-                reason: format!("{} adds an approval for {} {} {} that {}", rel, a.ledger, a.key, a.value, problem),
+                detail: format!("approval:{}:{}:{}", a.ledger.word(), a.key, a.value),
+                reason: format!("{} adds an approval for {} {} {} that {}", rel, a.ledger.word(), a.key, a.value, problem),
             })
         })
         .collect()
@@ -258,7 +300,9 @@ pub fn judge(root: &Path, architecture_rel: &str, decl: &DesignEvidenceDecl) -> 
         None => Some((Approvals::default(), Approvals::default())),
         Some(rel) => both(rel, read_now(rel), base.read(rel), Approvals::parse, &mut hits),
     };
-    let Some((approvals_now, approvals)) = approvals else { return Ok(hits) };
+    let Some((approvals_now, approvals_at_base)) = approvals else { return Ok(hits) };
+    let pattern = approval_pattern(guard);
+    let approvals = approvals_at_base.clone().spelled(pattern.as_ref());
     if let Some(rel) = &decl.existing {
         if let Some((now, was)) = both(rel, read_now(rel), base.read(rel), ExistingShapes::parse, &mut hits) {
             hits.extend(grown_shapes(rel, &now, &was, &approvals));
@@ -270,12 +314,11 @@ pub fn judge(root: &Path, architecture_rel: &str, decl: &DesignEvidenceDecl) -> 
         }
     }
     if guard.approvals.is_some() {
-        let pattern = guard.approval_pattern.as_deref().and_then(|p| regex::Regex::new(p).ok());
-        hits.extend(unspelled_approvals(&approvals_rel, &approvals_now, &approvals, pattern.as_ref()));
+        hits.extend(unspelled_approvals(&approvals_rel, &approvals_now, &approvals_at_base, pattern.as_ref()));
     }
     if let (Some(now), Some(was)) = (read_now(architecture_rel).and_then(|t| declaration_spelling(&t)), base.read(architecture_rel).and_then(|t| declaration_spelling(&t))) {
         let fingerprint = declaration_fingerprint(&now);
-        if now != was && !approvals.covers("declaration", ":design-evidence", &fingerprint) {
+        if now != was && !approvals.covers(ApprovalLedger::Declaration, ":design-evidence", &fingerprint) {
             hits.push(GuardHit {
                 rel: architecture_rel.to_string(),
                 detail: "declaration:design-evidence".to_string(),
@@ -339,7 +382,7 @@ mod tests {
         let details: Vec<String> = unspelled_approvals("a.toml", &now, &Approvals::default(), Some(&pattern)).into_iter().map(|h| h.detail).collect();
         assert_eq!(details, vec!["approval:shapes:k2:v", "approval:shapes:k3:v"]);
         // An approval added on the branch does not let the ledger line pass: only the base's approvals are consulted (the caller passes base_approvals).
-        assert!(!Approvals::default().covers("shapes", "k", "v"));
+        assert!(!Approvals::default().covers(ApprovalLedger::Shapes, "k", "v"));
     }
 
     #[test]

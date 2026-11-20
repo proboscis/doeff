@@ -1,0 +1,77 @@
+schema = 1
+
+[[element]]
+name = "SubstituteCounts"
+kind = "record"
+concern = "the ledger of the values that stood in for a type when the rule was turned on"
+key = []
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "counts"
+type = "BTreeMap<String, u32>"
+fact = "the allowed count per file and kind key; a mapping from an id to data"
+
+[[element.rejected]]
+shape = "the places of the values (line numbers)"
+why = "places move with every edit; a count only shrinks when a value is removed"
+
+[[element]]
+name = "Excess"
+kind = "record"
+concern = "one kind of value above its ledger count in one file"
+key = ["kind"]
+fan_out = 2
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "kind"
+type = "SubstituteKind"
+fact = "the kind of value"
+
+[[element.field]]
+name = "allowed"
+type = "u32"
+fact = "the count the ledger allows"
+
+[[element.field]]
+name = "hits"
+type = "Vec<SubstituteHit>"
+fact = "every value of the kind in the file (the ledger holds a count, not places)"
+
+[[element.rejected]]
+shape = "only the values beyond the count"
+why = "which values are the excess is not knowable from a count; all of them are shown"
+
+[[element]]
+name = "FileExcess"
+kind = "record"
+concern = "the DOEFF213 excess of one module with what reporting needs"
+key = ["rel"]
+fan_out = 1
+review = "self-evidence-review-1"
+
+[[element.field]]
+name = "rel"
+type = "String"
+fact = "the module's path from the root"
+
+[[element.field]]
+name = "path"
+type = "PathBuf"
+fact = "the module's path on disk"
+
+[[element.field]]
+name = "source"
+type = "String"
+fact = "the module's contents (for ranges)"
+
+[[element.field]]
+name = "excess"
+type = "Vec<Excess>"
+fact = "the kinds above their counts"
+
+[[element.rejected]]
+shape = "a map from path to excess"
+why = "the source travels with the excess to place ranges; a record keeps them together"

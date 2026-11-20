@@ -18,9 +18,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use super::architecture::DesignEvidenceDecl;
-use super::design_evidence::wants;
 use super::retired::judge_files;
 use super::typed_values::{substitute_hits, SubstituteHit, SubstituteKind};
+
+/// Whether a file is in DOEFF213's population: a .hy of the :design-evidence population (the Rust forms of a substitute are not read yet — v2 §12).
+pub fn wants(rel: &str, decl: &DesignEvidenceDecl) -> bool {
+    rel.ends_with(".hy") && super::design_evidence::wants(rel, decl)
+}
 
 /// The ledger of the values that stood in for a type when the rule was turned on: `"<rel>::<kind>"` → count.
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq, Eq)]
