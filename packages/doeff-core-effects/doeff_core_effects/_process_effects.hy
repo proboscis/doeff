@@ -71,10 +71,12 @@
 ;;;                     not told to it (they keep running after the starting process).
 ;;;   PollProcess       Ask about a started child just once, without waiting. Answer = ProcessRunning, ProcessExited (exit code -- reaped when answered, and the pid is forgotten), or
 ;;;                     ProcessNotChild (a pid that is not a child this handler started).
-;;;   StopProcess       Stop a started child and reap it: SIGTERM to the group if process-group, otherwise to the child -> wait stop-grace seconds -> SIGKILL.
-;;;                     Answer = ProcessExited or ProcessNotChild (no signal is sent to someone else's process). A child that had already ended is reaped as is.
+;;;   StopProcess       Stop a started child and reap it: SIGTERM to the group if process-group, otherwise to the child -> wait stop-grace seconds -> SIGKILL -> wait stop-grace seconds.
+;;;                     Answer = ProcessExited, ProcessSignalRefused, ProcessUnreaped, or ProcessNotChild (no signal is sent to someone else's process). A child that had already ended is reaped as is.
 ;;;                     If the OS refuses to send SIGKILL (EPERM), ProcessSignalRefused without waiting for the end -- the child stays in the table still running (waiting for the end after a
 ;;;                     refused KILL would make the stop call never return).
+;;;                     If SIGKILL was sent but the child does not end within stop-grace seconds (e.g. D state on a mount that does not answer), reaping is handed to a daemon thread,
+;;;                     the child is removed from the table, and ProcessUnreaped is answered without waiting further.
 ;;;   SignalProcess     Send a signal (TERM or KILL of ProcessSignal) to a started child just once and return without waiting (#2461 -- consumer = how the doeff-cluster
 ;;;                     worker stops its children: send TERM every tick, send KILL at the next stage if it does not stop, and confirm the end with PollProcess).
 ;;;                     A child started with process-group gets it at the group, otherwise at the child (same as StopProcess). Answer = ProcessSignalled (delivered =
@@ -300,8 +302,14 @@
   (#^ int pid))
 
 
-(defclass [(dataclass :frozen True :kw-only True)] StopProcess [(get EffectBase (| ProcessExited ProcessSignalRefused ProcessNotChild))]
-  "Stop a child started by StartProcess and reap it (header note). Answer = ProcessExited, ProcessSignalRefused or ProcessNotChild."
+(defrecord ProcessUnreaped
+  "Answer of StopProcess: SIGKILL was sent, but the child did not end within stop-grace seconds (e.g. uninterruptible sleep -- D state -- on a mount that does not answer).
+   Reaping was handed to a daemon thread and the child was removed from the table (after this, that pid is ProcessNotChild)."
+  (#^ int pid))
+
+
+(defclass [(dataclass :frozen True :kw-only True)] StopProcess [(get EffectBase (| ProcessExited ProcessSignalRefused ProcessUnreaped ProcessNotChild))]
+  "Stop a child started by StartProcess and reap it (header note). Answer = ProcessExited, ProcessSignalRefused, ProcessUnreaped or ProcessNotChild."
   #^ int pid
   #^ float stop-grace
   (setv stop-grace 10.0))
