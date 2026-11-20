@@ -68,6 +68,8 @@ pub mod handler_arguments;
 pub mod typed_values;
 pub mod record_stubs;
 pub mod design_evidence;
+pub mod type_substitutes;
+pub mod ledger_guard;
 pub mod business_fakes;
 pub mod clause_ops;
 pub mod intent_coverage;
@@ -476,6 +478,18 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                     let (found, errors) = crate::timing::timed("design-evidence", || design_evidence::find(root, decl, focus));
                     drafts.extend(found.into_iter().flat_map(|file| design_evidence_drafts(&file.rel, &file.path, &file.source, file.hits)));
                     report.errors.extend(errors);
+                }
+                if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::TypeSubstitute)) {
+                    let (found, errors) = crate::timing::timed("type-substitutes", || type_substitutes::find(root, decl, focus));
+                    drafts.extend(found.into_iter().flat_map(|file| type_substitute_drafts(&file.rel, &file.path, &file.source, file.excess)));
+                    report.errors.extend(errors);
+                }
+                if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::LedgerGrew)) {
+                    let architecture_rel = declared_rel(root, &architecture.path);
+                    match crate::timing::timed("ledger-guard", || ledger_guard::judge(root, &architecture_rel, decl)) {
+                        Ok(hits) => drafts.extend(ledger_guard_drafts(root, hits)),
+                        Err(reason) => report.errors.push(reason),
+                    }
                 }
             }
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
@@ -930,6 +944,26 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         }
                     }
                 }
+                if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::TypeSubstitute)) {
+                    if design_evidence::wants(rel, decl) {
+                        let (counts, ledger_error) = type_substitutes::load(root, decl);
+                        report.errors.extend(ledger_error);
+                        match crate::timing::timed("single.type-substitutes", || type_substitutes::judge(rel, source, &counts)) {
+                            Ok(excess) => drafts.extend(type_substitute_drafts(rel, &path, source, excess)),
+                            Err(reason) => report.errors.push(format!("{}: cannot read the DOEFF213 judgment ({})", rel, reason)),
+                        }
+                    }
+                }
+                if let Some(decl) = architecture.design_evidence.as_ref().filter(|_| enabled.contains(&ProjectRule::LedgerGrew)) {
+                    // A ledger, the approvals file, or architecture.hy: the guard reads them from disk (the stdin contents of a ledger are not judged).
+                    let architecture_rel = declared_rel(root, &architecture.path);
+                    if ledger_guard::reads(rel, &architecture_rel, decl) {
+                        match crate::timing::timed("single.ledger-guard", || ledger_guard::judge(root, &architecture_rel, decl)) {
+                            Ok(hits) => drafts.extend(ledger_guard_drafts(root, hits.into_iter().filter(|h| h.rel == *rel).collect())),
+                            Err(reason) => report.errors.push(reason),
+                        }
+                    }
+                }
             }
             if let (Some(env), Some(rel)) = (&settings.environment, &rel) {
                 if enabled.contains(&ProjectRule::EnvironmentName) && is_environment_file(rel, env) {
@@ -1101,6 +1135,68 @@ fn design_evidence_drafts(rel: &str, path: &Path, source: &str, hits: Vec<design
                 base: Severity::Error,
                 explain: Explain::DesignEvidence { subject: format!("defrecord {}", hit.name), reason },
                 rel: rel.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Turns the excess of DOEFF213 into draft violations (one per value of a kind above its ledger count — the key detail is `<kind>:<owner>:<n>`, n counting from 1 per owner and kind).
+fn type_substitute_drafts(rel: &str, path: &Path, source: &str, excess: Vec<type_substitutes::Excess>) -> Vec<Draft> {
+    let lines = LineIndex::new(source);
+    let mut seen: BTreeMap<String, usize> = BTreeMap::new();
+    excess
+        .into_iter()
+        .flat_map(|e| {
+            let total = e.hits.len();
+            let allowed = e.allowed;
+            e.hits.into_iter().map(move |hit| (hit, total, allowed))
+        })
+        .map(|(hit, total, allowed)| {
+            let base = format!("{}:{}", hit.kind.word(), hit.owner);
+            let n = seen.entry(base.clone()).and_modify(|n| *n += 1).or_insert(1);
+            let boundary = if hit.boundary { " (in a definition that spells or reads an outside shape)" } else { "" };
+            let reason = format!(
+                "{} {} holds a {}{} — the file has {} of this kind and the ledger allows {}; carry the fact in a type",
+                rel,
+                hit.owner,
+                hit.kind.word(),
+                boundary,
+                total,
+                allowed
+            );
+            Draft {
+                rule: ProjectRule::TypeSubstitute,
+                layer: None,
+                path: path.to_path_buf(),
+                range: lines.range(hit.start, hit.end),
+                message: reason.clone(),
+                detail: Some(format!("{}:{}", base, n)),
+                base: Severity::Error,
+                explain: Explain::DesignEvidence { subject: format!("{} in {}", hit.kind.word(), hit.owner), reason },
+                rel: rel.to_string(),
+            }
+        })
+        .collect()
+}
+
+/// Turns the hits of DOEFF214 into draft violations (at the first line of the ledger, approvals file, or architecture.hy).
+fn ledger_guard_drafts(root: &Path, hits: Vec<ledger_guard::GuardHit>) -> Vec<Draft> {
+    hits.into_iter()
+        .map(|hit| {
+            let path = root.join(&hit.rel);
+            let source = std::fs::read_to_string(&path).unwrap_or_default();
+            let lines = LineIndex::new(&source);
+            let first_line_end = source.find('\n').unwrap_or(source.len());
+            Draft {
+                rule: ProjectRule::LedgerGrew,
+                layer: None,
+                range: lines.range(0, first_line_end),
+                path,
+                message: hit.reason.clone(),
+                detail: Some(hit.detail.clone()),
+                base: Severity::Error,
+                explain: Explain::DesignEvidence { subject: hit.detail, reason: hit.reason },
+                rel: hit.rel,
             }
         })
         .collect()

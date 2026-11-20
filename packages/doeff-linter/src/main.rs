@@ -137,6 +137,11 @@ struct Args {
     #[arg(long)]
     print_existing_shapes: bool,
 
+    /// Prints, as TOML, and exits, the ledger of the values that stand in for a type (per file and kind) in architecture.hy's :design-evidence population (DOEFF213) --
+    /// written once, when the rule is turned on, to the :existing-substitutes file
+    #[arg(long)]
+    print_existing_substitutes: bool,
+
     /// Prints as JSON, and exits, the split of rules to apply to the changed paths (path arguments; from the repo root) -- {"quick", "whole", "declaration_changed",
     /// "baseline_overlay", "world_catalogs" (the repo's catalogs of real I/O handlers as absolute paths -- pass each as --world-catalog to a run on a tree placed elsewhere),
     /// "import_roots" (the checkout's dirs for resolving names defined outside the repo, as absolute paths -- pass each as --import-root to the same run)}.
@@ -342,7 +347,8 @@ impl Setup {
                 ProjectRule::BroadCatchOutsideCarrier => self.settings.architecture.as_ref().is_some_and(|a| !a.broad_catches.is_empty()),
                 ProjectRule::UntypedStructuredValue => self.settings.architecture.as_ref().is_some_and(|a| a.typed_values.is_some()),
                 ProjectRule::RecordStubNotKwOnly => self.settings.architecture.as_ref().is_some_and(|a| a.record_stubs.is_some()),
-                ProjectRule::DesignEvidence => self.settings.architecture.as_ref().is_some_and(|a| a.design_evidence.is_some()),
+                ProjectRule::DesignEvidence | ProjectRule::TypeSubstitute => self.settings.architecture.as_ref().is_some_and(|a| a.design_evidence.is_some()),
+                ProjectRule::LedgerGrew => self.settings.architecture.as_ref().and_then(|a| a.design_evidence.as_ref()).is_some_and(|d| d.guard.is_some()),
                 ProjectRule::ServiceUntestedOnSim => self.settings.architecture.as_ref().is_some_and(|a| a.verification_environment.is_some()),
                 ProjectRule::ServiceInvariantsMissing => self.settings.architecture.is_some(),
                 ProjectRule::ServiceSystemMissing => self.settings.architecture.is_some(),
@@ -730,7 +736,7 @@ fn main() -> ExitCode {
         return run_commit_hook(&args);
     }
 
-    if args.print_existing_shapes {
+    if args.print_existing_shapes || args.print_existing_substitutes {
         return print_existing_shapes(&args);
     }
 
@@ -782,7 +788,11 @@ fn print_existing_shapes(args: &Args) -> ExitCode {
         eprintln!("doeff-linter: --print-existing-shapes needs :design-evidence in architecture.hy");
         return ExitCode::from(2);
     };
-    let (ledger, errors) = project::design_evidence::existing_shapes(&setup.root, decl);
+    let (ledger, errors) = if args.print_existing_substitutes {
+        project::type_substitutes::existing_counts(&setup.root, decl)
+    } else {
+        project::design_evidence::existing_shapes(&setup.root, decl)
+    };
     for error in &errors {
         eprintln!("doeff-linter: {}", error);
     }
@@ -825,6 +835,8 @@ fn run_commit_hook(args: &Args) -> ExitCode {
             Err(reason) => return fail(reason),
         }
     };
+    // The snapshot trees the hook judges are not git checkouts; DOEFF214 reads the base of the ledgers from this one (the runs inherit the variable).
+    std::env::set_var(project::ledger_guard::GIT_ROOT_ENV, &root);
     let linter = match std::env::current_exe() {
         Ok(linter) => linter,
         Err(error) => return fail(format!("cannot read the current binary's path: {}", error)),

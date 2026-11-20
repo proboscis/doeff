@@ -214,6 +214,16 @@ impl ExistingShapes {
         self.shapes.get(&Self::key(rel, name)).map(String::as_str)
     }
 
+    /// The ledger's lines, key → fingerprint (for DOEFF214's comparison with the base).
+    pub fn lines(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.shapes.iter().map(|(k, v)| (k.as_str(), v.as_str()))
+    }
+
+    /// The fingerprint of one ledger key.
+    pub fn line(&self, key: &str) -> Option<&str> {
+        self.shapes.get(key).map(String::as_str)
+    }
+
     /// The ledger of the given shapes, as TOML (written once when the rule is turned on — `--print-existing-shapes`).
     pub fn spell<'a>(files: impl Iterator<Item = (&'a str, &'a [RecordShape])>) -> String {
         let shapes = files.flat_map(|(rel, shapes)| shapes.iter().map(move |s| (Self::key(rel, &s.name), s.fingerprint()))).collect();
@@ -234,6 +244,9 @@ pub enum Problem {
     Orphan,
     /// The evidence file cannot be read.
     Unreadable { reason: String },
+    /// A type of the shapes ledger at the base has fields its version at the base did not have, and no user approval at the base covers them — evidence alone does not let an
+    /// existing type grow (v2 §8.3).
+    Grew { fields: Vec<String> },
 }
 
 impl Problem {
@@ -245,6 +258,7 @@ impl Problem {
             Problem::Incomplete { .. } => format!("{}:answers", name),
             Problem::Orphan => format!("{}:orphan", name),
             Problem::Unreadable { .. } => name.to_string(),
+            Problem::Grew { .. } => format!("{}:grew", name),
         }
     }
 
@@ -263,6 +277,12 @@ impl Problem {
             Problem::Incomplete { gaps } => format!("the evidence of defrecord {} in {} lacks answers: {}", name, evidence_rel, gaps.join("; ")),
             Problem::Orphan => format!("{} has evidence for record {}, but the module has no top-level defrecord of that name", evidence_rel, name),
             Problem::Unreadable { reason } => format!("{} cannot be read as design evidence ({})", evidence_rel, reason),
+            Problem::Grew { fields } => format!(
+                "defrecord {} existed before design evidence (it is in the base's ledger of existing shapes) and gained fields {} — an existing type grows only with an approval of the user \
+                 (an entry ledger = \"fields\" in the approvals file, landed before this change); put the new fact in a part type or a new type instead",
+                name,
+                fields.join(", ")
+            ),
         }
     }
 }
@@ -402,6 +422,40 @@ pub fn judge(
     Ok(hits)
 }
 
+/// The fields each type of the base's shapes ledger gained against its version at the base and no approval covers (v2 §8.3). `base_source` is read only when a type of
+/// the ledger changed its fingerprint (the common case — no listed type changed — reads nothing). Err only if the .hy cannot be read.
+pub fn grown_fields(
+    rel: &str,
+    hy_source: &str,
+    base_ledger: &ExistingShapes,
+    base_source: impl FnOnce() -> Option<String>,
+    approvals: &super::ledger_guard::Approvals,
+) -> Result<Vec<Hit>, String> {
+    let shapes = record_shapes(hy_source)?;
+    let changed: Vec<&RecordShape> =
+        shapes.iter().filter(|s| base_ledger.fingerprint_of(rel, &s.name).is_some_and(|was| was != s.fingerprint().as_str())).collect();
+    if changed.is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(base_shapes) = base_source().and_then(|source| record_shapes(&source).ok()) else { return Ok(Vec::new()) };
+    let mut hits = Vec::new();
+    for shape in changed {
+        let Some(was) = base_shapes.iter().find(|b| b.name == shape.name) else { continue };
+        let key = ExistingShapes::key(rel, &shape.name);
+        let fields: Vec<String> = shape
+            .fields
+            .iter()
+            .filter(|f| !was.fields.iter().any(|w| w.name == f.name))
+            .filter(|f| !approvals.covers("fields", &key, &f.name))
+            .map(|f| f.name.clone())
+            .collect();
+        if !fields.is_empty() {
+            hits.push(Hit { name: shape.name.clone(), start: shape.start, end: shape.end, problem: Problem::Grew { fields } });
+        }
+    }
+    Ok(hits)
+}
+
 /// The sibling evidence file of a module (`foo.hy` → `foo.evidence.toml`).
 pub fn evidence_of(module: &Path) -> PathBuf {
     module.with_extension(EVIDENCE_SUFFIX)
@@ -433,10 +487,38 @@ pub fn wants(rel: &str, decl: &DesignEvidenceDecl) -> bool {
 pub struct Judging {
     pub existing: ExistingShapes,
     pub review_pattern: Option<regex::Regex>,
+    /// The base of the declared guard, with its ledger and approvals (None = no :guard, or the base cannot be read — then growth is not judged and DOEFF214 reports why).
+    pub growth: Option<Growth>,
+}
+
+/// What judging a type's growth reads at the base (v2 §8.3).
+pub struct Growth {
+    pub base: super::ledger_guard::Base,
+    pub ledger: ExistingShapes,
+    pub approvals: super::ledger_guard::Approvals,
+}
+
+impl Growth {
+    fn load(root: &Path, decl: &DesignEvidenceDecl) -> Option<Growth> {
+        let guard = decl.guard.as_ref()?;
+        let base = super::ledger_guard::Base::resolve(root, &guard.base).ok()?;
+        let ledger = decl.existing.as_deref().and_then(|rel| base.read(rel)).and_then(|text| ExistingShapes::parse(&text).ok()).unwrap_or_default();
+        let approvals = super::ledger_guard::base_approvals(guard, &base).ok()?;
+        Some(Growth { base, ledger, approvals })
+    }
 }
 
 impl Judging {
+    /// The hits of one module's types that grew (empty without a readable base).
+    fn grown(&self, rel: &str, hy_source: &str) -> Result<Vec<Hit>, String> {
+        match &self.growth {
+            None => Ok(Vec::new()),
+            Some(growth) => grown_fields(rel, hy_source, &growth.ledger, || growth.base.read(rel), &growth.approvals),
+        }
+    }
+
     pub fn load(root: &Path, decl: &DesignEvidenceDecl) -> (Self, Option<String>) {
+        let growth = Growth::load(root, decl);
         let review_pattern = decl.review_pattern.as_deref().and_then(|p| regex::Regex::new(p).ok());
         let (existing, error) = match &decl.existing {
             None => (ExistingShapes::default(), None),
@@ -445,19 +527,22 @@ impl Judging {
                 Err(reason) => (ExistingShapes::default(), Some(format!("{}: cannot read the DOEFF212 ledger of existing shapes ({})", path, reason))),
             },
         };
-        (Judging { existing, review_pattern }, error)
+        (Judging { existing, review_pattern, growth }, error)
     }
 
     /// Judges one module whose evidence file is read from disk (`hy_source` is the module's contents as passed in).
     pub fn judge_module(&self, rel: &str, path: &Path, hy_source: &str) -> Result<Vec<Hit>, String> {
         let evidence = std::fs::read_to_string(evidence_of(path)).ok();
-        judge(rel, hy_source, evidence.as_deref(), &self.existing, self.review_pattern.as_ref())
+        let mut hits = judge(rel, hy_source, evidence.as_deref(), &self.existing, self.review_pattern.as_ref())?;
+        hits.extend(self.grown(rel, hy_source)?);
+        Ok(hits)
     }
 
     /// Judges one evidence file's contents as passed in, against its sibling module read from disk (the hits are reported at the module).
     pub fn judge_evidence(&self, module_rel: &str, module_path: &Path, evidence: &str) -> Result<(String, Vec<Hit>), String> {
         let hy_source = std::fs::read_to_string(module_path).map_err(|error| format!("cannot read the sibling module: {}", error))?;
-        let hits = judge(module_rel, &hy_source, Some(evidence), &self.existing, self.review_pattern.as_ref())?;
+        let mut hits = judge(module_rel, &hy_source, Some(evidence), &self.existing, self.review_pattern.as_ref())?;
+        hits.extend(self.grown(module_rel, &hy_source)?);
         Ok((hy_source, hits))
     }
 }
@@ -608,6 +693,25 @@ mod tests {
         assert!(matches!(found.as_slice(), [(_, Problem::Unreadable { .. })]), "{:?}", found);
         let found = problems(HY, Some("schema = 2\n"), &ExistingShapes::default());
         assert!(matches!(found.as_slice(), [(_, Problem::Unreadable { .. })]), "{:?}", found);
+    }
+
+    #[test]
+    fn a_ledger_type_that_gains_a_field_grew_even_with_evidence_unless_approved() {
+        let shapes = record_shapes(HY).expect("readable");
+        let ledger = ExistingShapes::parse(&ExistingShapes::spell(std::iter::once(("m.hy", shapes.as_slice())))).expect("ledger");
+        let none = super::super::ledger_guard::Approvals::default();
+        assert!(grown_fields("m.hy", HY, &ledger, || panic!("an unchanged type reads no base"), &none).unwrap().is_empty());
+        let added = HY.replace("merged-at))", "merged-at)\n  (#^ (| str None) gap))");
+        let found = grown_fields("m.hy", &added, &ledger, || Some(HY.to_string()), &none).unwrap();
+        assert!(matches!(found.as_slice(), [Hit { problem: Problem::Grew { fields }, .. }] if fields == &vec!["gap".to_string()]), "{:?}", found);
+        let approved = super::super::ledger_guard::Approvals::parse(
+            "[[approval]]\nledger = \"fields\"\nkey = \"m.hy::Done\"\nvalue = \"gap\"\nreview = \"req-1\"\nwhy = \"a fact of the key\"\n",
+        )
+        .unwrap();
+        assert!(grown_fields("m.hy", &added, &ledger, || Some(HY.to_string()), &approved).unwrap().is_empty());
+        // A retyped field is a reshape (evidence answers it), not growth.
+        let retyped = HY.replace("(#^ str card)", "(#^ int card)");
+        assert!(grown_fields("m.hy", &retyped, &ledger, || Some(HY.to_string()), &none).unwrap().is_empty());
     }
 
     #[test]

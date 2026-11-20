@@ -605,6 +605,19 @@ pub struct DesignEvidenceDecl {
     /// The regular expression a review id must match (`:review-pattern r"…"` — absent = any non-empty spelling). The linter checks only the spelling; whether the review exists
     /// is checked outside the linter (it reads no network).
     pub review_pattern: Option<String>,
+    /// The ledger of the values that stood in for a type when DOEFF213 was turned on (`:existing-substitutes "<path>"` — absent = none is grandfathered).
+    pub existing_substitutes: Option<String>,
+    /// The guard of the ledgers and of this declaration (`:guard {:base "<ref>" :approvals "<path>" :approval-pattern r"…"}` — DOEFF214; absent = the ledgers are not guarded).
+    pub guard: Option<LedgerGuardDecl>,
+}
+
+/// The declaration of DOEFF214 — the ref whose merge-base with HEAD is the base the ledgers are compared with, the file of user approvals (only its version at the base counts),
+/// and the spelling of an approved request's id. A part of DesignEvidenceDecl: it is read only together with the ledgers it guards.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct LedgerGuardDecl {
+    pub base: String,
+    pub approvals: Option<String>,
+    pub approval_pattern: Option<String>,
 }
 
 /// One group of vocabulary whose judgment is confined to one place (`(vocabulary-scope "name" :patterns [r"…"] :files [..] :except [..] :instead "…")` of
@@ -1827,6 +1840,8 @@ impl<'a> Parser<'a> {
                 ":files" => decl.selection.files = self.path_globs(field, &format!("{} :files", what)),
                 ":except" => decl.selection.except = self.path_globs(field, &format!("{} :except", what)),
                 ":existing" => decl.existing = self.required_string(field, &format!("{} :existing", what)).filter(|p| !p.is_empty()),
+                ":existing-substitutes" => decl.existing_substitutes = self.required_string(field, &format!("{} :existing-substitutes", what)).filter(|p| !p.is_empty()),
+                ":guard" => decl.guard = self.ledger_guard(field),
                 ":review-pattern" => {
                     decl.review_pattern = self.required_string(field, &format!("{} :review-pattern", what));
                     if decl.review_pattern.as_deref().is_some_and(|p| regex::Regex::new(p).is_err()) {
@@ -1842,6 +1857,35 @@ impl<'a> Parser<'a> {
             return None;
         }
         Some(decl)
+    }
+
+    /// Reads `{:base "<ref>" :approvals "<path>" :approval-pattern r"…"}` of :design-evidence :guard (:base is required).
+    fn ledger_guard(&mut self, value: &Form) -> Option<LedgerGuardDecl> {
+        let what = ":design-evidence :guard";
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, &format!("{} must be a dictionary {{:base \"<ref>\" :approvals \"<path>\" :approval-pattern r\"…\"}}", what));
+            return None;
+        };
+        let mut guard = LedgerGuardDecl::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":base" => guard.base = self.required_string(field, &format!("{} :base", what)).unwrap_or_default(),
+                ":approvals" => guard.approvals = self.required_string(field, &format!("{} :approvals", what)).filter(|p| !p.is_empty()),
+                ":approval-pattern" => {
+                    guard.approval_pattern = self.required_string(field, &format!("{} :approval-pattern", what));
+                    if guard.approval_pattern.as_deref().is_some_and(|p| regex::Regex::new(p).is_err()) {
+                        self.problem(field, &format!("{} :approval-pattern is not a readable regular expression", what));
+                        guard.approval_pattern = None;
+                    }
+                }
+                _ => self.unknown_key(key, what),
+            }
+        }
+        if guard.base.is_empty() {
+            self.problem(value, &format!("{} has no :base (the ref the ledgers are compared with, e.g. \"origin/main\")", what));
+            return None;
+        }
+        Some(guard)
     }
 
     /// Reads `[(retired-words "name" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :contract-files [..] :in lines|names|paths :instead "…") …]`
