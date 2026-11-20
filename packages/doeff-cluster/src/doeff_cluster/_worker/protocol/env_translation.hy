@@ -1315,6 +1315,20 @@
     True (EnvFailure :kind EnvFailureKind.SYNC-FAILED :detail detail :retryable False)))
 
 
+;; root の venv で Hy を起こす命令の頭(uv run の後ろ)。bin/hy の script でなく venv の python で hy の module を起こす — script の頭の
+;; shebang は venv の python を絶対 path で名指し、共有の venv を使う薄い venv では bin が共有の venv の bin への symlink なので、ある root の
+;; venv で動いた uv が共有の bin の script をその root の python の shebang で書き直すと、同じ共有の venv を使う全部の root で script が別の
+;; root の python と site で起きる(準備の確かめが別の root に解けた名を「根の外」と読み、正しい root を名前の影で断り続けた)。子の job は
+;; venv の python を明示して起きるので、確かめと焼きも同じ起こし方にする。
+(val VENV-HY #("python" "-m" "hy"))
+
+
+(defk probe-argv [uv project-dir roots]
+  {:pre [(: uv str) (: project-dir str) (: roots tuple)] :post [(: % tuple)]}
+  "準備の確かめ(PROBE-PROGRAM)を root の venv の python で起こす命令を組むため(VENV-HY の註)。roots = 名前の影を見る import の根。"
+  (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir) VENV-HY #("-c" PROBE-PROGRAM) roots))
+
+
 (defk interpreter-of [venv]
   {:pre [(: venv str)] :post [(: % str)]}
   "root の venv(venv の path)の interpreter の実の path(symlink を辿った先)。"
@@ -1334,7 +1348,7 @@
    焼きの前後に印の時刻を進めるので、disk が遅いだけの bytecode の処理ステージを停滞と読まない・空 = 印を書かない設定)。
    pycache = root の .pyc の置き場(在る時だけ --pycache-prefix — 道具は .pyc と焼きの記録を木の外のここへ置く)・inherit-pycache = 写し元の
    木の root の置き場(在る時だけ --inherit-pycache-prefix)。"
-  (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" code-prepare "--revision" "env")
+  (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir) VENV-HY #(code-prepare "--revision" "env")
      (if (is pycache None) #() #("--pycache-prefix" pycache))
      (if (is inherit-pycache None) #() #("--inherit-pycache-prefix" inherit-pycache))
      (if (is jobs None) #() #("--jobs" (str jobs)))
@@ -1621,8 +1635,8 @@
     (<- (remove-if-present empty))
     (<- made (| None FileFailed) (MakeDirectory empty))
     (<- (settled made "確かめの作業 dir を作れない"))
-    (<- result CommandResult (uv-command (+ #(uv "run" "--no-sync" "--frozen" "--project" project-dir "hy" "-c" PROBE-PROGRAM)
-                                            (tuple roots))
+    (<- argv tuple (probe-argv uv project-dir (tuple roots)))
+    (<- result CommandResult (uv-command argv
                                          empty (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
     (<- (remove-if-present empty))
     (val lines (lfor line (.splitlines result.stdout) :if (.startswith (.strip line) "{") line))
