@@ -6,6 +6,9 @@ transaction の形は番号の錠を取らず、変更の番号 = 書きの tran
 - 番号を先に取った書き(古い xid の transaction)が、後から番号を取った書きより後に commit する並びで、WatchChanges も ReadChangeLog も
   古い方の変更を取りこぼさない(古い方が commit するまで、新しい方の変更を頭の手前で止める)。番号の錠を外しただけの形(読み手が
   max(seq) まで読む)では、新しい方を見て位置を進め、後から commit した古い方を永久に取りこぼす。
+- 置き場の書きの錠を持たない古い transaction(別の仕事の xid を持つ transaction)が開いたままでも、書き手が答えの位置
+  (Written.position)を受けた後の WatchChanges と ReadChangeLog はその位置までの変更を返す(頭を snapshot の xmin にした前の形では、
+  古い transaction が終わるまで自分の書きが見えない — 2026-11-19 の 16〜19 秒)。
 - 番号の錠を別の接続が持っていても、transaction の形の行の書きは待たない(錠の形の書きは待つ — 反例)。
 - 切り替えの後、錠の形の番号を取る書き(旧い版の行の書き — sequence の次の番号)は sequence の上限で断られる(黙って取りこぼさない)。
 - 切り替えの前の位置は、切り替えの後もそのまま読める(Reset にならない)。
@@ -52,6 +55,7 @@ from doeff_records._pg_sql import (
     XACT_NUMBER_SPAN,
     append_change_statement,
     unit_lock_key,
+    writer_lock_key,
 )
 from doeff_time import SimClock, sim_time_handler
 
@@ -119,10 +123,12 @@ def psycopg_text(statement):
 
 
 class EarlyWriter:
-    """別の接続で、行の書きと同じ文で変更を 1 つ積み、commit を遅らせる書き手(番号を先に取って後に commit する transaction)。"""
+    """別の接続で、行の書きと同じ錠(置き場の書きの錠を共有で — xid を持つ前)と同じ文で変更を 1 つ積み、commit を遅らせる書き手
+    (番号を先に取って後に commit する transaction)。"""
 
     def __init__(self, store, key):
         self.db = psycopg.connect(dsn())
+        self.db.execute("SELECT pg_advisory_xact_lock_shared(hashtext(%s))", (run(writer_lock_key(store.store.prefix)),))
         statement = run(append_change_statement(store.store.prefix, "parts", key_text((key,)), 1, '{"id":"' + key + '","label":"early"}',
                                                 1, 0))
         epoch = self.db.execute(f"SELECT epoch FROM {store.store.prefix}store_epoch WHERE id = 1").fetchone()[0]
@@ -177,6 +183,55 @@ def test_an_earlier_number_committed_later_is_not_skipped(xact_store):
     assert tuple(item.sequence for item in after.items) == (early.sequence, later.position.sequence), after
     assert after.cursor.sequence >= later.position.sequence, after
     assert logged(store, cursor.sequence) == (early.sequence, later.position.sequence)
+
+
+class UnrelatedTransaction:
+    """別の接続で xid を持ったまま開き続ける、置き場の書きの錠を持たない transaction(別の表・別の仕事の書き — xmin を止める)。"""
+
+    def __init__(self):
+        self.db = psycopg.connect(dsn())
+        self.xid = int(self.db.execute("SELECT pg_current_xact_id()::text").fetchone()[0])
+
+    def close(self):
+        self.db.rollback()
+        self.db.close()
+
+
+def test_an_own_write_is_read_while_an_unrelated_old_transaction_stays_open(xact_store):
+    store = xact_store
+    cursor = start_cursor(store)
+    old = UnrelatedTransaction()
+    try:
+        written = store.as_writer(PutRow("parts", ("own",), FrozenMap({"label": "own"}), ExpectAbsent()))
+        assert isinstance(written, Written), written
+        assert old.xid * XACT_NUMBER_SPAN < written.position.sequence, (old.xid, written.position)
+        # 古い transaction が開いたままでも、書き手は答えの位置までの自分の変更を読める。
+        answer = watched(store, cursor)
+        assert tuple(item.sequence for item in answer.items) == (written.position.sequence,), answer
+        assert answer.cursor.sequence >= written.position.sequence, answer
+        assert logged(store, cursor.sequence) == (written.position.sequence,)
+    finally:
+        old.close()
+
+
+def test_an_open_writer_of_the_store_still_holds_the_head_before_its_number(xact_store):
+    store = xact_store
+    cursor = start_cursor(store)
+    old = UnrelatedTransaction()
+    early = EarlyWriter(store, "early")
+    try:
+        later = store.as_writer(PutRow("tickets", ("g1", "t1"), FrozenMap({"owner": "o1"}), ExpectAbsent()))
+        assert isinstance(later, Written), later
+        # 置き場の書きの錠を持つ古い書き手は頭を止め、錠を持たない古い transaction は止めない。
+        before = watched(store, cursor)
+        assert before.items == (), before
+        assert old.xid * XACT_NUMBER_SPAN <= before.cursor.sequence < early.sequence, (old.xid, before.cursor, early.sequence)
+        early.commit()
+    finally:
+        early.close()
+        old.close()
+    after = watched(store, before.cursor)
+    assert tuple(item.sequence for item in after.items) == (early.sequence, later.position.sequence), after
 
 
 @do
