@@ -2013,6 +2013,13 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
+   "name": "ProcessUnreaped",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-core-effects",
+   "module": "doeff_core_effects",
    "name": "Promise",
    "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"

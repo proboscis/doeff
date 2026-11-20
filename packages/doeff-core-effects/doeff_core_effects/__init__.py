@@ -370,6 +370,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._process_effects import ProcessSignalled as ProcessSignalled
     from doeff_core_effects._process_effects import ProcessSignalRefused as ProcessSignalRefused
     from doeff_core_effects._process_effects import ProcessStarted as ProcessStarted
+    from doeff_core_effects._process_effects import ProcessUnreaped as ProcessUnreaped
     from doeff_core_effects._process_effects import ReadEnvironment as ReadEnvironment
     from doeff_core_effects._process_effects import ReadInterpreter as ReadInterpreter
     from doeff_core_effects._process_effects import ReadMachineName as ReadMachineName
@@ -783,6 +784,7 @@ _LAZY_EXPORTS = {
     "ProcessSignalRefused": "doeff_core_effects._process_effects",
     "ProcessSignalled": "doeff_core_effects._process_effects",
     "ProcessStarted": "doeff_core_effects._process_effects",
+    "ProcessUnreaped": "doeff_core_effects._process_effects",
     "ReadEnvironment": "doeff_core_effects._process_effects",
     "ReadInterpreter": "doeff_core_effects._process_effects",
     "ReadMachineName": "doeff_core_effects._process_effects",

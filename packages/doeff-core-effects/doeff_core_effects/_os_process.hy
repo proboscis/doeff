@@ -20,11 +20,11 @@
 ;;; offloaded-subprocess-handler is the form without a meter (it does not count, only logs - so users without a meter responder do not fail with "no responder").
 ;;; If the child already finished before the cancellation, nothing is sent and nothing is counted. For a child whose SIGKILL the OS refused (EPERM - e.g. a machine where AppArmor denies
 ;;; signals inside a container), it does not wait for the end, does not count it as stopped, and names it in one warning line (the child keeps running). The wait of subprocess-handler (not run on a thread) is not left by cancellation (it waits for the child to finish).
-;;; After SIGKILL (on a timeout of RunProcess, and when stopping for cancellation), the end of the child is awaited only for stop-grace seconds (reaped-within): a child that SIGKILL does not end
+;;; After SIGKILL (on a timeout of RunProcess, when stopping for cancellation, and in StopProcess), the end of the child is awaited only for stop-grace seconds (reaped-within): a child that SIGKILL does not end
 ;;; (uninterruptible sleep - D state - on a mount that does not answer; the 20-second git rev-parse that answered after 29 minutes) is handed to a daemon thread that reaps it
-;;; whenever it ends, named in one warning line, and the answer (the timeout answer, KILLED) is given without waiting for it.
+;;; whenever it ends, named in one warning line, and the answer (the timeout answer, KILLED, or ProcessUnreaped) is given without waiting for it.
 ;;; StartProcess, PollProcess, StopProcess, SignalProcess (#2461) and WriteProcessInput (#3672) keep the started children in one per-process table,
-;;; STARTED-CHILDREN. Starting, polling, sending a signal and writing a short line to the held stdin do not wait, so both responders answer on the spot. Stopping waits only during the grace period, so in offloaded-subprocess-handler
+;;; STARTED-CHILDREN. Starting, polling, sending a signal and writing a short line to the held stdin do not wait, so both responders answer on the spot. Stopping waits only during the grace period (SIGTERM and post-SIGKILL), so in offloaded-subprocess-handler
 ;;; it runs on a thread.
 (require doeff-hy.macros [defhandler defk deff <- val var])
 (require doeff-hy.record [defenum defrecord])
@@ -53,7 +53,7 @@
 (import doeff_lifeline._watch [Lifeline])
 (import doeff_core_effects._process_effects [ChildLifetime EnvEntry EnvMode ProcessOutcome RunProcess ExecutableAt ReadEnvironment WorkingDirectory
                                             ProcessAlive StartProcess PollProcess StopProcess ProcessStarted ProcessNotStarted
-                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled ProcessSignalRefused
+                                            ProcessRunning ProcessExited ProcessNotChild SignalProcess ProcessSignal ProcessSignalled ProcessSignalRefused ProcessUnreaped
                                             WriteProcessInput ProcessInputWritten
                                             ReadInterpreter ReadMachineName ResolveModule InterpreterFacts ModuleFound ModuleNotFound
                                             timed-out-outcome not-started-outcome executable-file-answer environment-answer])
@@ -625,12 +625,13 @@
 
 
 (defk stop-child-process [pid stop-grace]
-  {:pre [(: pid int) (: stop-grace float)] :post [(: % (| ProcessExited ProcessSignalRefused ProcessNotChild))]
+  {:pre [(: pid int) (: stop-grace float)] :post [(: % (| ProcessExited ProcessSignalRefused ProcessUnreaped ProcessNotChild))]
    :tags {:context "process" :role "foundation"}}
   "To answer StopProcess with a real child: a pid not in the table is ProcessNotChild (never signal someone else's process). If running, for process-group
-      send SIGTERM to the group, otherwise to the child -> wait stop-grace seconds -> stop with SIGKILL, reap and remove from the table. A child that had already ended is reaped as is.
-      If the OS refuses to send SIGKILL (EPERM), ProcessSignalRefused without waiting for the end - the child keeps running so it stays in the table (a refused SIGTERM proceeds to
-      SIGKILL after the grace period)."
+      send SIGTERM to the group, otherwise to the child -> wait stop-grace seconds -> stop with SIGKILL -> wait at most stop-grace seconds (reaped-within) and remove from the table.
+      A child that had already ended is reaped as is. If the OS refuses to send SIGKILL (EPERM), ProcessSignalRefused without waiting for the end - the child keeps running so it stays
+      in the table (a refused SIGTERM proceeds to SIGKILL after the grace period). If SIGKILL was sent but the child does not end within stop-grace seconds (e.g. D state on an
+      unresponsive mount), reaped-within hands reaping to a daemon thread, the child is removed from the table, and ProcessUnreaped is answered without waiting further."
   (val found (.find STARTED-CHILDREN pid))
   (if (is found None)
       (ProcessNotChild :pid pid)
@@ -638,6 +639,7 @@
         (val child (get found 0))
         (val process-group (get found 1))
         (var killed GroupSignal.GONE)
+        (var reaped True)
         (when (is (.poll child) None)
           (<- (child-signal child process-group signal.SIGTERM))
           (try
@@ -646,11 +648,14 @@
               (<- sent GroupSignal (child-signal child process-group signal.SIGKILL))
               (:= killed sent)
               (when (!= killed GroupSignal.REFUSED)
-                (.wait child)))))
+                (<- reaped-ok bool (reaped-within child stop-grace))
+                (:= reaped reaped-ok)))))
         (if (= killed GroupSignal.REFUSED)
             (ProcessSignalRefused :pid pid)
             (do (.forget STARTED-CHILDREN pid)
-                (ProcessExited :pid pid :exit-code child.returncode))))))
+                (if reaped
+                    (ProcessExited :pid pid :exit-code child.returncode)
+                    (ProcessUnreaped :pid pid)))))))
 
 
 (defk child-signal [child process-group number]
