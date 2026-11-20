@@ -77,13 +77,15 @@
      "instance" (.format "{}-{}-g{}" worker name gen) "specHash" (spec-hash job.spec) "placement" gen "attempts" 1})
 
   (defn #^ dict beat [self #^ str worker #^ (| list None) [running None] #^ list [provides K3S] #^ (| str None) [boot None]
-                      #^ bool [stopping False]]
-    "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)・stopping = 止まり始めた worker の名乗り(#2819)。"
+                      #^ bool [stopping False] #^ (| str None) [pod-ip None]]
+    "heartbeat。running = この worker が動かしていると報告する job の名(置かれている物)・stopping = 止まり始めた worker の名乗り(#2819)・
+     pod-ip = 名乗る Pod の IP(None なら名乗らない)。"
     (setv (get self.boots worker) (or boot (.get self.boots worker "b1")))
-    (self.call "POST" "/heartbeat" {"name" worker "provides" provides "measured" (get ROOM-JSONS 10) "versions" {}
-                                    "boot" (get self.boots worker)
-                                    "statuses" (lfor n (or running []) (self.row worker n))
-                                    "stopping" stopping}
+    (self.call "POST" "/heartbeat" (| {"name" worker "provides" provides "measured" (get ROOM-JSONS 10) "versions" {}
+                                       "boot" (get self.boots worker)
+                                       "statuses" (lfor n (or running []) (self.row worker n))
+                                       "stopping" stopping}
+                                      (if pod-ip {"podIp" pod-ip} {}))
                :actor None))
 
   (defn #^ dict ready [self #^ str worker #^ str name #^ bool [ready True] #^ str [role "standby"]]
@@ -460,6 +462,7 @@
 (deftest test-the-old-generation-gets-only-its-running-handoff-jobs-and-its-own-detached-tasks
   ;; 退いた世代への返事は、動いている物を安全に畳ませるだけ: 入れ替えの job はその世代が running の物だけ(lease を持ったまま
   ;; Pod の停止まで)・recreate の job は載せない(止めて lease を返す)・退いた後に置かれた job と RemoteJob の task は載せない。
+  ;; 古い世代は止まり始めを名乗る(#2819)— 名乗らない古い世代は重なりと読む(AL-D2f)。
   (setv c (Coord #("node-a")))
   (c.beat "node-a" :boot "old")
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
@@ -476,7 +479,7 @@
   (setv remote (next (gfor t (.rows c.state.tasks) :if (not t.detached) t))
         own (next (gfor t (.rows c.state.tasks) :if t.detached t)))
   (assert (= #((c.placed "w2") remote.worker own.boot) #("node-a" "node-a" "old")))
-  (setv old-reply (c.beat "node-a" ["w" "r"] :boot "old"))
+  (setv old-reply (c.beat "node-a" ["w" "r"] :boot "old" :stopping True))
   (assert (get old-reply "superseded"))
   (assert (= (lfor j (get old-reply "jobs") (get j "name")) ["w"]) (get old-reply "jobs"))
   (assert (= (lfor t (get old-reply "tasks") (get t "id")) [own.id]) (get old-reply "tasks"))
@@ -490,19 +493,22 @@
   ;; 世代をまたぐ入れ替え(AL-D2): 同じ名 node-a の新しい世代が、旧い世代の動かしている入れ替えの job w の process を起こし、その process が
   ;; Ready を報告した後、旧い世代への返事は w に印 supersededBy(新しい世代の process の世代の名)を載せる — 旧い世代の worker は w を
   ;; 止めずに退かせる。新しい世代の process が Ready になる前は印を載せない(旧い世代が書き手のまま動き続ける)。
-  (setv c (Coord #("node-a")))
-  (c.beat "node-a" :boot "old")
+  ;; 2 つの世代は同じ Pod の IP を名乗る(keeper が同じ container の中で世代を入れ替える形 — shares-pod-address)。IP の違う重なる世代は
+  ;; 止まりの始まりまで何も渡さない(AL-D2f・AL-D2k —
+  ;; test-an-overlapping-generation-retires-the-old-handoff-process-only-after-the-old-pod-stops)。
+  (setv c (Coord #("node-a")) pod-ip "10.42.0.7")
+  (c.beat "node-a" :boot "old" :pod-ip pod-ip)
   (c.call "POST" "/resources/Service" {"name" "w" "spec" (! (service))} :expect 201)
-  (c.beat "node-a" ["w"] :boot "old")
+  (c.beat "node-a" ["w"] :boot "old" :pod-ip pod-ip)
   (c.ready "node-a" "w" :role "active")
   (c.advance 1)
   ;; 新しい世代の名乗り: w の process(世代の名 node-a-w-new)を起こして running と報告する(lease を待つ standby)。
   (setv new-row (| (c.row "node-a" "w") {"instance" "node-a-w-new"}))
   (setv (get c.boots "node-a") "new")
   (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
-                               "statuses" [new-row] "stopping" False}
+                               "statuses" [new-row] "stopping" False "podIp" pod-ip}
           :actor None)
-  (setv before (c.beat "node-a" ["w"] :boot "old"))
+  (setv before (c.beat "node-a" ["w"] :boot "old" :pod-ip pod-ip))
   (assert (get before "superseded") before)
   (assert (= (lfor j (get before "jobs") (.get j "supersededBy")) [None]) (get before "jobs"))
   ;; 新しい世代の process が Ready を報告した。
@@ -510,11 +516,11 @@
           {"worker" "node-a" "pid" 2 "revision" (get new-row "runningRevision") "instance" "node-a-w-new" "attempt" "1"
            "specHash" (get new-row "specHash") "placement" (get new-row "placement") "ready" True "role" "standby"}
           :actor None)
-  (setv after (c.beat "node-a" ["w"] :boot "old"))
+  (setv after (c.beat "node-a" ["w"] :boot "old" :pod-ip pod-ip))
   (assert (= (lfor j (get after "jobs") #((get j "name") (.get j "supersededBy"))) [#("w" "node-a-w-new")]) (get after "jobs"))
   ;; 今の世代への返事には印が無い(今の世代は書き手を受け継ぐ側)。
   (setv current (c.call "POST" "/heartbeat" {"name" "node-a" "provides" K3S "measured" (get ROOM-JSONS 10) "versions" {} "boot" "new"
-                                             "statuses" [new-row] "stopping" False}
+                                             "statuses" [new-row] "stopping" False "podIp" pod-ip}
                         :actor None))
   (assert (= (lfor j (get current "jobs") (.get j "supersededBy")) [None]) (get current "jobs")))
 
