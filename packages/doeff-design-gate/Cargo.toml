@@ -1,0 +1,24 @@
+[package]
+name = "doeff-design-gate"
+version = "0.1.0"
+edition = "2021"
+description = "The merge-time gate of DOEFF212/213/214: judges the changed paths against the declaration, ledgers, and approvals read at the base commit, without the project facts"
+license = "MIT"
+publish = false
+
+[[bin]]
+name = "doeff-design-gate"
+path = "src/main.rs"
+
+[dependencies]
+# The judging parts of the rules (design_evidence, type_substitutes, ledger_guard, architecture) — only those are called; the facts of the project are not built.
+doeff-linter = { path = "../doeff-linter" }
+toml = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+regex = "1.10"
+
+[dev-dependencies]
+tempfile = "3.10"
+
+[profile.release]
+opt-level = 3
