@@ -731,7 +731,7 @@
   (val venv (posixpath.dirname (posixpath.dirname python)))
   (val wheels (cut args (+ (.index args python) 1) None))
   (for [w wheels]
-    (<- (write-file (posixpath.join venv "wheels" (posixpath.basename w)) w)))
+    (<- (write-file (posixpath.join venv "wheels" (posixpath.basename w)) (posixpath.basename w))))
   (ProcessOutcome :stdout "" :stderr "" :exit-code 0))
 
 
