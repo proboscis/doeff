@@ -1,0 +1,27 @@
+{
+  "artifacts": [],
+  "body": {
+    "files": {
+      "src/project/architecture.rs": "9d4b7a41c70fa6d1aa2bd84935e5b8741b8b380eae463496740ed6e9f903aba9",
+      "src/project/design_evidence.rs": "1a38157b2adc92fa981ed841718e463764d43808eae733442fa82c7e569a96c3",
+      "src/project/mod.rs": "b317767a2afa93025d71da08a7e2721e704061a4e0d81608673b9c86e53d17c9",
+      "src/project/rule.rs": "3ffe9eeb19d2ad1ded38aebfe90bae4ee8eb8b0eef3039d8795ffb8b20b9d13a",
+      "tests/design_evidence.rs": "82eba70e9c1a8d4c7a98d6c3958360f5044cad956a5ead55e3fdf0b5390f5a2d"
+    },
+    "include": [
+      "src/project/design_evidence.rs",
+      "src/project/architecture.rs",
+      "src/project/rule.rs",
+      "src/project/mod.rs",
+      "tests/design_evidence.rs"
+    ],
+    "label": "DOEFF212 at dd3d38f92",
+    "root": "/work/toolset/worktrees/doeff-wt-design-evidence/packages/doeff-linter"
+  },
+  "created_at": "2026-11-17T00:48:58.924686+00:00",
+  "id": "snapshot-c86f12853c7f",
+  "inputs": [],
+  "kind": "snapshot",
+  "schema_version": 1,
+  "scope": "Design evidence (answers to the required design questions per code element): the model, where and how it is written, and doeff-linter's comparison with the shape of Hy defrecords (round 1)"
+}

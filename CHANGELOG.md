@@ -647,6 +647,11 @@
   callables and are not judged. The rule runs only where a repo declares its program places in the new section
   `[tool.doeff-linter.program_sleep]` (`paths`, `exclude`, `exclude_parts`); doeff declares `doeff` and `packages`
   without `tests` / `examples`.
+- `doeff-linter`: added the critical rule `DOEFF212` (Design Evidence) — a `defrecord` of the files in
+  architecture.hy's `:design-evidence` changes shape only together with its design evidence in the sibling
+  `<stem>.evidence.toml` (the field names and types it was judged at and the answers to the required design questions).
+  Existing types pass while their fingerprint matches the `:existing` ledger, written once with
+  `doeff-linter --print-existing-shapes`. The model and the file form are in `docs/design/design-evidence`.
 - `doeff-linter`: added the critical rule `DOEFF211` (Test Sleeps On The Wall Clock) — a Hy test file must not call
   `time.sleep` / `asyncio.sleep` (nor reword it as `(.wait (threading.Event) seconds)` or `(.sleep time seconds)`)
   unless it declares that real time is its subject. The declaration is the pytest mark

@@ -1,0 +1,14 @@
+{
+  "heads": {
+    "design_validation": "design-evidence-v1-validation",
+    "snapshot": "snapshot-c86f12853c7f",
+    "target": "design-evidence-v1"
+  },
+  "records": {
+    "design-evidence-v1": "93da24a49eb0f0b825ca3157cc3b08d44d7c811459dd7b3f144703086ade9823",
+    "design-evidence-v1-validation": "654cf6c52a073bc16af1f11fec3c332efcbfece362cc75abee072eceb6496ff8",
+    "snapshot-c86f12853c7f": "640985c997df446f2bb247c46c43ec92cc0ede4c329426b34a7478646a7bda2d"
+  },
+  "schema_version": 1,
+  "scope": "Design evidence (answers to the required design questions per code element): the model, where and how it is written, and doeff-linter's comparison with the shape of Hy defrecords (round 1)"
+}

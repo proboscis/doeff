@@ -1192,6 +1192,238 @@ pub fn dict_smell_hits(source: &str, fields: bool) -> Result<Vec<DictSmellHit>, 
     Ok(out)
 }
 
+// --- DOEFF213: values that stand in for a type (static-key mappings, positional tuples, an optional written as a 0-or-1 sequence) -----------------------------------
+
+/// The kind of a value that stands in for a type (DOEFF213 — docs/design/design-evidence v2 §9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum SubstituteKind {
+    /// `{:a … :b …}`, `{"a" …}`, `(dict :a …)` — a mapping whose keys are written in the source: static elements held in a mapping instead of a type's fields.
+    StaticKeyDict,
+    /// A mapping keyed by an attribute that is not an id (`(dfor r rows r.title r)`, `{(. r name) r}`) — the key of a mapping is an id.
+    AttributeKeyedDict,
+    /// A function's answer is a tuple literal of 2 or more items (`#(a b)`) — positions that carry different meanings.
+    AnswerTuple,
+    /// A defrecord's `:check` bounds a sequence field to 0 or 1 items (`(<= (len x) 1)`) — an optional field written as a sequence.
+    ZeroOrOne,
+}
+
+impl SubstituteKind {
+    /// Whether DOEFF213 stops this kind (the others are found and counted by `--print-existing-substitutes` sites only). A tuple answered by a function is not stopped in v2:
+    /// in the measured tree 14 of 15 sampled were sort or identity keys (`#(row.at row.id)`), and DOEFF144 already stops a tuple answered by a public function (v2 §9.4).
+    pub fn stops(self) -> bool {
+        !matches!(self, SubstituteKind::AnswerTuple)
+    }
+
+    /// The word of the hit's key detail and of the per-kind counts.
+    pub fn word(self) -> &'static str {
+        match self {
+            SubstituteKind::StaticKeyDict => "static-key-dict",
+            SubstituteKind::AttributeKeyedDict => "attribute-keyed-dict",
+            SubstituteKind::AnswerTuple => "answer-tuple",
+            SubstituteKind::ZeroOrOne => "zero-or-one",
+        }
+    }
+}
+
+/// One value that stands in for a type. `owner` = the top-level definition it is in (its name, or the head of the top-level form). `boundary` = the definition declares
+/// that it spells or reads an outside shape (`:spells` / `:reads` in :tags) or its :post is a mapping — counted the same, and reported apart (the uses an outside library asks for).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubstituteHit {
+    pub start: usize,
+    pub end: usize,
+    pub owner: String,
+    pub kind: SubstituteKind,
+    pub boundary: bool,
+}
+
+/// The last segment of an attribute key that names a property, not an identity (a title, a name, a text) — `r.title`, `(. r name)`, `(getattr r "label")`.
+/// `name` is not in the list: in a measured sample it was the identifier of an outside namespace (an environment variable, an HTTP header, a query parameter) in 11 of 12 cases (docs/design/design-evidence v2 §9.4).
+const ATTRIBUTE_KEYS: &[&str] = &["title", "label", "text", "body", "summary", "subject", "heading", "caption", "description"];
+
+/// Whether a mapping key is written in the source (a keyword, a string, a number, or a constant).
+fn literal_key(node: &Hy) -> bool {
+    match node {
+        Hy::Text { .. } => true,
+        Hy::Name { text, .. } => text.starts_with(':') || text.chars().next().is_some_and(|c| c.is_ascii_digit()) || text == "None" || text == "True" || text == "False",
+        _ => false,
+    }
+}
+
+/// Whether a mapping key is an attribute of a value that names a property (`r.title`, `(. r title)`, `(getattr r "title")`, `(get r "title")`).
+fn attribute_key(node: &Hy) -> bool {
+    let last = match node {
+        Hy::Name { text, .. } if text.contains('.') && !text.starts_with('.') => text.rsplit('.').next().unwrap_or(""),
+        Hy::Form { items, .. } if matches!(node.head(), "." | "getattr" | "get") && items.len() == 3 => match &items[2] {
+            Hy::Name { text, .. } => text.trim_start_matches(':'),
+            Hy::Text { value, .. } => value.as_str(),
+            _ => "",
+        },
+        _ => "",
+    };
+    let last = last.replace('_', "-");
+    ATTRIBUTE_KEYS.iter().any(|word| last == *word || last.ends_with(&format!("-{}", word)))
+}
+
+/// The keys of a `{…}` mapping literal (items at even positions; `#**m` unpacks a mapping and is not a key).
+fn mapping_keys(items: &[Hy]) -> Vec<&Hy> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while at < items.len() {
+        if items[at].name().is_some_and(|n| n.starts_with("#**")) {
+            at += if items[at].is("#**") { 2 } else { 1 };
+            continue;
+        }
+        out.push(&items[at]);
+        at += 2;
+    }
+    out
+}
+
+/// Whether an expression is `(<= (len x) 1)`, `(< (len x) 2)`, `(>= 1 (len x))`, `(> 2 (len x))`, or `(in (len x) #(0 1))` — a sequence bounded to 0 or 1 items.
+fn bounds_to_one(node: &Hy) -> bool {
+    let Some(items) = node.expression().filter(|items| items.len() == 3) else { return false };
+    // `(len field)` of a bare name only: `(len (lfor one parts :if …))` bounds a filtered subset (at most one of a kind), not an optional field (measured — v2 §9.4).
+    let is_len = |n: &Hy| n.head() == "len" && n.expression().is_some_and(|parts| parts.len() == 2 && parts[1].name().is_some());
+    match (node.head(), &items[1], &items[2]) {
+        ("<=", l, n) | (">=", n, l) => is_len(l) && n.is("1"),
+        ("<", l, n) | (">", n, l) => is_len(l) && n.is("2"),
+        ("in", l, Hy::Form { kind: Kind::Tuple | Kind::Bracket, items: allowed, .. }) => is_len(l) && allowed.iter().all(|a| a.is("0") || a.is("1")),
+        _ => false,
+    }
+}
+
+/// Walks one expression tree and collects the values that stand in for a type. Macro bodies (defmacro), quoted code, the type positions of match, and the mappings that are
+/// a definition's options (contract dicts — skipped by body_start) are not values.
+fn substitutes_in(source: &str, node: &Hy, owner: &str, boundary: bool, out: &mut Vec<SubstituteHit>) {
+    let Hy::Form { kind, items, start, end } = node else { return };
+    let head = node.head();
+    let hit = |kind: SubstituteKind, (start, end): (usize, usize)| SubstituteHit { start, end, owner: owner.to_string(), kind, boundary };
+    match kind {
+        Kind::Brace if !source.get(*start..).is_some_and(|rest| rest.starts_with("#{")) => {
+            let keys = mapping_keys(items);
+            if keys.iter().any(|k| literal_key(k)) {
+                out.push(hit(SubstituteKind::StaticKeyDict, (*start, *end)));
+            } else if keys.iter().any(|k| attribute_key(k)) {
+                out.push(hit(SubstituteKind::AttributeKeyedDict, (*start, *end)));
+            }
+        }
+        Kind::Paren if matches!(head, "defmacro" | "defmacro/g!" | "quote") => return,
+        Kind::Paren if head == "match" => {
+            for item in match_evaluated(items) {
+                substitutes_in(source, item, owner, boundary, out);
+            }
+            return;
+        }
+        Kind::Paren if head == "dict" && items[1..].iter().any(|i| i.name().is_some_and(|n| n.starts_with(':'))) => {
+            out.push(hit(SubstituteKind::StaticKeyDict, (*start, *end)));
+        }
+        Kind::Paren if head == "dfor" && items.len() >= 4 => {
+            let key = &items[items.len() - 2];
+            if literal_key(key) {
+                out.push(hit(SubstituteKind::StaticKeyDict, (*start, *end)));
+            } else if attribute_key(key) {
+                out.push(hit(SubstituteKind::AttributeKeyedDict, (*start, *end)));
+            }
+        }
+        Kind::Paren if matches!(head, "defn" | "defk" | "deff" | "fnk") && items.len() >= 3 => {
+            out.extend(returned_pairs(items).into_iter().map(|(_, span)| hit(SubstituteKind::AnswerTuple, span)));
+            for item in items.get(body_start(items)..).unwrap_or(&[]) {
+                substitutes_in(source, item, owner, boundary, out);
+            }
+            return;
+        }
+        Kind::Paren if head == "fn" && items.len() >= 3 => {
+            if let Some(span) = items.last().filter(|last| pair_width(last).is_some()).map(Hy::span) {
+                out.push(hit(SubstituteKind::AnswerTuple, span));
+            }
+        }
+        _ => {}
+    }
+    for (at, item) in items.iter().enumerate() {
+        // A sort key (`:key (fn [row] #(row.at row.id))` of sorted, min, max) is an ordering, not a value with positions of different meanings — its answer is not counted.
+        let sort_key = at > 0 && items[at - 1].is(":key") && item.head() == "fn";
+        match (sort_key, item.expression()) {
+            (true, Some(parts)) => {
+                for part in &parts[2.min(parts.len())..] {
+                    if !std::ptr::eq(part, parts.last().expect("a fn has parts")) || pair_width(part).is_none() {
+                        substitutes_in(source, part, owner, boundary, out);
+                    }
+                }
+            }
+            _ => substitutes_in(source, item, owner, boundary, out),
+        }
+    }
+}
+
+/// The values that stand in for a type in one Hy file (the reason if it cannot be read), in source order.
+pub fn substitute_hits(source: &str) -> Result<Vec<SubstituteHit>, String> {
+    let forms = read_hy(source)?;
+    let mut out = Vec::new();
+    for form in &forms {
+        let Some(items) = form.expression() else { continue };
+        let head = form.head();
+        let named = |at: usize| items.get(at).and_then(|n| annotated(source, n).map(|(name, _, _)| name).or_else(|| n.name().map(str::to_string)));
+        match head {
+            "defmacro" | "defmacro/g!" | "require" | "import" | "eval-when-compile" | "eval-and-compile" => {}
+            "defn" | "defk" | "deff" | "defp" | "defhandler" if items.len() >= 3 => {
+                let owner = named(1).unwrap_or_else(|| head.to_string());
+                let boundary = boundary_form_of(items).is_some() || defk_posts(items).into_iter().any(|node| mapping_problem(node).is_some());
+                if head != "defhandler" && head != "defp" && !matches!(plain_shape(&owner), Some(Plain::SortKey | Plain::SqlArgs)) {
+                    out.extend(returned_pairs(items).into_iter().map(|(_, (start, end))| SubstituteHit { start, end, owner: owner.clone(), kind: SubstituteKind::AnswerTuple, boundary }));
+                }
+                for item in items.get(body_start(items)..).unwrap_or(&[]) {
+                    substitutes_in(source, item, &owner, boundary, &mut out);
+                }
+            }
+            "defclass" | "defrecord" | "defwire" => {
+                let name_at = if items.len() > 2 && matches!(items[1], Hy::Form { .. }) { 2 } else { 1 };
+                let class = items.get(name_at).map(|n| spelled(source, n)).unwrap_or_default();
+                for part in items.get(name_at + 1..).unwrap_or(&[]) {
+                    match part {
+                        // The head dict of a record ({:check [..] :tags {..}}) is an option of the form; its :check is read for a 0-or-1 sequence.
+                        Hy::Form { kind: Kind::Brace, items: options, .. } => {
+                            for i in (0..options.len().saturating_sub(1)).step_by(2) {
+                                if let Some(checks) = options[i + 1].form(Kind::Bracket).filter(|_| options[i].is(":check")) {
+                                    out.extend(checks.iter().filter(|c| bounds_to_one(c)).map(|c| {
+                                        let (start, end) = c.span();
+                                        SubstituteHit { start, end, owner: class.clone(), kind: SubstituteKind::ZeroOrOne, boundary: false }
+                                    }));
+                                }
+                            }
+                        }
+                        Hy::Form { kind: Kind::Paren, .. } if matches!(part.head(), "defn" | "defk" | "deff") => {
+                            let method = part.expression().and_then(|p| p.get(1)).map(|n| spelled(source, n)).unwrap_or_default();
+                            substitutes_in(source, part, &format!("{}.{}", class, method), false, &mut out);
+                        }
+                        // Fields ((#^ T name)) hold types; a default value or a class-level (setv …) is read as values.
+                        other => substitutes_in(source, other, &class, false, &mut out),
+                    }
+                }
+            }
+            // Another definition form (defeffect, defsystem, deftable …): a {…} directly in the form is an option of the form, not a value; the rest is read as values.
+            _ if head.starts_with("def") => {
+                let owner = named(1).unwrap_or_else(|| head.to_string());
+                for part in items.iter().skip(1).filter(|part| !matches!(part, Hy::Form { kind: Kind::Brace, .. })) {
+                    substitutes_in(source, part, &owner, false, &mut out);
+                }
+            }
+            _ => {
+                let owner = match head {
+                    // The module's tag declaration ((val MODULE-TAGS {:context … :role …})) is the linter's own declaration form, read like a contract's :tags — not a value.
+                    "setv" | "val" if named(1).as_deref() == Some("MODULE-TAGS") => continue,
+                    "setv" | "def" | "defconst" | "val" => named(1).unwrap_or_else(|| head.to_string()),
+                    "" => "(top)".to_string(),
+                    _ => head.to_string(),
+                };
+                substitutes_in(source, form, &owner, false, &mut out);
+            }
+        }
+    }
+    out.sort_by(|a, b| (a.start, a.kind).cmp(&(b.start, b.kind)));
+    out.dedup_by(|a, b| a.start == b.start && a.kind == b.kind);
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

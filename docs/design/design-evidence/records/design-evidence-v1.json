@@ -1,0 +1,484 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/design.md",
+      "sha256": "ad924b6a01b8eb5def08a6052450345853275b135bf05fd2f66e5b845a6bf780"
+    }
+  ],
+  "body": {
+    "alternatives": [
+      {
+        "options": [
+          {
+            "benefits": "deterministic, per file, no git",
+            "costs": "a ledger line can be added to bypass (visible in diff)",
+            "name": "ledger of existing shapes"
+          },
+          {
+            "benefits": "no ledger file",
+            "costs": "after a commit the changed type is the base; whole runs never fire; depends on the chosen base",
+            "name": "compare with the git base"
+          }
+        ],
+        "question": "how existing types pass",
+        "reason": "the rule fires the same way in every run mode",
+        "reconsider_when": "the ledger-addition guard (design section 7) proves too weak",
+        "selected": "ledger of existing shapes"
+      },
+      {
+        "options": [
+          {
+            "benefits": "one place per fact; readable by a reviewer",
+            "costs": "longer evidence",
+            "name": "field rows (name, type, fact)"
+          },
+          {
+            "benefits": "short comparison",
+            "costs": "the same fact twice; field order lost",
+            "name": "a shape string plus a fields map"
+          }
+        ],
+        "question": "how the shape is recorded in the evidence",
+        "reason": "normalization",
+        "reconsider_when": "never for round 1",
+        "selected": "field rows (name, type, fact)"
+      },
+      {
+        "options": [
+          {
+            "benefits": "neutral to Hy and Rust; reader already in the linter",
+            "costs": "less familiar in Hy code",
+            "name": "TOML"
+          },
+          {
+            "benefits": "close to the Hy source",
+            "costs": "a Rust project would need a Hy reader",
+            "name": "Hy s-expression"
+          }
+        ],
+        "question": "file form",
+        "reason": "the same form describes Rust elements",
+        "reconsider_when": "a project bans TOML",
+        "selected": "TOML"
+      }
+    ],
+    "change_cases": [
+      {
+        "change": "Rust struct and enum shapes are compared with the same evidence",
+        "expected_elements": [
+          "reader"
+        ],
+        "id": "CC1",
+        "preserve": [
+          "evidence file form",
+          "RecordShape"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "judge"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "rationale": "the maintainer's decision covers Rust projects",
+        "verification": "a reader returning RecordShape is enough; judge() takes no Hy type"
+      },
+      {
+        "change": "functions, interfaces and modules become elements",
+        "expected_elements": [
+          "questions",
+          "reader"
+        ],
+        "id": "CC2",
+        "preserve": [
+          "evidence file form"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "judge"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "rationale": "the decision names them; round 1 is types",
+        "verification": "kind is already read; a new question list and reader per kind"
+      },
+      {
+        "change": "verdict existence is checked",
+        "expected_elements": [],
+        "id": "CC3",
+        "preserve": [
+          "linter reads no network"
+        ],
+        "priority": "prepare",
+        "protected_contracts": [
+          "judge"
+        ],
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "rationale": "round 1 checks the spelling only",
+        "verification": "a check outside the linter (design section 6)"
+      }
+    ],
+    "contracts": [
+      {
+        "canonical_source": "packages/doeff-linter/src/project/design_evidence.rs",
+        "effects": [],
+        "failures": [
+          "Err only when the .hy cannot be read; an unreadable evidence file is a finding"
+        ],
+        "id": "judge",
+        "invariants": [
+          "pure: the same inputs give the same findings"
+        ],
+        "operations": [
+          "judge(rel, hy_source, evidence?, ledger, review_pattern?) -> Result<Vec<Hit>, String>"
+        ],
+        "owner": "comparison"
+      },
+      {
+        "canonical_source": "docs/design/design-evidence/artifacts/v1/design.md",
+        "effects": [],
+        "failures": [
+          "unknown keys and other schemas are unreadable"
+        ],
+        "id": "evidence-file",
+        "invariants": [
+          "field rows hold the names and types; no separate shape string"
+        ],
+        "operations": [
+          "<stem>.evidence.toml, schema = 1, [[element]] with field / rejected rows"
+        ],
+        "owner": "comparison"
+      }
+    ],
+    "elements": [
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "the Hy reader and field forms"
+        ],
+        "id": "reader",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R3"
+        ],
+        "responsibility": "read the shape of each top-level defrecord (record_shapes)",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [
+          "the list of required questions"
+        ],
+        "id": "questions",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R5"
+        ],
+        "responsibility": "name the missing answers of one evidence entry (answer_gaps)",
+        "state": []
+      },
+      {
+        "depends_on": [
+          "reader"
+        ],
+        "hidden_decisions": [
+          "the fingerprint spelling"
+        ],
+        "id": "ledger",
+        "kind": "internal",
+        "requirement_ids": [
+          "R2"
+        ],
+        "responsibility": "the fingerprints of the shapes that existed when the rule was turned on (ExistingShapes)",
+        "state": [
+          "the :existing TOML file"
+        ]
+      },
+      {
+        "depends_on": [
+          "reader",
+          "questions",
+          "ledger"
+        ],
+        "hidden_decisions": [],
+        "id": "comparison",
+        "kind": "internal",
+        "requirement_ids": [
+          "R1",
+          "R2",
+          "R4"
+        ],
+        "responsibility": "judge one module against its evidence and the ledger (judge)",
+        "state": []
+      },
+      {
+        "depends_on": [],
+        "hidden_decisions": [],
+        "id": "reviewer",
+        "kind": "external",
+        "requirement_ids": [
+          "R5"
+        ],
+        "responsibility": "judge the evidence against the listed principles and record a verdict id",
+        "state": [
+          "verdict records"
+        ]
+      }
+    ],
+    "handoff": {
+      "fixed": [
+        "evidence model and file form",
+        "finding kinds and keys",
+        "RecordShape as the reader's output"
+      ],
+      "free": [
+        "the Rust reader's internals",
+        "the question lists for functions, interfaces, modules"
+      ],
+      "next": [
+        "Rust struct/enum reader",
+        "a trial on a downstream project's types",
+        "verdict existence check"
+      ]
+    },
+    "level": "component: one project rule of doeff-linter and the evidence file form",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "a technical component (a lint rule); no business domain model drives the decision. Terms are fixed in design.md section 1.",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "the model must survive Rust types and other element kinds",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "candidates: Rust struct/enum readers (next round), functions/interfaces/modules as elements, checking verdict existence",
+            "step": "1"
+          },
+          {
+            "result": "after the change, an author of a Rust type writes the same evidence file; the comparison and messages stay the same",
+            "step": "2"
+          },
+          {
+            "result": "required: Hy defrecord (round 1); prepare: Rust reader, other kinds; out of scope: writing evidence for downstream projects",
+            "step": "3"
+          },
+          {
+            "result": "preserved: the evidence model and file form, RecordShape, the finding keys; changing: the language reader only",
+            "step": "4"
+          },
+          {
+            "result": "verification: the comparison takes RecordShape only (unit tests construct shapes from source); a Rust reader returning RecordShape needs no change in judge()",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md",
+          "artifacts/v1/evidence.md"
+        ],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "language readers, the comparison, and the question list change independently",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "volatile: the source language (Hy now, Rust next), the list of required questions, where verdicts are stored",
+            "step": "1"
+          },
+          {
+            "result": "stable together: the evidence model and the fingerprint spelling",
+            "step": "2"
+          },
+          {
+            "result": "record_shapes() hides the Hy reader; answer_gaps() hides the question list; the review store is outside the linter",
+            "step": "3"
+          },
+          {
+            "result": "public contract: RecordShape in, Hit list out (judge())",
+            "step": "4"
+          },
+          {
+            "result": "candidate splits compared against the change cases: one reader per language, one comparison",
+            "step": "5"
+          },
+          {
+            "result": "the claim is checked by tests that build shapes from source and judge them; no counterexample found",
+            "step": "6"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md",
+          "artifacts/v1/evidence.md"
+        ],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "the authoring-time speed requirement decides what the rule may read",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "requirements known: maintainer's decision; speed budget of the one-file hook (3 s)",
+            "step": "1"
+          },
+          {
+            "result": "element decomposed: doeff-linter's project rule DOEFF212",
+            "step": "2"
+          },
+          {
+            "result": "driving requirements: one-file judgment speed; existing types must not be red; language-neutral evidence",
+            "step": "3"
+          },
+          {
+            "result": "options compared: git base comparison vs. a ledger of existing shapes; s-expression vs. TOML; shape string vs. field rows",
+            "step": "4"
+          },
+          {
+            "result": "elements: reader, evidence parser, ledger, comparison, drafts in mod.rs, declaration in architecture.rs",
+            "step": "5"
+          },
+          {
+            "result": "interfaces: judge(rel, hy, evidence, ledger, pattern) -> Hit list; Judging::load per run",
+            "step": "6"
+          },
+          {
+            "result": "the requirements are allocated: speed (3 files read), existing types (ledger), neutrality (TOML + RecordShape)",
+            "step": "7"
+          },
+          {
+            "result": "next elements (Rust reader, other kinds) are left to the next round with the same interfaces",
+            "step": "8"
+          }
+        ]
+      },
+      {
+        "evidence": [],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "evaluated in the assessment record",
+        "status": "pending",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "the structure is explained with two figures",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "reader: a contributor turning the rule on; level: the component inside doeff-linter",
+            "step": "1"
+          },
+          {
+            "result": "the author, the evidence file, the reviewer, the ledger, and DOEFF212 at one level",
+            "step": "2"
+          },
+          {
+            "result": "arrows show reads (evidence, ledger) and the finding",
+            "step": "3"
+          },
+          {
+            "result": "titles and the now/target split are named",
+            "step": "4"
+          },
+          {
+            "result": "figure 2 shows the judgment flow and each finding kind",
+            "step": "5"
+          },
+          {
+            "result": "Mermaid source kept in design.md",
+            "step": "6"
+          }
+        ]
+      }
+    ],
+    "open_questions": [
+      "guard against ledger additions (commit hook: staged ledger subset of HEAD)",
+      "checking parts and fan_out",
+      "where verdict existence is checked (design section 6, option A recommended)"
+    ],
+    "perspective": "proposed",
+    "purpose": "A type's shape changes only together with the answers to the required design questions, written next to the module and judged by doeff-linter (round 1: Hy defrecord).",
+    "requirements": [
+      {
+        "id": "R1",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "statement": "A new or reshaped defrecord without evidence is an error; a defrecord whose shape differs from its evidence is an error."
+      },
+      {
+        "id": "R2",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "statement": "An existing defrecord whose shape did not change is not an error."
+      },
+      {
+        "id": "R3",
+        "kind": "constraint",
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "statement": "The evidence is a separate file next to the code that no language runtime reads, and the same form describes Hy and Rust elements."
+      },
+      {
+        "id": "R4",
+        "kind": "quality",
+        "provenance": {
+          "kind": "observed",
+          "source": "doeff-linter sources at the snapshot"
+        },
+        "statement": "A one-file judgment is fast enough for an authoring-time hook (3-second budget)."
+      },
+      {
+        "id": "R5",
+        "kind": "functional",
+        "provenance": {
+          "kind": "user",
+          "source": "the maintainer's decision for this design: answers to required design questions per code element, kept in a separate file, checked by the Rust linter; round 1 = types"
+        },
+        "statement": "The id of the reviewer's verdict is checked for its spelling only in round 1."
+      }
+    ]
+  },
+  "created_at": "2026-11-17T00:49:19.540250+00:00",
+  "id": "design-evidence-v1",
+  "inputs": [
+    {
+      "id": "snapshot-c86f12853c7f",
+      "role": "basis",
+      "sha256": "640985c997df446f2bb247c46c43ec92cc0ede4c329426b34a7478646a7bda2d"
+    }
+  ],
+  "kind": "design",
+  "schema_version": 1,
+  "scope": "Design evidence (answers to the required design questions per code element): the model, where and how it is written, and doeff-linter's comparison with the shape of Hy defrecords (round 1)"
+}

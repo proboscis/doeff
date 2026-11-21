@@ -595,6 +595,31 @@ pub struct FileSelection {
     pub except: Vec<String>,
 }
 
+/// The declaration of DOEFF212 (`:design-evidence {:files [..] :except [..] :existing "<path>"}`) — the .hy files whose defrecords must carry design evidence
+/// (the population, the same glob shape as :record-stubs) and the ledger of the shapes that existed when the rule was turned on (a path from the repo root; absent = no type is
+/// grandfathered). A part of Architecture like the other per-rule declarations — it adds no field to FileSelection.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct DesignEvidenceDecl {
+    pub selection: FileSelection,
+    pub existing: Option<String>,
+    /// The regular expression a review id must match (`:review-pattern r"…"` — absent = any non-empty spelling). The linter checks only the spelling; whether the review exists
+    /// is checked outside the linter (it reads no network).
+    pub review_pattern: Option<String>,
+    /// The ledger of the values that stood in for a type when DOEFF213 was turned on (`:existing-substitutes "<path>"` — absent = none is grandfathered).
+    pub existing_substitutes: Option<String>,
+    /// The guard of the ledgers and of this declaration (`:guard {:base "<ref>" :approvals "<path>" :approval-pattern r"…"}` — DOEFF214; absent = the ledgers are not guarded).
+    pub guard: Option<LedgerGuardDecl>,
+}
+
+/// The declaration of DOEFF214 — the ref whose merge-base with HEAD is the base the ledgers are compared with, the file of user approvals (only its version at the base counts),
+/// and the spelling of an approved request's id. A part of DesignEvidenceDecl: it is read only together with the ledgers it guards.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct LedgerGuardDecl {
+    pub base: String,
+    pub approvals: Option<String>,
+    pub approval_pattern: Option<String>,
+}
+
 /// One group of vocabulary whose judgment is confined to one place (`(vocabulary-scope "name" :patterns [r"…"] :files [..] :except [..] :instead "…")` of
 /// `:single-point-vocabulary` — DOEFF146).
 /// :files and :except are path globs from the repo root (the same shape as :retired-words). Only the :except files may read this vocabulary
@@ -886,6 +911,9 @@ pub struct Architecture {
     /// Files that read type declarations (.pyi) (`:record-stubs {:files [..] :except [..]}`). If written, DOEFF145 reports a .pyi that declares a kw-only
     /// record of the same-named .hy in the same dir with a @dataclass without kw_only=True (#1191).
     pub record_stubs: Option<FileSelection>,
+    /// Files whose defrecords must carry design evidence (`:design-evidence {:files [..] :except [..] :existing "<path>"}`). If written, DOEFF212 reports a defrecord whose
+    /// shape differs from its evidence in the sibling `<stem>.evidence.toml`, and a new or reshaped defrecord without evidence (the shape of a type is changed only together with the answers to the required design questions).
+    pub design_evidence: Option<DesignEvidenceDecl>,
     /// Rules for fake handlers (if written, DOEFF143 reports fake handlers that answer business effects).
     pub business_fakes: Option<BusinessFakes>,
     /// Rules for the shape of assembly (if written, DOEFF155 and 156 report violations of the assembly shape).
@@ -1405,6 +1433,7 @@ impl<'a> Parser<'a> {
             handler_arguments: None,
             typed_values: None,
             record_stubs: None,
+            design_evidence: None,
             business_fakes: None,
             assembly_shape: None,
             role_descriptions: BTreeMap::new(),
@@ -1491,6 +1520,7 @@ impl<'a> Parser<'a> {
                 ":handler-arguments" => arch.handler_arguments = self.handler_arguments(value),
                 ":typed-values" => arch.typed_values = self.file_selection(value, ":typed-values"),
                 ":record-stubs" => arch.record_stubs = self.file_selection(value, ":record-stubs"),
+                ":design-evidence" => arch.design_evidence = self.design_evidence(value),
                 ":business-fakes" => arch.business_fakes = self.business_fakes(value),
                 ":assembly-shape" => arch.assembly_shape = self.assembly_shape(value),
                 ":edge-touches" => {
@@ -1795,6 +1825,67 @@ impl<'a> Parser<'a> {
             return None;
         }
         Some(selection)
+    }
+
+    /// Reads `{:files [..] :except [..] :existing "<path>"}` of :design-evidence (:files is required; :existing is the ledger of the shapes that existed when the rule was turned on).
+    fn design_evidence(&mut self, value: &Form) -> Option<DesignEvidenceDecl> {
+        let what = ":design-evidence";
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, &format!("{} must be a dictionary {{:files [..] :except [..] :existing \"<path>\" :review-pattern r\"…\"}}", what));
+            return None;
+        };
+        let mut decl = DesignEvidenceDecl::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":files" => decl.selection.files = self.path_globs(field, &format!("{} :files", what)),
+                ":except" => decl.selection.except = self.path_globs(field, &format!("{} :except", what)),
+                ":existing" => decl.existing = self.required_string(field, &format!("{} :existing", what)).filter(|p| !p.is_empty()),
+                ":existing-substitutes" => decl.existing_substitutes = self.required_string(field, &format!("{} :existing-substitutes", what)).filter(|p| !p.is_empty()),
+                ":guard" => decl.guard = self.ledger_guard(field),
+                ":review-pattern" => {
+                    decl.review_pattern = self.required_string(field, &format!("{} :review-pattern", what));
+                    if decl.review_pattern.as_deref().is_some_and(|p| regex::Regex::new(p).is_err()) {
+                        self.problem(field, &format!("{} :review-pattern is not a readable regular expression", what));
+                        decl.review_pattern = None;
+                    }
+                }
+                _ => self.unknown_key(key, what),
+            }
+        }
+        if decl.selection.files.is_empty() {
+            self.problem(value, &format!("{} has no :files (globs of the .hy files to read)", what));
+            return None;
+        }
+        Some(decl)
+    }
+
+    /// Reads `{:base "<ref>" :approvals "<path>" :approval-pattern r"…"}` of :design-evidence :guard (:base is required).
+    fn ledger_guard(&mut self, value: &Form) -> Option<LedgerGuardDecl> {
+        let what = ":design-evidence :guard";
+        let Some(entries) = self.brace(value) else {
+            self.problem(value, &format!("{} must be a dictionary {{:base \"<ref>\" :approvals \"<path>\" :approval-pattern r\"…\"}}", what));
+            return None;
+        };
+        let mut guard = LedgerGuardDecl::default();
+        for (key, field) in self.pairs(&entries) {
+            match self.text(key) {
+                ":base" => guard.base = self.required_string(field, &format!("{} :base", what)).unwrap_or_default(),
+                ":approvals" => guard.approvals = self.required_string(field, &format!("{} :approvals", what)).filter(|p| !p.is_empty()),
+                ":approval-pattern" => {
+                    guard.approval_pattern = self.required_string(field, &format!("{} :approval-pattern", what));
+                    if guard.approval_pattern.as_deref().is_some_and(|p| regex::Regex::new(p).is_err()) {
+                        self.problem(field, &format!("{} :approval-pattern is not a readable regular expression", what));
+                        guard.approval_pattern = None;
+                    }
+                }
+                _ => self.unknown_key(key, what),
+            }
+        }
+        if guard.base.is_empty() {
+            self.problem(value, &format!("{} has no :base (the ref the ledgers are compared with, e.g. \"origin/main\")", what));
+            return None;
+        }
+        Some(guard)
     }
 
     /// Reads `[(retired-words "name" :words [..] :patterns [r"…"] :files [..] :except [..] :rule-lines [..] :contract-files [..] :in lines|names|paths :instead "…") …]`
