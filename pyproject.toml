@@ -79,7 +79,8 @@ members = ["packages/*"]
 # references this repo as an editable/path dependency (observed fleet-wide
 # 2026-08-07: dotfiles agentcli "Workspace member doeff-agentd is missing a
 # pyproject.toml"). Excluding it here fixes all such checkouts at once.
-exclude = ["packages/doeff-agentd"]
+# doeff-design-gate is a Rust binary crate with no Python package (the repo-charter gate builds it with cargo), so it is not a member either.
+exclude = ["packages/doeff-agentd", "packages/doeff-design-gate"]
 
 [tool.uv.sources]
 doeff-indexer = { workspace = true }
