@@ -112,8 +112,8 @@ pub struct ArchService {
     /// The declaration of the system placed in the cluster (`:system "module:name of defsystem"`; a list if there are several systems; the reason for not placing one is `{:exempt "reason"}` — omitted = None).
     /// DOEFF173 requires a service that has code to have the declaration, the existence of a defsystem in the entry layer, and exactly one base with typed arguments.
     pub system: Option<SystemDecl>,
-    /// The Rust Pod declaration of the service (`:pod "module:NAME"` — the `ServicePod` value a generator reads; omitted = None). Only the spelling is read here; resolving it is the generator's job.
-    pub pod: Option<DefinitionRef>,
+    /// The Rust Pod declaration of the service (`:pod "module:NAME"`, or a list of them for a service with several processes — the `ServicePod` values a generator reads; omitted = None). Only the spelling is read here; resolving it is the generator's job.
+    pub pod: Option<Vec<DefinitionRef>>,
     /// The position of the defservice in architecture.hy (the position of the DOEFF117 notice).
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
@@ -1654,6 +1654,14 @@ impl<'a> Parser<'a> {
             }
         }
         out
+    }
+
+    /// `:pod` of defservice: one `"module:NAME"` or a list of them (the same split as `:system`).
+    fn pod_refs(&mut self, value: &Form) -> Vec<DefinitionRef> {
+        if self.bracket(value).is_some() {
+            return self.definition_refs(value, ":pod");
+        }
+        self.definition_ref(value, ":pod").into_iter().collect()
     }
 
     /// `:system` of defservice: one of `"module:NAME"`, a list of them, `{:part-of "module:NAME"}`, or `{:exempt "reason"}` (other shapes accumulate a reason).
@@ -3369,7 +3377,7 @@ impl<'a> Parser<'a> {
                             ":clauses" => service.clauses = Some(self.clause_names(value)),
                             ":entry-modules" => service.entry_modules = Some(self.entry_modules(value)),
                             ":system" => service.system = self.system_decl(value),
-                            ":pod" => service.pod = self.definition_ref(value, ":pod"),
+                            ":pod" => service.pod = Some(self.pod_refs(value)),
                             ":clause-exemptions" => {
                                 service.clause_exemptions = self.clause_exemptions(value);
                                 exemptions_form = Some(value);
@@ -3633,7 +3641,11 @@ mod tests {
         let declared = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :pod \"billing.pod:POD\"}");
         let arch = Architecture::parse(&declared, Path::new("architecture.hy")).unwrap();
         let billing = arch.services.iter().find(|s| s.name == "billing").unwrap();
-        assert_eq!(billing.pod, DefinitionRef::parse("billing.pod:POD"));
+        assert_eq!(billing.pod, Some(vec![DefinitionRef::parse("billing.pod:POD").unwrap()]));
+
+        let listed = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :pod [\"a.b:x\" \"a.b:y\"]}");
+        let arch = Architecture::parse(&listed, Path::new("architecture.hy")).unwrap();
+        assert_eq!(arch.services.iter().find(|s| s.name == "billing").unwrap().pod.as_ref().map(Vec::len), Some(2));
         assert!(arch.notices.is_empty(), "reported as an unknown key: {:?}", arch.notices);
 
         for bad_value in ["1", "\"no-colon\""] {
