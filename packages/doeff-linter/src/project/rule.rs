@@ -210,6 +210,15 @@ pub enum ProjectRule {
     /// DOEFF145: a kw-only record (a defrecord, or a defclass with a dataclass carrying :kw-only True as decoration) in a .hy of the same name in the same dir
     /// is declared by a type declaration (.pyi) as a @dataclass without kw_only=True — the type checker accepts calls with positional arguments, but at runtime it is a TypeError (#1191).
     RecordStubNotKwOnly,
+    /// DOEFF212: a top-level defrecord's shape (fields and bases) differs from its design evidence in the sibling <stem>.evidence.toml, the evidence lacks an answer, or a new or
+    /// reshaped defrecord has no evidence (an existing one is let through only while its fingerprint matches the :existing ledger) — the shape of a type changes only together with its design review.
+    DesignEvidence,
+    /// DOEFF213: in a .hy of the :design-evidence population, a value stands in for a type — a mapping with keys written in the source, a mapping keyed by a title or a name,
+    /// a function answering a tuple literal, a record field bounded to 0 or 1 items — above the count the :existing-substitutes ledger holds for that file and kind.
+    TypeSubstitute,
+    /// DOEFF214: a line of the :existing or :existing-substitutes ledger is added, rewritten, or raised against the base (the merge-base with :guard :base), the :design-evidence
+    /// declaration changed, or an added approval lacks the request id or why — without a user approval that is already at the base.
+    LedgerGrew,
     /// DOEFF143: a definition reachable from a fake root but not from the production entry answers a business effect without tap (a fake handler) / rot in the outside-world table (stale rows of the counterexample table are DOEFF176).
     /// The declaration is architecture.hy's :business-fakes.
     BusinessEffectFake,
@@ -322,6 +331,9 @@ impl ProjectRule {
         ProjectRule::HandlerArgumentHoldsState,
         ProjectRule::UntypedStructuredValue,
         ProjectRule::RecordStubNotKwOnly,
+        ProjectRule::DesignEvidence,
+        ProjectRule::TypeSubstitute,
+        ProjectRule::LedgerGrew,
         ProjectRule::BusinessEffectFake,
         ProjectRule::StaleCounterexampleRow,
         ProjectRule::AssemblyShapeBroken,
@@ -408,6 +420,9 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "DOEFF142",
             ProjectRule::UntypedStructuredValue => "DOEFF144",
             ProjectRule::RecordStubNotKwOnly => "DOEFF145",
+            ProjectRule::DesignEvidence => "DOEFF212",
+            ProjectRule::TypeSubstitute => "DOEFF213",
+            ProjectRule::LedgerGrew => "DOEFF214",
             ProjectRule::BusinessEffectFake => "DOEFF143",
             ProjectRule::StaleCounterexampleRow => "DOEFF176",
             ProjectRule::AssemblyShapeBroken => "DOEFF155",
@@ -477,6 +492,9 @@ impl ProjectRule {
             // Plain mappings and plain tuples in public-surface types, and the kw_only mismatch with .pyi (the decision of #1191 — default is critical).
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::DesignEvidence
+            | ProjectRule::TypeSubstitute
+            | ProjectRule::LedgerGrew
             | ProjectRule::BusinessEffectFake
             | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
@@ -567,6 +585,9 @@ impl ProjectRule {
             | ProjectRule::EffectsDisagreeWithInference
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::DesignEvidence
+            | ProjectRule::TypeSubstitute
+            | ProjectRule::LedgerGrew
             // Hits attach to a dir, architecture.hy, or a registry row; several files are cross-checked; emit if a declared thing is missing.
             | ProjectRule::UndeclaredDirectory
             | ProjectRule::UnusedDependency
@@ -719,6 +740,8 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => &[HandlerArguments],
             ProjectRule::UntypedStructuredValue => &[TypedValues],
             ProjectRule::RecordStubNotKwOnly => &[RecordStubs],
+            ProjectRule::DesignEvidence => &[DesignEvidence],
+            ProjectRule::TypeSubstitute | ProjectRule::LedgerGrew => &[DesignEvidence],
             // judge_business_fakes reads :business-fakes and :assembly-shape over the definition graph, per declared service (and its invariants and clauses).
             ProjectRule::BusinessEffectFake
             | ProjectRule::StaleCounterexampleRow
@@ -804,6 +827,9 @@ impl ProjectRule {
             | ProjectRule::RetiredCall
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::DesignEvidence
+            | ProjectRule::TypeSubstitute
+            | ProjectRule::LedgerGrew
             // Semantic rules (a single-file run reads the cache — per definition).
             | ProjectRule::SemanticBusinessDecision
             | ProjectRule::SemanticTransportKnowledge
@@ -862,6 +888,10 @@ impl ProjectRule {
                 | ProjectRule::LowerLayerInDomain
                 | ProjectRule::StaleOutcomeBranch
                 | ProjectRule::TestSleepsOnWallClock
+                // DOEFF212 is not lowered either — the only way an existing type passes without evidence is the :existing ledger with its unchanged fingerprint.
+                | ProjectRule::DesignEvidence
+                | ProjectRule::TypeSubstitute
+                | ProjectRule::LedgerGrew
         )
     }
 
@@ -964,6 +994,9 @@ impl ProjectRule {
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::DesignEvidence
+            | ProjectRule::TypeSubstitute
+            | ProjectRule::LedgerGrew
             | ProjectRule::BusinessEffectFake
             | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
@@ -1064,6 +1097,9 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "Handler argument takes a client or mutable store",
             ProjectRule::UntypedStructuredValue => "Public-surface type is a plain mapping or plain tuple",
             ProjectRule::RecordStubNotKwOnly => "@dataclass in the type declaration lacks kw_only=True",
+            ProjectRule::DesignEvidence => "Type shape without design evidence",
+            ProjectRule::TypeSubstitute => "Value that stands in for a type",
+            ProjectRule::LedgerGrew => "Ledger line added without approval",
             ProjectRule::BusinessEffectFake => "Fake handler answering a business effect",
             ProjectRule::StaleCounterexampleRow => "Stale row of the counterexample table that matches nothing",
             ProjectRule::AssemblyShapeBroken => "Breach of the shape of assembly",
@@ -1138,6 +1174,9 @@ impl ProjectRule {
             | ProjectRule::HandlerArgumentHoldsState
             | ProjectRule::UntypedStructuredValue
             | ProjectRule::RecordStubNotKwOnly
+            | ProjectRule::DesignEvidence
+            | ProjectRule::TypeSubstitute
+            | ProjectRule::LedgerGrew
             | ProjectRule::BusinessEffectFake
             | ProjectRule::StaleCounterexampleRow
             | ProjectRule::AssemblyShapeBroken
@@ -1235,6 +1274,9 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "Handler Argument Holds State",
             ProjectRule::UntypedStructuredValue => "Untyped Structured Value",
             ProjectRule::RecordStubNotKwOnly => "Record Stub Not Kw Only",
+            ProjectRule::DesignEvidence => "Design Evidence",
+            ProjectRule::TypeSubstitute => "Type Substitute",
+            ProjectRule::LedgerGrew => "Ledger Grew",
             ProjectRule::BusinessEffectFake => "Business Effect Fake",
             ProjectRule::StaleCounterexampleRow => "Stale Counterexample Row",
             ProjectRule::AssemblyShapeBroken => "Assembly Shape Broken",
@@ -1304,6 +1346,9 @@ impl ProjectRule {
             ProjectRule::RetiredCall => "Do not call, in the Hy files of a group's :files, the calls decided as not to be used by architecture.hy's :retired-calls (retired effects, clocks …) — counts forms whose head symbol is a :calls spelling; comments, strings, and discarded forms are not counted",
             ProjectRule::UntypedStructuredValue => "A structured value is expressed with a type that statically has field names and types (frozen dataclass, defrecord, defwire) — in the public surface (names not starting with _) of the files in architecture.hy's :typed-values, do not write in class fields, function and method return values, or the types of defk / deff :post a plain mapping (dict, Mapping, JsonValue …), a plain tuple, a mapping whose values are object / Any, a fixed-length tuple tuple[A, B], or a container holding those, and defn / defk / deff do not answer with a tuple literal #(a b) of length 2 or more. :post is an isinstance contract, so only mappings are red, and for a defk / deff whose name has no type annotation, a plain tuple in :post is red too",
             ProjectRule::RecordStubNotKwOnly => "The type declarations (.pyi) of architecture.hy's :record-stubs do not misrepresent the runtime shape of the .hy of the same name in the same dir — if a record that accepts fields only by name in .hy (a defrecord, or a defclass with (dataclass … :kw-only True …) as decoration) is declared with @dataclass, write kw_only=True",
+            ProjectRule::DesignEvidence => "Each top-level defrecord of the .hy files in architecture.hy's :design-evidence carries design evidence in the sibling <stem>.evidence.toml — the answers to the required design questions (concern, key, the fact each field states, absent_when for a field that may be None, the rejected shapes and why, fan_out, the id of the reviewer's verdict) and the field names and types it was judged at. A defrecord whose fields or bases differ from its evidence, an evidence entry with a missing answer, an entry that names no defrecord, and a new or reshaped defrecord without evidence are red. An existing defrecord whose fingerprint is in the :existing ledger and has not changed is not red",
+            ProjectRule::TypeSubstitute => "A fact is carried by a type with named, typed fields, not by a value that stands in for one. In the .hy files of architecture.hy's :design-evidence, a mapping whose keys are written in the source ({:a … :b …}, {\"a\" …}, (dict :a …), a dfor with a literal key), a mapping keyed by a title, a name or a text, a function (any — nested, private, a method) answering a tuple literal of 2 or more items, and a defrecord :check that bounds a sequence field to 0 or 1 items are counted per file and kind. Above the count of the :existing-substitutes ledger, every value of that kind in the file is red. A mapping from an id to data (dfor r rows r.id r) is not counted",
+            ProjectRule::LedgerGrew => "The ledgers that let existing code pass (:existing of DOEFF212, :existing-substitutes of DOEFF213) only shrink. Against the base (the merge-base of HEAD and :guard :base, read with git), a ledger line that is added or rewritten, a count that is raised, a change of the :design-evidence declaration, and an approval added without a request id of the declared spelling or without a why are red, unless the approvals file at the base (not the one on this branch) covers the same line",
             ProjectRule::ServiceUntestedOnSim => "A business service is put on the fake environment with its production assembly (entry layer) as is, and is verified by running with only handler swaps — if not a single deftest under the fake environment (:verification-environment) reaches a definition in that service's entry layer, it is red as an unverified service",
             ProjectRule::ServiceInvariantsMissing => "A defservice in architecture.hy (including services without an entry layer) declares :invariants (a list of business-invariant functions `module:function`) in architecture.hy's defservice — the named function exists and its :tags :role is judgment (a pure judgment that takes records and returns a list of violations). A service with no declaration, a nonexistent function, or a function that is not a judgment is red",
             ProjectRule::ServiceSystemMissing => "A defservice in architecture.hy (including services without an entry layer) declares :system (the system placed in the cluster, `module:defsystem name`; a list if there are several systems) in architecture.hy's defservice — the named module is in that service's entry layer, the name is defined by defsystem, and the argument is exactly one typed base (if the defsystem's argument has a type annotation `[#^ T foundation]`, that; otherwise the type of the job function's argument that receives the base is written, and it is not a plain Callable, mapping, or tuple). If a defsystem exists, it is automatically included in the generic fake-cluster tests. If that service's code runs inside another service's system, write {:part-of \"module:defsystem name\"} (the system pointed to is in some service's entry layer); for a service left on the old path and a component service with no process (no main or deploy, only read by other services), write {:exempt \"reason\"} with a reason (the reason's content is not judged; an empty reason is red)",
@@ -1392,6 +1437,9 @@ impl ProjectRule {
             ProjectRule::HandlerArgumentHoldsState => "Remove the argument, and move connection targets and settings to Ask, the client to (session val …), and state to (session var …) — for arguments that remain, such as lining up the same handler with different settings, write a reason comment in the body",
             ProjectRule::UntypedStructuredValue => "Define, return, and hold a frozen record with field names and types (defrecord, defwire, dataclass) — check :post with [(: % <record type>)]. Write the content types: an index looked up by key is dict[str, Row], and a sequence of the same type is tuple[X, ...]. If it is a boundary where an external system decides the value's shape, list it in the registry with the reason",
             ProjectRule::RecordStubNotKwOnly => "Make the decoration in the type declaration @dataclass(frozen=True, kw_only=True)",
+            ProjectRule::DesignEvidence => "Write the evidence of the type in the sibling <stem>.evidence.toml ([[element]] with name, kind = \"record\", concern, key, fan_out, review, one [[element.field]] per field with name, type, fact (and absent_when for a field that may be None), and at least one [[element.rejected]] with shape and why), ask a reviewer to judge it against the listed principles (normalization, composition over inheritance, single responsibility, coupling), and write the verdict's id in review. When the shape changes, update the fields and get the verdict again",
+            ProjectRule::TypeSubstitute => "Write a defrecord with the fields the mapping or tuple carried (and its design evidence — DOEFF212), and build it where the mapping was built; read an outside shape into a type where it is read. Keep a mapping only from an id to data. Write an optional field as (| T None) with absent_when, not as a sequence bounded to one item. Do not raise the ledger count",
+            ProjectRule::LedgerGrew => "Remove the added ledger line and write the design evidence of the type (DOEFF212) or a type in place of the value (DOEFF213). If the line must stay, ask the user with a request, land an approval entry (ledger, key, value, review = the request id, why) alone first, and then this change",
             ProjectRule::BusinessEffectFake => "Rewrite the business operation as a defk that emits effects of a lower layer and remove the fake — for an effect of the outside world, add it to the outside-world table with a reason; for a deliberately broken counterexample, list it in the counterexample table",
             ProjectRule::StaleCounterexampleRow => "Remove the row of the counterexample table that no longer matches (for a dir with one key per file, that file)",
             ProjectRule::AssemblyShapeBroken => "Move the set file's assembly to a function in the assembly layer and delete the file; write the function as a defk whose body is only [base-list translation-list …]; list another service's translations as a separate list in the assembly layer",
@@ -1527,6 +1575,9 @@ mod tests {
         ("DOEFF160", RuleFamily::Definition),
         ("DOEFF144", RuleFamily::Definition),
         ("DOEFF145", RuleFamily::Definition),
+        ("DOEFF212", RuleFamily::Definition),
+        ("DOEFF213", RuleFamily::Definition),
+        ("DOEFF214", RuleFamily::Definition),
         ("DOEFF150", RuleFamily::Naming),
         ("DOEFF151", RuleFamily::Naming),
         ("DOEFF142", RuleFamily::Definition),

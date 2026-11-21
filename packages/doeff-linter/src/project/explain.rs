@@ -204,6 +204,8 @@ pub enum Explain {
     UntypedStructuredValue { what: String, name: String, problem: String },
     /// DOEFF145: an @dataclass in .pyi without kw_only=True (the class name, how the .hy side is written).
     RecordStubNotKwOnly { class: String, form: String },
+    /// DOEFF212: a defrecord whose shape and design evidence disagree (the type name, the reason text).
+    DesignEvidence { subject: String, reason: String },
     ServiceUntestedOnSim { service: String, entry: String, definitions: usize, sim: String },
     /// DOEFF163: a gap in the invariant declarations of a service that has code (service name, text of the gap).
     ServiceInvariantsMissing { service: String, gap: String },
@@ -674,6 +676,7 @@ impl<'a> Narrator<'a> {
             Explain::PollingOnTimer { subject, reason } => (subject.clone(), reason.clone()),
             Explain::ProgramSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
             Explain::TestSleepsOnWallClock { subject, reason } => (subject.clone(), reason.clone()),
+            Explain::DesignEvidence { subject, reason } => (subject.clone(), reason.clone()),
             Explain::RegistryEntryStale { key, source, rules } => (
                 format!("key {} of registry {}", key, source),
                 format!("This run applied rules {} to the whole repo, but no finding matches this key. If a row is forgotten after the listed violation is fixed, then even when the violation returns at the same place the registry silently lowers it to a warning (a registry that is supposed to only shrink stays loose).", rules.join(", "))

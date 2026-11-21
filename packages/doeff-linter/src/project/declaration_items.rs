@@ -71,6 +71,7 @@ pub enum Decl {
     HandlerArguments,
     TypedValues,
     RecordStubs,
+    DesignEvidence,
     BusinessFakes,
     AssemblyShape,
     /// Config `[tool.doeff-linter.environment_names]`.
@@ -297,6 +298,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
         handler_arguments,
         typed_values,
         record_stubs,
+        design_evidence,
         business_fakes,
         assembly_shape,
         role_descriptions,
@@ -320,7 +322,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
     for service in services {
         service_slots(service, out);
     }
-    let fields: [(&str, Decl, String); 31] = [
+    let fields: [(&str, Decl, String); 32] = [
         ("roles", Decl::LayerRoles, shape(role_descriptions)),
         ("outside-writers", Decl::OutsideWriters, shape(outside_writers)),
         ("open-layers", Decl::OpenLayers, shape(open_layers)),
@@ -348,6 +350,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
         ("handler-arguments", Decl::HandlerArguments, shape(handler_arguments)),
         ("typed-values", Decl::TypedValues, shape(typed_values)),
         ("record-stubs", Decl::RecordStubs, shape(record_stubs)),
+        ("design-evidence", Decl::DesignEvidence, shape(design_evidence)),
         ("business-fakes", Decl::BusinessFakes, shape(business_fakes)),
         ("assembly-shape", Decl::AssemblyShape, shape(assembly_shape)),
         // The layers' order is part of membership (architecture.population); a layer's own fields are in layer_slots.
@@ -569,6 +572,7 @@ mod tests {
             Decl::HandlerArguments,
             Decl::TypedValues,
             Decl::RecordStubs,
+            Decl::DesignEvidence,
             Decl::BusinessFakes,
             Decl::AssemblyShape,
             Decl::EnvironmentNames,

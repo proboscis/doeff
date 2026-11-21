@@ -1,0 +1,297 @@
+{
+  "artifacts": [
+    {
+      "path": "artifacts/v1/evidence.md",
+      "sha256": "53ee64239855bbab66f3e8bf693cf63569c3e5e26b40f6f942bfc964504bf8cc"
+    }
+  ],
+  "body": {
+    "claims": [
+      {
+        "evidence": [
+          "artifacts/v1/evidence.md"
+        ],
+        "expected": "red for new/reshaped, green for unchanged existing",
+        "id": "C1",
+        "mode": "execution",
+        "observed": "as expected; trial: 0 findings unchanged, 1 critical after adding a field to DoneMaterial",
+        "procedure": "cargo test (unit + tests/design_evidence.rs) and the trial on 8,791 .hy files",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "new and reshaped types without evidence are findings; existing unchanged types are not"
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence.md"
+        ],
+        "expected": "one finding per differing shape and per entry with gaps",
+        "id": "C2",
+        "mode": "execution",
+        "observed": "as expected",
+        "procedure": "cargo test",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "a shape that differs from its evidence and missing answers are findings"
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence.md"
+        ],
+        "expected": "under 3 s for the rule's own stages",
+        "id": "C3",
+        "mode": "execution",
+        "observed": "ledger 0.184 s + judge 0.002 s; warm total 0.22-0.57 s",
+        "procedure": "DOEFF_LINTER_TIMING=1 one-file runs on the trial tree",
+        "result": "supported",
+        "scenario_ids": [],
+        "statement": "a one-file judgment of DOEFF212 fits the 3-second hook budget"
+      },
+      {
+        "evidence": [],
+        "expected": "verdict found",
+        "id": "C4",
+        "mode": "unrun",
+        "observed": "not observed (round 1 checks spelling only)",
+        "procedure": "not run",
+        "result": "unknown",
+        "scenario_ids": [],
+        "statement": "the verdict named by review exists"
+      }
+    ],
+    "findings": [
+      {
+        "category": "evidence_gap",
+        "claim_ids": [
+          "C4"
+        ],
+        "evidence": [],
+        "id": "F1",
+        "owner": "next round",
+        "remedy": "design section 6 option A",
+        "severity": "nonblocking",
+        "statement": "verdict existence is not checked in round 1",
+        "status": "open"
+      },
+      {
+        "category": "design_change",
+        "claim_ids": [
+          "C1"
+        ],
+        "evidence": [],
+        "id": "F2",
+        "owner": "next round",
+        "remedy": "commit hook: staged ledger subset of HEAD ledger",
+        "severity": "nonblocking",
+        "statement": "a ledger line can be added to let a type pass without evidence",
+        "status": "open"
+      }
+    ],
+    "focus": "design",
+    "methods": [
+      {
+        "evidence": [],
+        "name": "ddd",
+        "profile": "ddd-evans-2015-local-v1",
+        "reason": "a technical component (a lint rule); no business domain model drives the decision. Terms are fixed in design.md section 1.",
+        "status": "not_applicable",
+        "steps": []
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "change-cases",
+        "profile": "change-cases-1996-local-v1",
+        "reason": "the model must survive Rust types and other element kinds",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "candidates: Rust struct/enum readers (next round), functions/interfaces/modules as elements, checking verdict existence",
+            "step": "1"
+          },
+          {
+            "result": "after the change, an author of a Rust type writes the same evidence file; the comparison and messages stay the same",
+            "step": "2"
+          },
+          {
+            "result": "required: Hy defrecord (round 1); prepare: Rust reader, other kinds; out of scope: writing evidence for downstream projects",
+            "step": "3"
+          },
+          {
+            "result": "preserved: the evidence model and file form, RecordShape, the finding keys; changing: the language reader only",
+            "step": "4"
+          },
+          {
+            "result": "verification: the comparison takes RecordShape only (unit tests construct shapes from source); a Rust reader returning RecordShape needs no change in judge()",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md",
+          "artifacts/v1/evidence.md"
+        ],
+        "name": "volatility",
+        "profile": "volatility-righting-software-local-v1",
+        "reason": "language readers, the comparison, and the question list change independently",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "volatile: the source language (Hy now, Rust next), the list of required questions, where verdicts are stored",
+            "step": "1"
+          },
+          {
+            "result": "stable together: the evidence model and the fingerprint spelling",
+            "step": "2"
+          },
+          {
+            "result": "record_shapes() hides the Hy reader; answer_gaps() hides the question list; the review store is outside the linter",
+            "step": "3"
+          },
+          {
+            "result": "public contract: RecordShape in, Hit list out (judge())",
+            "step": "4"
+          },
+          {
+            "result": "candidate splits compared against the change cases: one reader per language, one comparison",
+            "step": "5"
+          },
+          {
+            "result": "the claim is checked by tests that build shapes from source and judge them; no counterexample found",
+            "step": "6"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md",
+          "artifacts/v1/evidence.md"
+        ],
+        "name": "add",
+        "profile": "add-2.0-local-v1",
+        "reason": "the authoring-time speed requirement decides what the rule may read",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "requirements known: maintainer's decision; speed budget of the one-file hook (3 s)",
+            "step": "1"
+          },
+          {
+            "result": "element decomposed: doeff-linter's project rule DOEFF212",
+            "step": "2"
+          },
+          {
+            "result": "driving requirements: one-file judgment speed; existing types must not be red; language-neutral evidence",
+            "step": "3"
+          },
+          {
+            "result": "options compared: git base comparison vs. a ledger of existing shapes; s-expression vs. TOML; shape string vs. field rows",
+            "step": "4"
+          },
+          {
+            "result": "elements: reader, evidence parser, ledger, comparison, drafts in mod.rs, declaration in architecture.rs",
+            "step": "5"
+          },
+          {
+            "result": "interfaces: judge(rel, hy, evidence, ledger, pattern) -> Hit list; Judging::load per run",
+            "step": "6"
+          },
+          {
+            "result": "the requirements are allocated: speed (3 files read), existing types (ledger), neutrality (TOML + RecordShape)",
+            "step": "7"
+          },
+          {
+            "result": "next elements (Rust reader, other kinds) are left to the next round with the same interfaces",
+            "step": "8"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "artifacts/v1/evidence.md"
+        ],
+        "name": "saam",
+        "profile": "saam-1996-local-v1",
+        "reason": "the change cases are evaluated against the implemented structure",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "structure: reader, questions, ledger, comparison (design figure 2)",
+            "step": "1"
+          },
+          {
+            "result": "scenarios: CC1 Rust reader, CC2 new element kinds, CC3 verdict existence",
+            "step": "2"
+          },
+          {
+            "result": "CC1 needs a new reader only; CC2 a new reader and question list; CC3 needs nothing in the linter",
+            "step": "3"
+          },
+          {
+            "result": "no two scenarios change the same element except the reader (CC1, CC2), which is one function per language/kind",
+            "step": "4"
+          },
+          {
+            "result": "the structure accommodates the prepared changes; the ledger-addition gap is recorded",
+            "step": "5"
+          }
+        ]
+      },
+      {
+        "evidence": [
+          "artifacts/v1/design.md"
+        ],
+        "name": "c4",
+        "profile": "c4-web-2026-09-14-local-v1",
+        "reason": "the structure is explained with two figures",
+        "status": "performed",
+        "steps": [
+          {
+            "result": "reader: a contributor turning the rule on; level: the component inside doeff-linter",
+            "step": "1"
+          },
+          {
+            "result": "the author, the evidence file, the reviewer, the ledger, and DOEFF212 at one level",
+            "step": "2"
+          },
+          {
+            "result": "arrows show reads (evidence, ledger) and the finding",
+            "step": "3"
+          },
+          {
+            "result": "titles and the now/target split are named",
+            "step": "4"
+          },
+          {
+            "result": "figure 2 shows the judgment flow and each finding kind",
+            "step": "5"
+          },
+          {
+            "result": "Mermaid source kept in design.md",
+            "step": "6"
+          }
+        ]
+      }
+    ],
+    "subject": "design-evidence-v1",
+    "verdict": "incomplete"
+  },
+  "created_at": "2026-11-17T00:49:20.680686+00:00",
+  "id": "design-evidence-v1-validation",
+  "inputs": [
+    {
+      "id": "design-evidence-v1",
+      "role": "subject",
+      "sha256": "93da24a49eb0f0b825ca3157cc3b08d44d7c811459dd7b3f144703086ade9823"
+    },
+    {
+      "id": "snapshot-c86f12853c7f",
+      "role": "evidence",
+      "sha256": "640985c997df446f2bb247c46c43ec92cc0ede4c329426b34a7478646a7bda2d"
+    }
+  ],
+  "kind": "assessment",
+  "schema_version": 1,
+  "scope": "Design evidence (answers to the required design questions per code element): the model, where and how it is written, and doeff-linter's comparison with the shape of Hy defrecords (round 1)"
+}
