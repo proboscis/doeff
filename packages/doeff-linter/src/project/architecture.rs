@@ -112,6 +112,8 @@ pub struct ArchService {
     /// The declaration of the system placed in the cluster (`:system "module:name of defsystem"`; a list if there are several systems; the reason for not placing one is `{:exempt "reason"}` — omitted = None).
     /// DOEFF173 requires a service that has code to have the declaration, the existence of a defsystem in the entry layer, and exactly one base with typed arguments.
     pub system: Option<SystemDecl>,
+    /// The Rust Pod declaration of the service (`:pod "module:NAME"` — the `ServicePod` value a generator reads; omitted = None). Only the spelling is read here; resolving it is the generator's job.
+    pub pod: Option<DefinitionRef>,
     /// The position of the defservice in architecture.hy (the position of the DOEFF117 notice).
     #[serde(skip)]
     pub range: doeff_indexer::hy_index::Range,
@@ -3346,6 +3348,7 @@ impl<'a> Parser<'a> {
             clause_exemptions: Vec::new(),
             entry_modules: None,
             system: None,
+            pod: None,
             range,
             file: self.path.to_path_buf(),
         };
@@ -3366,6 +3369,7 @@ impl<'a> Parser<'a> {
                             ":clauses" => service.clauses = Some(self.clause_names(value)),
                             ":entry-modules" => service.entry_modules = Some(self.entry_modules(value)),
                             ":system" => service.system = self.system_decl(value),
+                            ":pod" => service.pod = self.definition_ref(value, ":pod"),
                             ":clause-exemptions" => {
                                 service.clause_exemptions = self.clause_exemptions(value);
                                 exemptions_form = Some(value);
@@ -3621,6 +3625,22 @@ mod tests {
         assert!(problems.contains("not containing `::`"), "a name containing the separator was let through:\n{}", problems);
         assert!(problems.contains("the reason of C1 in :clause-exemptions must be a non-empty string"), "an empty reason was let through:\n{}", problems);
         assert!(problems.contains("C9 in :clause-exemptions is a clause not in :clauses"), "a clause not in the declaration was exempted:\n{}", problems);
+    }
+
+    #[test]
+    fn pod_of_a_service_is_read_as_a_definition_ref() {
+        // :pod is a "module:NAME" ref like :system; it is not an unknown key, and a non-string or malformed value is a reading error.
+        let declared = GOOD.replace("{:depends-on [custody] :layers [core intent]}", "{:depends-on [custody] :layers [core intent] :pod \"billing.pod:POD\"}");
+        let arch = Architecture::parse(&declared, Path::new("architecture.hy")).unwrap();
+        let billing = arch.services.iter().find(|s| s.name == "billing").unwrap();
+        assert_eq!(billing.pod, DefinitionRef::parse("billing.pod:POD"));
+        assert!(arch.notices.is_empty(), "reported as an unknown key: {:?}", arch.notices);
+
+        for bad_value in ["1", "\"no-colon\""] {
+            let bad = GOOD.replace("{:depends-on [custody] :layers [core intent]}", &format!("{{:depends-on [custody] :layers [core intent] :pod {}}}", bad_value));
+            let problems = Architecture::parse(&bad, Path::new("architecture.hy")).unwrap_err().join("\n");
+            assert!(problems.contains(":pod"), "a bad :pod ({}) was let through:\n{}", bad_value, problems);
+        }
     }
 
     #[test]
