@@ -408,6 +408,7 @@ fn service_slots(service: &ArchService, out: &mut Slots) {
         clause_exemptions,
         entry_modules,
         system,
+        pod: _, // read by a generator, no rule judges it
         range: _,
         file: _,
     } = service;
