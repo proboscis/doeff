@@ -103,11 +103,11 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
-What algebraic effects are and how you write them with doeff, in a narrated video (2:28): a
+What algebraic effects are and how you write them with doeff, in a narrated video (3:14): a
 function yields effects, handlers stacked outside it answer them with the rest of the function as
 `k`, and the same function runs under many stacks.
 
-[![Video (2:28): what algebraic effects are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/iIVO9eOcmZc/maxresdefault.jpg)](https://youtu.be/iIVO9eOcmZc)
+[![Video (3:14): what algebraic effects are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/0PKybv3mY6I/maxresdefault.jpg)](https://youtu.be/0PKybv3mY6I)
 
 [The video as an mp4 file (3:14)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
 
