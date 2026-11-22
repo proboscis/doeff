@@ -17,7 +17,7 @@
 (import doeff [run])
 (import doeff_core_effects [scheduled])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster [Request NextRequests Reply CoordinatorStopRequested])
 (import doeff_cluster [CompactRecords PruneRecords])
 (import doeff_cluster._record_store.core.program [store-loop MAINTENANCE-MS])

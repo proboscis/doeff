@@ -8,7 +8,7 @@
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [Drain HandoffPhase HandoffWatch ProgramRow WarmEntry])
-(import doeff_cluster [sweep-due]
+(import doeff_cluster._coordinator.core.cluster_policy [sweep-due]
         doeff_cluster._coordinator.core.cluster_policy [sweep-warms warms-for])
 (import doeff_cluster._coordinator.core.handoff_policy [handoff-deadline watch-handoffs])
 (import doeff_cluster._coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])

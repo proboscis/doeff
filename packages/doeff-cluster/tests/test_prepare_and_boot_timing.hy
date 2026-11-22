@@ -23,7 +23,7 @@
 (import doeff_core_effects [MemoryFile MemoryFiles])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [SimClock sim-time-handler GetMonotonic])
-(import doeff_cluster [datetime-of-epoch-ms now-epoch-ms])
+(import doeff_cluster [now-epoch-ms] doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster [env-key])
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [ENV-MARKER])

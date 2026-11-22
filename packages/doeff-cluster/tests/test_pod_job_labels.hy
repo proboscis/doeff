@@ -20,7 +20,7 @@
 (import doeff_core_effects [HttpFailed HttpFailureKind HttpRequest HttpResponse])
 (import doeff_core_effects [memory-file-handler])
 (import doeff_time [GetTimeEffect])
-(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [KUBE-API SERVICE-ACCOUNT-DIR SERVICE-ACCOUNT-TOKEN-FILE])
 (import doeff_cluster [ReadDesired]
