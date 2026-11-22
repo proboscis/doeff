@@ -7,7 +7,7 @@ The article stays as the version that passed review (the body is not rewritten t
 
 - A fence starts with `~~~<language>` (``` fences are mermaid diagrams).
 - If the first line of a python fence is `# <name>.py`, it is the whole of that file in examples/effects_tour. If it is `# <name>.py (excerpt)`, the chunks separated by blank lines
-  appear in that file as-is and in that order. The only files the article quotes are spend.py, spire.py, and test_spire.py.
+  appear in that file as-is and in that order. The only files the article quotes are spend.py, spire.py, test_spire.py, and clocks.py.
   test_spire.py is also checked to pass under pytest in a dir laid out alongside spire.py.
 - A python fence with no first line is an execution line: the line is a statement of spire.py's tour() or play() (also accepted with the leading `"  ->"` of the output removed), or
   a line that forgot one handler.
@@ -55,7 +55,7 @@ FORGOT = (
     "run(silent(dice(7)(scripted(moves)(battle()))))\n"
 )
 # Example files the article may quote in fences (all from examples/effects_tour).
-QUOTED_FILES = {"spend.py", "spire.py", "test_spire.py"}
+QUOTED_FILES = {"spend.py", "spire.py", "test_spire.py", "clocks.py"}
 # Files of the example dir to lay out when running the article's test_spire.py.
 SPIRE_FILES = ("spire.py", "pytest.ini")
 
@@ -220,6 +220,7 @@ def test_text_fences_are_what_the_examples_print(deadline_scale_factor: float) -
     forgot = _child([sys.executable, "-c", FORGOT], TOUR, deadline_scale_factor).stderr
     printed = {
         "spend.py": _printed("spend.py", deadline_scale_factor),
+        "clocks.py": _printed("clocks.py", deadline_scale_factor),
         # When forgotten, the article shows only the head that doeff prints before Python's traceback
         "forgot": forgot.strip("\n").split("\nTraceback (most recent call last):")[0].strip("\n"),
         **_segments(_printed("spire.py", deadline_scale_factor, SPIRE_DEADLINE_SECONDS)),
@@ -233,9 +234,9 @@ def test_text_fences_are_what_the_examples_print(deadline_scale_factor: float) -
 
 
 def test_every_output_the_article_quotes_is_shown() -> None:
-    # The 6 segments of spire.py's output (Layer 1-6), plus spend.py and the traceback when forgotten. If a fence disappears, the tests above silently decrease.
+    # The 6 segments of spire.py's output (Layer 1-6), plus spend.py, clocks.py and the traceback when forgotten. If a fence disappears, the tests above silently decrease.
     texts = [body for language, body, _ in _fences() if language == "text"]
-    assert len(texts) == 8
+    assert len(texts) == 9
 
 
 def _front() -> str:

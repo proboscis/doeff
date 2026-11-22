@@ -579,6 +579,98 @@ The other effects that doeff's packages define work the same way, and you can in
 | Observation | `value, log = yield Listen(battle())` | `listen_handler` collects the `Tell` lines of the program |
 | I/O | an effect of your own, like `Show` | a handler of your own, like `printed`, or a reference one: files, SQL and processes with `doeff[hy]`, HTTP with `doeff[http]` |
 
+## Time is a handler too: turns and seconds
+
+A game has more than one kind of time. A poison lasts five turns. A damage number rises on the screen for 0.4 seconds. Neither of them is the wall clock, and each is easiest to write as a loop that waits:
+
+~~~python
+# clocks.py (excerpt)
+@do
+def poison(n: int, turns: int):  # a card effect: n damage at the end of each of the next turns
+    for _ in range(turns):
+        yield TurnEnds()
+        yield Hurt(n)
+
+
+@do
+def rising(text: str):  # an animation: the number rises for four frames, 0.1 s apart
+    for height in range(4):
+        yield Draw(text, height)
+        yield Delay(0.1)
+~~~
+
+`TurnEnds` is an effect of the game, and its handler is the game's own turn clock. The handler keeps the `k` of each card effect that waits, and resumes them all when the fight says that the turn has ended:
+
+~~~python
+# clocks.py (excerpt)
+def turns():
+    waiting, dealt = (), 0
+
+    @handler
+    def lasting(effect: TurnEnds | Hurt, k):  # around each card effect
+        nonlocal waiting, dealt
+        if isinstance(effect, Hurt):
+            dealt += effect.n
+            return (yield Resume(k, None))
+        waiting = (*waiting, k)  # it waits for the end of the turn: keep its k, and go back to the fight
+
+    @handler
+    @do(non_tail=True)  # it goes on after each card effect it resumes
+    def turn_clock(effect: Lasting | TurnEnds, k):
+        nonlocal waiting, dealt
+        if isinstance(effect, Lasting):
+            yield lasting(effect.program)  # the card effect runs up to its first wait
+            return (yield Resume(k, None))
+        ready, waiting, dealt = waiting, (), 0
+        for card_effect in ready:  # the turn ends: each card effect runs up to its next wait
+            yield Resume(card_effect, None)
+        return (yield Resume(k, dealt))
+
+    return turn_clock
+~~~
+
+`Delay` comes from the package doeff-time. Its `sim_time_handler` is a virtual clock: each animation is a task, and the clock moves on to the next wake-up when every task waits. The two clocks are stacked around one fight:
+
+~~~python
+# clocks.py (excerpt)
+    fight = turns()(battle())
+    return run(scheduled(sim_time_handler(start_time=START)(printed(player(plays, seconds)(fight)))))
+~~~
+
+The player takes 0.25 s to pick a card. The poison of turn 1 hurts at the end of every turn, and its number is still rising when the Strike of turn 2 lands:
+
+~~~text
+0.25s  turn 1: Poison, enemy 30
+0.25s                          -3
+0.35s                          -3^
+0.45s                          -3^^
+0.50s                          -6
+0.50s  turn 2: Strike, enemy 21
+0.50s                          -3
+0.55s                          -3^^^
+0.60s                          -6^
+0.60s                          -3^
+0.70s                          -6^^
+0.70s                          -3^^
+0.75s                          -6
+0.75s  turn 3: Strike, enemy 12
+0.75s                          -3
+0.80s                          -6^^^
+0.80s                          -3^^^
+0.85s                          -6^
+0.85s                          -3^
+0.95s                          -6^^
+0.95s                          -3^^
+1.00s                          -6
+1.00s  turn 4: Strike, enemy 3
+1.00s                          -3
+the enemy is down on turn 4
+~~~
+
+The whole fight prints at once, and the same on every run, because no handler waits for real time. `poison` and `rising` do not know which clock they are on, and neither holds a lock or an event.
+
+With asyncio, the seconds are the event loop's, and a turn has to be an object of its own. `clocks_asyncio.py` in the examples is the same game written that way: an `asyncio.Condition` is handed to every card effect, two `asyncio.sleep(0)` keep the order of the tasks, and each run takes one real second. A handler for another kind of time is written the way `turns()` is: one that waits for a click in a UI, or for a fill in a trading strategy.
+
 ## Tests are one of the stacks
 
 Layer 1 is already a test: with a scripted player and seeded dice, the fight is the same on every run. Many Python test suites have a `mock.patch` that finds its target by a string, so moving an import can make it miss, and the test can still pass while the real thing runs. With effects, a test installs handlers instead, and nothing is patched.
@@ -622,8 +714,8 @@ run(silent(dice(7)(scripted(moves)(battle()))))
 ~~~text
 doeff Traceback (most recent call last):
 
-  battle()  spire.py:104
-    yield Played(card, dmg)
+  battle()  spire.py:110
+    yield Played(card, dealt.damage)
     handlers:
       scripted ↗
       dice ↗
