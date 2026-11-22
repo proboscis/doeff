@@ -23,9 +23,9 @@
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState ClusterNaming BoardRow])
 (import doeff_cluster [DueNow DueNever])
-(import doeff_cluster [liveness-due task-due sweep-due])
-(import doeff_cluster [tick-due])
-(import doeff_cluster [next-wake])
+(import doeff_cluster._coordinator.core.cluster_policy [liveness-due task-due sweep-due])
+(import doeff_cluster._coordinator.core.api_policy [tick-due])
+(import doeff_cluster._coordinator.core.wake_policy [next-wake])
 
 
 ;; ratchet ledger — the number of places in the due-function files that write the numeric (+ now 1) as a due (2026-10-07, measured after unit 1a).

@@ -20,7 +20,7 @@
 (import doeff_cluster [DueNow DueNever]
         doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [ClusterState WorkerInfo])
-(import doeff_cluster [liveness-due]
+(import doeff_cluster._coordinator.core.cluster_policy [liveness-due]
         doeff_cluster._coordinator.core.cluster_policy [forget-silent-workers note-liveness])
 (import doeff_cluster._sim.local [SimPlan SIM-TIMING-RATIO sim-plan])
 (import tests.fixtures.envs [sim-foundation])
