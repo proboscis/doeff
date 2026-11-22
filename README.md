@@ -109,7 +109,7 @@ function yields effects, handlers stacked outside it answer them with the rest o
 
 [![Video (2:28): what algebraic effects are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/iIVO9eOcmZc/maxresdefault.jpg)](https://youtu.be/iIVO9eOcmZc)
 
-[The video as an mp4 file (2:28)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
+[The video as an mp4 file (3:14)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
 
 The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.

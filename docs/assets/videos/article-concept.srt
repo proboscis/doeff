@@ -1,83 +1,103 @@
 1
-00:00:00,250 --> 00:00:04,650
+00:00:00,250 --> 00:00:04,700
 doeff is a Python library for algebraic effects.
 
 2
-00:00:05,800 --> 00:00:11,400
+00:00:06,150 --> 00:00:11,800
 This video shows what algebraic effects are, and then how you write them with doeff.
 
 3
-00:00:13,250 --> 00:00:19,500
+00:00:13,650 --> 00:00:21,050
 A program often needs things from outside itself: a price, a yes or no from a person, the time.
 
 4
-00:00:20,650 --> 00:00:26,350
-With algebraic effects, the program only says what it needs. That request is an effect.
+00:00:22,200 --> 00:00:29,400
+Our example is tiny: a program that buys tea. It needs two things from outside: a price, and a yes.
 
 5
-00:00:27,500 --> 00:00:31,900
-How to get it is decided outside the program, by a handler.
+00:00:30,550 --> 00:00:37,200
+With algebraic effects, the program only says what it needs. That request is an effect.
 
 6
-00:00:33,050 --> 00:00:36,950
-The handler answers, and the program goes on from where it asked.
+00:00:38,350 --> 00:00:42,550
+How to get it is decided outside the program, by a handler.
 
 7
-00:00:38,800 --> 00:00:45,800
-You know half of this already: an exception. It is raised inside, and caught by a handler outside.
+00:00:43,950 --> 00:00:48,300
+The handler answers, and the program goes on from where it asked.
 
 8
-00:00:46,950 --> 00:00:50,700
-But after the catch, the program never goes back to where it raised.
+00:00:50,150 --> 00:00:56,900
+You know half of this already: an exception. It is raised inside, and caught by a handler outside.
 
 9
-00:00:51,850 --> 00:00:57,550
-An effect handler sends an answer back, and the program picks up where it left off.
+00:00:58,050 --> 00:01:02,550
+But after the catch, the program never goes back to where it raised.
 
 10
-00:01:00,250 --> 00:01:04,950
-So the program says what it needs, and the handlers decide how.
+00:01:03,700 --> 00:01:09,450
+An effect handler sends an answer back, and the program picks up where it left off.
 
 11
-00:01:06,800 --> 00:01:12,700
-Now the same idea in doeff. The program is a Python function marked with @do.
+00:01:12,300 --> 00:01:16,700
+So the program says what it needs, and the handlers decide how.
 
 12
-00:01:13,850 --> 00:01:19,800
-Where it needs something, it yields an effect. First Price: what does the item cost?
+00:01:18,550 --> 00:01:26,050
+Now the same idea in doeff. The tea program is a Python function, order, marked with @do.
 
 13
-00:01:20,950 --> 00:01:25,500
-Then Confirm: may I pay that much? Then it returns. It never says who answers.
+00:01:27,200 --> 00:01:32,600
+Where it needs something, it yields an effect. First Price: what does the item cost?
 
 14
-00:01:27,650 --> 00:01:34,600
-Handlers sit outside the function. prices answers Price with 3, and order goes on.
+00:01:33,750 --> 00:01:39,700
+Then Confirm: may I pay that much? Then it returns. It never says who answers.
 
 15
-00:01:35,750 --> 00:01:41,750
-With Confirm, the handler also gets k: the rest of order, paused at the yield.
+00:01:41,550 --> 00:01:48,150
+Handlers sit outside the function. prices answers Price with 3, and order goes on.
 
 16
-00:01:42,900 --> 00:01:47,650
-It resumes k with True, and order returns bought, 3.
+00:01:49,300 --> 00:01:54,850
+With Confirm, the handler also gets k: the rest of order, paused at the yield.
 
 17
-00:01:48,800 --> 00:01:56,300
-It could also keep k for later, or never resume it. Either way, k is resumed at most once.
+00:01:56,000 --> 00:02:01,550
+It resumes k with True, and order returns bought, 3.
 
 18
-00:01:58,150 --> 00:02:05,150
-Handlers stack around the function. Swap the stack, and the same function runs another way.
+00:02:02,700 --> 00:02:10,200
+It could also keep k for later, or never resume it. Either way, k is resumed at most once.
 
 19
-00:02:06,300 --> 00:02:12,100
-Tests, replay, a bot, many at once, production. order does not change a line.
+00:02:12,050 --> 00:02:17,800
+Handlers stack around the function. Swap the stack, and the same function runs another way.
 
 20
-00:02:14,200 --> 00:02:21,400
-To start, pip install doeff. Then you need three things: @do, yield, and a handler.
+00:02:18,950 --> 00:02:25,650
+Tests, replay, a bot, many at once, production. order does not change a line.
 
 21
-00:02:22,550 --> 00:02:26,750
-This article runs one card fight function under six stacks.
+00:02:27,950 --> 00:02:34,700
+To start, pip install doeff. Then you need three things: @do, yield, and a handler.
+
+22
+00:02:36,550 --> 00:02:42,500
+The article needs a bigger program, so it uses battle: one small card fight.
+
+23
+00:02:43,650 --> 00:02:48,550
+Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP.
+
+24
+00:02:50,250 --> 00:02:57,550
+It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count.
+
+25
+00:02:59,350 --> 00:03:05,400
+And each of those can be answered in many ways: by a script, a bot, a tape, or a person.
+
+26
+00:03:06,550 --> 00:03:12,300
+The article runs battle under six stacks, and does not change a line of it.

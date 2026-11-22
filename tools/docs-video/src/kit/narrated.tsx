@@ -5,7 +5,7 @@
 // 0.4 s so the cut to the next one is soft. While a line is heard its text is shown at the bottom (subtitles.tsx); the
 // scenes are drawn a little smaller, against the top, so the subtitle band covers none of them.
 import React from 'react';
-import {AbsoluteFill, Audio, interpolate, Sequence, staticFile, useCurrentFrame} from 'remotion';
+import {AbsoluteFill, Audio, Easing, interpolate, Sequence, staticFile, useCurrentFrame} from 'remotion';
 import {clamp} from './motion';
 import {Cue, cuesOf, BAND_TOP, Subtitles} from './subtitles';
 import {BG, f, HEIGHT} from './theme';
@@ -47,10 +47,30 @@ const Faded: React.FC<{length: number; children: React.ReactNode}> = ({length, c
   return <AbsoluteFill style={{opacity: interpolate(frame, [length - f(0.4), length], [1, 0], clamp)}}>{children}</AbsoluteFill>;
 };
 
+// A scene the camera moves through: it comes up from a little further away over its first 0.5 s, and the camera goes
+// on into it as it fades out, so the cut to the next scene reads as one move.
+const Dollied: React.FC<{length: number; children: React.ReactNode}> = ({length, children}) => {
+  const frame = useCurrentFrame();
+  const arrive = interpolate(frame, [0, f(0.5)], [0, 1], {...clamp, easing: Easing.out(Easing.cubic)});
+  const leave = interpolate(frame, [length - f(0.4), length], [0, 1], {...clamp, easing: Easing.in(Easing.cubic)});
+  return (
+    <AbsoluteFill style={{opacity: Math.min(interpolate(frame, [0, f(0.3)], [0, 1], clamp), 1 - leave), transform: `scale(${0.94 + 0.06 * arrive + 0.08 * leave})`, transformOrigin: '50% 45%'}}>
+      {children}
+    </AbsoluteFill>
+  );
+};
+
+// How a page's video looks around its scenes: what is drawn behind them over the whole frame (it gets the video's
+// frame), and whether the camera moves through the cuts (Dollied) instead of the scenes only fading out.
+export type Look = {backdrop?: React.FC<{frame: number}>; dolly?: boolean};
+
+const Behind: React.FC<{Backdrop: React.FC<{frame: number}>}> = ({Backdrop}) => <Backdrop frame={useCurrentFrame()} />;
+
 // The video of a page: its id (the page, the id of its composition in Root.tsx), its length in frames, its subtitles,
-// and the component that plays the scenes in order with their narration from public/<page>/. Root.tsx hands the cues
+// and the component that plays the scenes in order with their narration from public/<page>/, in the page's look. Root.tsx hands the cues
 // to the component as its props, and render.mjs writes the same cues as the page's subtitle files.
-export const narrate = (page: string, said: Said, script: Script, scenes: Scene[]) => {
+export const narrate = (page: string, said: Said, script: Script, scenes: Scene[], look: Look = {}) => {
+  const Cut = look.dolly ? Dollied : Faded;
   const laid = scenes.map((scene) => {
     const slots = slotsOf(said, scene);
     return {scene, slots, length: Math.round(slots.reduce((sum, slot) => sum + slot.length, 0))};
@@ -70,12 +90,13 @@ export const narrate = (page: string, said: Said, script: Script, scenes: Scene[
   );
   const Video: React.FC<{cues: Cue[]}> = ({cues: shown}) => (
     <AbsoluteFill style={{backgroundColor: BG}}>
+      {look.backdrop && <Behind Backdrop={look.backdrop} />}
       <AbsoluteFill style={{transform: `scale(${STAGE})`, transformOrigin: 'top center'}}>
         {laid.map(({scene, slots, length: sceneLength}, i) => (
           <Sequence key={i} from={froms[i]} durationInFrames={sceneLength}>
-            <Faded length={sceneLength}>
+            <Cut length={sceneLength}>
               <WarpContext.Provider value={designOf(slots)}>{scene.wrap ? scene.wrap(slots, scene.node) : scene.node}</WarpContext.Provider>
-            </Faded>
+            </Cut>
           </Sequence>
         ))}
       </AbsoluteFill>

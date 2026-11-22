@@ -2,6 +2,7 @@
  {"id": "i1", "text": "doeff is a Python library for algebraic effects."},
  {"id": "i2", "text": "This video shows what algebraic effects are, and then how you write them with doeff."},
  {"id": "a1", "text": "A program often needs things from outside itself: a price, a yes or no from a person, the time."},
+ {"id": "t1", "text": "Our example is tiny: a program that buys tea. It needs two things from outside: a price, and a yes."},
  {"id": "a2", "text": "With algebraic effects, the program only says what it needs. That request is an effect."},
  {"id": "a3", "text": "How to get it is decided outside the program, by a handler."},
  {"id": "a4", "text": "The handler answers, and the program goes on from where it asked."},
@@ -9,7 +10,7 @@
  {"id": "a6", "text": "But after the catch, the program never goes back to where it raised."},
  {"id": "a7", "text": "An effect handler sends an answer back, and the program picks up where it left off."},
  {"id": "a8", "text": "So the program says what it needs, and the handlers decide how."},
- {"id": "b1", "text": "Now the same idea in doeff. The program is a Python function marked with @do."},
+ {"id": "b1", "text": "Now the same idea in doeff. The tea program is a Python function, order, marked with @do."},
  {"id": "b2", "text": "Where it needs something, it yields an effect. First Price: what does the item cost?"},
  {"id": "b3", "text": "Then Confirm: may I pay that much? Then it returns. It never says who answers."},
  {"id": "b4", "text": "Handlers sit outside the function. prices answers Price with 3, and order goes on."},
@@ -19,5 +20,9 @@
  {"id": "s1", "text": "Handlers stack around the function. Swap the stack, and the same function runs another way."},
  {"id": "s2", "text": "Tests, replay, a bot, many at once, production. order does not change a line."},
  {"id": "e1", "text": "To start, pip install doeff. Then you need three things: @do, yield, and a handler."},
- {"id": "e2", "text": "This article runs one card fight function under six stacks."}
+ {"id": "c1", "text": "The article needs a bigger program, so it uses battle: one small card fight."},
+ {"id": "c2", "text": "Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP."},
+ {"id": "c3", "text": "It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count."},
+ {"id": "c4", "text": "And each of those can be answered in many ways: by a script, a bot, a tape, or a person."},
+ {"id": "e2", "text": "The article runs battle under six stacks, and does not change a line of it."}
 ]

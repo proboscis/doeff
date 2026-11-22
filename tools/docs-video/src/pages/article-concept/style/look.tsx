@@ -1,24 +1,26 @@
 // The look of the motion version of article-concept, as parts: a backdrop with depth, glass panels, display type,
 // syntax-coloured code with a scanner line, capsules that travel on arcs with a comet tail, and handlers as rings.
-// StyleFrames.tsx draws the storyboard's style frames with these; the scenes of the video are to be built from them.
+// motion.tsx moves them, and ArticleConcept.tsx builds the scenes of the video from both.
 import React from 'react';
 import {AbsoluteFill} from 'remotion';
 import {loadFont as loadInter} from '@remotion/google-fonts/Inter';
 import {loadFont as loadMono} from '@remotion/google-fonts/JetBrainsMono';
-import {noise2D} from '@remotion/noise';
 import {getLength, getPointAtLength} from '@remotion/paths';
 import {ACCENT, LOOK, MUTED, TEST, TEXT} from '../../../kit/theme';
 
-export const DISPLAY = loadInter('normal', {weights: ['400', '600', '800'], subsets: ['latin']}).fontFamily;
-export const CODE = loadMono('normal', {weights: ['400', '700'], subsets: ['latin']}).fontFamily;
+// The fonts are fetched where there is a page to draw on; pace.mjs imports the scenes under Node, with none.
+const drawn = typeof document !== 'undefined';
+export const DISPLAY = drawn ? loadInter('normal', {weights: ['400', '600', '800'], subsets: ['latin']}).fontFamily : 'Inter';
+export const CODE = drawn ? loadMono('normal', {weights: ['400', '700'], subsets: ['latin']}).fontFamily : 'JetBrains Mono';
 
 export const INK = '#06070c';
 export const LINE = 'rgba(255, 255, 255, 0.13)';
 export const STRING = '#8fe3c8';
 export const KEYWORD = '#c9bdff';
 
-// The backdrop: three soft lights that drift (noise, by time t in seconds), a dot grid, and a vignette.
-export const Backdrop: React.FC<{t: number}> = ({t}) => {
+// The backdrop: three soft lights and a vignette. It holds still and has no fine texture (lights that drift change
+// every pixel of every frame, and a dot grid makes every key frame heavy), so the video stays within its bytes.
+export const Backdrop: React.FC = () => {
   const lights: [number, number, number, string][] = [
     [240, 120, 620, ACCENT],
     [1080, 600, 680, TEST],
@@ -27,33 +29,16 @@ export const Backdrop: React.FC<{t: number}> = ({t}) => {
   return (
     <AbsoluteFill style={{background: INK}}>
       {lights.map(([x, y, size, color], i) => {
-        const dx = noise2D(`x${i}`, t * 0.05, 0) * 70;
-        const dy = noise2D(`y${i}`, 0, t * 0.05) * 50;
         return (
           <div
             key={i}
             style={{
-              position: 'absolute', left: x + dx - size / 2, top: y + dy - size / 2, width: size, height: size, borderRadius: '50%',
+              position: 'absolute', left: x - size / 2, top: y - size / 2, width: size, height: size, borderRadius: '50%',
               background: `radial-gradient(closest-side, ${color}38, ${color}00)`,
             }}
           />
         );
       })}
-      <svg width="1280" height="720" style={{position: 'absolute', opacity: 0.5}}>
-        <defs>
-          <pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse">
-            <circle cx="1.2" cy="1.2" r="1.2" fill="rgba(255,255,255,0.16)" />
-          </pattern>
-          <radialGradient id="dotsFade" cx="50%" cy="45%" r="62%">
-            <stop offset="0%" stopColor="#fff" stopOpacity="1" />
-            <stop offset="100%" stopColor="#fff" stopOpacity="0" />
-          </radialGradient>
-          <mask id="dotsMask">
-            <rect width="1280" height="720" fill="url(#dotsFade)" />
-          </mask>
-        </defs>
-        <rect width="1280" height="720" fill="url(#dots)" mask="url(#dotsMask)" />
-      </svg>
       <AbsoluteFill style={{background: 'radial-gradient(ellipse at 50% 42%, rgba(6,7,12,0) 45%, rgba(6,7,12,0.85) 100%)'}} />
     </AbsoluteFill>
   );
