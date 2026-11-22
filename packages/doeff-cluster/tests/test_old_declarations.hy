@@ -19,7 +19,7 @@
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
 (import doeff_cluster [responded])
 (import doeff_cluster [RepoCheckout PythonProject RuntimeEnv EnvVar])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import tests.program_rows [SAMPLE-RUN program-run])
 
 (val T (ClusterTiming))

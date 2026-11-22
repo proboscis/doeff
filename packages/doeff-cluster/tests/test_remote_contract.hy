@@ -20,7 +20,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster [UnsendableProgram])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster._shared.core.remote_rules [remote-job])
 (import tests.coordinator_contract_handlers [TasksSeen TaskSeen contract-env])
 (import tests.detached_rig [slow-add RIG-PROVIDES])

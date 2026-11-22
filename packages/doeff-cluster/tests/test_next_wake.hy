@@ -18,7 +18,7 @@
         doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster._coordinator.core.watch_policy [watch-deadline])
 (import doeff_cluster [CoordinatorUnsettled])
-(import doeff_cluster [next-wake]
+(import doeff_cluster._coordinator.core.wake_policy [next-wake]
         doeff_cluster._coordinator.core.wake_policy [watchers-due after-step wait-seconds count-unsettled UNSETTLED-STEP-LIMIT])
 (import doeff_cluster [Request])
 
