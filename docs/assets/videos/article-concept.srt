@@ -119,5 +119,13 @@ It is a good example: it needs four things from outside. Dice, a choice of card,
 And each of those can be answered in many ways: by a script, a bot, a tape, or a person.
 
 31
-00:03:37,150 --> 00:03:42,900
+00:03:37,150 --> 00:03:42,117
+Scheduling is an effect too. Spawn runs a hundred fights as tasks on one thread,
+
+32
+00:03:42,117 --> 00:03:46,450
+a handler decides when each one runs, and Gather collects the results.
+
+33
+00:03:47,850 --> 00:03:53,600
 The article runs battle under six stacks, and does not change a line of it.

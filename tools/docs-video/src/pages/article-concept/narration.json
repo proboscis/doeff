@@ -29,5 +29,6 @@
  {"id": "c2", "text": "Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP."},
  {"id": "c3", "text": "It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count."},
  {"id": "c4", "text": "And each of those can be answered in many ways: by a script, a bot, a tape, or a person."},
+ {"id": "c5", "text": "Scheduling is an effect too. Spawn runs a hundred fights as tasks on one thread, a handler decides when each one runs, and Gather collects the results."},
  {"id": "e2", "text": "The article runs battle under six stacks, and does not change a line of it."}
 ]

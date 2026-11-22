@@ -748,7 +748,9 @@ const Start: React.FC = () => {
 
 // 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
 // the article's scripted run shows: T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike),
-// then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks.
+// then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks, and
+// scheduling: win_rate Spawns a hundred fights as tasks on one thread, scheduled decides when each runs (they take
+// turns, each to its end), and Gather collects the results — the random bot wins 73 and the Monte Carlo bot all 100.
 const C1 = 0;
 const C1_STEPS = chain(after(C1), [['sides', 0.6]]);
 const C2 = nextLine(heard(C1, 'c1'), C1_STEPS);
@@ -773,15 +775,29 @@ const C4_STEPS = chain(after(C4), [
   ['count', 0.4],
 ]);
 const C5 = nextLine(heard(C4, 'c4'), C4_STEPS);
-const C5_STEPS = chain(after(C5), [['six', 0.6]]);
+const C5_STEPS = chain(after(C5), [
+  ['spawn', 1.4],
+  ['sched', 0.5],
+  ['turns', 2.0],
+  ['gather', 0.6],
+  ['result', 0.5],
+]);
+const C6 = nextLine(heard(C5, 'c5'), C5_STEPS);
+const C6_STEPS = chain(after(C6), [['six', 0.6]]);
 const FIGHT_SAID: Said = [
   [C1, [["The article's example:"], ['battle(),', ACCENT], ['one small card fight']]],
   [C2, [['Each turn:'], ['draw,', K], ['play,', PROD], ['and the enemy hits back', FAIL]]],
   [C3, [['Why this example:'], ['four', ACCENT], ['things it needs from'], ['outside', TEST]]],
   [C4, [['Each can be answered in'], ['many ways', TEST]]],
-  [C5, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
+  [C5, [['Scheduling', K], ['is an effect too:'], ['a hundred fights as tasks', K]]],
+  [C6, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
 ];
-const FIGHT = f(sceneEnd(heard(C5, 'e2'), C5_STEPS));
+const FIGHT = f(sceneEnd(heard(C6, 'e2'), C6_STEPS));
+// A hundred fights as tasks: a grid of 20 by 5, filled in the order Spawn starts them.
+const TASKS = 100;
+const GRID = {cols: 20, left: 124, top: 224, w: 44, h: 26, gap: 8};
+const tileX = (i: number) => GRID.left + (i % GRID.cols) * (GRID.w + GRID.gap);
+const tileY = (i: number) => GRID.top + Math.floor(i / GRID.cols) * (GRID.h + GRID.gap);
 const HAND = ['Defend', 'Strike', 'Defend', 'Defend', 'Strike'];
 const CARD: Record<string, [string, string]> = {Strike: [PROD, 'deal 6'], Defend: [K, 'block 5']};
 const KAPPA = 0.5523;
@@ -871,6 +887,7 @@ const Fight: React.FC = () => {
         </Rise>
       </Rise>
       {/* Why battle: what it needs from outside, and who can answer. */}
+      <Rise at={0} out={C5} y={0}>
       <Rise at={C3_STEPS.hub.from} y={0} scale={0.7} origin={[640, 392]}>
         <Rings cx={640} cy={392} core="battle()" rings={[]} w={224} h={92} font={20} note="one function" />
       </Rise>
@@ -905,7 +922,42 @@ const Fight: React.FC = () => {
           </React.Fragment>
         );
       })}
-      <Rise at={C5_STEPS.six.from} y={30} scale={0.9} origin={[640, 656]}>
+      </Rise>
+      {/* Scheduling: Spawn starts a hundred tasks, scheduled lets them take turns on one thread, Gather collects them. */}
+      <Rise at={C5_STEPS.spawn.from} y={0}>
+        <Capsule x={640} y={190} text="yield Spawn(battle())  × 100" color={K} size={18} />
+      </Rise>
+      <Rise at={C5_STEPS.sched.from} y={0} scale={0.96} origin={[640, 310]}>
+        <div style={{position: 'absolute', left: GRID.left - 22, top: GRID.top - 16, width: 20 * (GRID.w + GRID.gap) - GRID.gap + 44, height: 5 * (GRID.h + GRID.gap) - GRID.gap + 32, boxSizing: 'border-box', borderRadius: 18, border: `2px solid ${TEST}`, boxShadow: `0 0 26px ${TEST}44`}} />
+        <div style={{position: 'absolute', left: GRID.left - 22, top: GRID.top + 5 * (GRID.h + GRID.gap) + 24, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: TEST}}>
+          scheduled<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — one thread: the tasks take turns, and the handler decides when each one runs</span>
+        </div>
+      </Rise>
+      {frame >= f(C5_STEPS.spawn.from) && Array.from({length: TASKS}, (_, i) => {
+        const born = C5_STEPS.spawn.from + (i / TASKS) * (C5_STEPS.spawn.to - C5_STEPS.spawn.from);
+        const turns = C5_STEPS.turns;
+        const at = turns.from + (i / TASKS) * (turns.to - turns.from);
+        const running = frame >= f(at) && frame < f(at + (turns.to - turns.from) / TASKS);
+        const done = frame >= f(at + (turns.to - turns.from) / TASKS);
+        const color = running ? LOOK : done ? TEST : K;
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute', left: tileX(i), top: tileY(i), width: GRID.w, height: GRID.h, boxSizing: 'border-box', borderRadius: 7, border: `1.5px solid ${color}`,
+              background: done ? `${TEST}55` : running ? `${LOOK}88` : `${K}22`, boxShadow: running ? `0 0 16px ${LOOK}` : undefined,
+              opacity: (frame >= f(born) ? fadeAt(frame, born, 0.15) : 0) * (1 - 0.6 * fadeAt(frame, C6, 0.4)),
+            }}
+          />
+        );
+      })}
+      <Rise at={C5_STEPS.gather.from} y={14} scale={0.8} origin={[640, 470]}>
+        <Capsule x={640} y={478} text="results = yield Gather(*tasks)" color={K} size={18} />
+      </Rise>
+      <Rise at={C5_STEPS.result.from} y={12}>
+        <Note x={140} y={516} w={1000} text="random bot wins 73 of 100  ·  Monte Carlo bot wins all 100" color={LOOK} size={24} align="center" />
+      </Rise>
+      <Rise at={C6_STEPS.six.from} y={30} scale={0.9} origin={[640, 656]}>
         <div style={{position: 'absolute', left: 0, right: 0, top: 640, textAlign: 'center', fontFamily: DISPLAY, fontSize: 28, fontWeight: 800, color: TEXT}}>
           one function · six stacks · <span style={{color: LOOK, textShadow: `0 0 26px ${LOOK}88`}}>0 lines changed</span>
         </div>
@@ -927,7 +979,7 @@ export const ARTICLE_CONCEPT = narrate(
     {length: HANDLE, starts: saidStarts(HANDLE_SAID), ids: ['b4', 'b5', 'b6', 'b7'], node: <Handling />},
     {length: STACKS_LENGTH, starts: saidStarts(STACK_SAID), ids: ['s1', 's2'], node: <Stacks />},
     {length: START, starts: saidStarts(START_SAID), ids: ['e1'], node: <Start />},
-    {length: FIGHT, starts: saidStarts(FIGHT_SAID), ids: ['c1', 'c2', 'c3', 'c4', 'e2'], node: <Fight />},
+    {length: FIGHT, starts: saidStarts(FIGHT_SAID), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'e2'], node: <Fight />},
   ],
   // The backdrop sits behind every scene, and the camera moves through the cuts.
   {backdrop: () => <Backdrop />, dolly: true},
@@ -947,5 +999,5 @@ export const PACED: Record<string, {motions: Step[]; seconds: number}> = {
   Handling: paced(HANDLE_SAID, [H1_STEPS, H2_STEPS, H3_STEPS, H4_STEPS], HANDLE),
   Stacks: paced(STACK_SAID, [S1_STEPS, S2_STEPS], STACKS_LENGTH),
   Start: paced(START_SAID, [E1_STEPS], START),
-  Fight: paced(FIGHT_SAID, [C1_STEPS, C2_STEPS, C3_STEPS, C4_STEPS, C5_STEPS], FIGHT),
+  Fight: paced(FIGHT_SAID, [C1_STEPS, C2_STEPS, C3_STEPS, C4_STEPS, C5_STEPS, C6_STEPS], FIGHT),
 };
