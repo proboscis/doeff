@@ -1,17 +1,19 @@
 // The first video of the article "Algebraic effects for Python" (docs/articles/algebraic-effects-in-python.md) and of
 // the README, before the card battle: what algebraic effects are, then how doeff writes them, as a motion video.
 // 1. The title: the name, and the round trip the video is about (an effect out to a handler, an answer back).
-// 2. The idea with no code. The example is said before it is used: a program that buys tea, small enough to read at a
-//    glance, which needs two things from outside itself. Its request crosses the edge of the program to a handler,
-//    and the answer comes back to where it asked.
-// 3. Next to an exception, whose handler never goes back.
-// 4. The same program in doeff: its plain rows become the lines of order, read from the top; each yield hands an
+// 2. What algebraic effects are for, before any example: side effects, dependencies, async and scheduling, and
+//    swapping how a program is run. One mechanism does all four, and asking for a value is the simplest use of it.
+// 3. The idea with no code, on that simplest use. The example is said before it is used: a program that buys tea,
+//    small enough to read at a glance, which needs two things from outside itself. Its request crosses the edge of
+//    the program to a handler, and the answer comes back to where it asked.
+// 4. Next to an exception, whose handler never goes back.
+// 5. The same program in doeff: its plain rows become the lines of order, read from the top; each yield hands an
 //    effect out, and order never says who answers.
-// 5. Handlers are rings around order. One of them gets k, the rest of order; it resumes it, keeps it or never resumes
+// 6. Handlers are rings around order. One of them gets k, the rest of order; it resumes it, keeps it or never resumes
 //    it, at most once.
-// 6. The same function, unchanged, in five stacks.
-// 7. How to start.
-// 8. The article's example before the article uses it: what battle does, and why it was chosen (it needs four things
+// 7. The same function, unchanged, in five stacks.
+// 8. How to start.
+// 9. The article's example before the article uses it: what battle does, and why it was chosen (it needs four things
 //    from outside, and each can be answered in many ways).
 // Every code line on screen is a line of measure/order.py (check_code.py checks it), and every result is a line of
 // its output; the card fight's numbers and handler names are those of the article's listing of spire.py and its runs.
@@ -35,7 +37,7 @@ const heard = heardBy(DURATIONS);
 const after = (headline: number) => headline + LINE_FADE + PAUSE;
 // A headline as a motion, for PACED.
 const headline = (from: number): Step => ({from, to: from + LINE_FADE});
-const SCENES = 8;
+const SCENES = 9;
 // A panel things pass behind.
 const SOLID = 'linear-gradient(160deg, #1b1d2c, #0c0d15)';
 
@@ -142,20 +144,151 @@ const Title: React.FC = () => {
   );
 };
 
-// 2. The idea, with no code. The example first: what it is and why it was chosen. Then its request goes out across the
-// edge of the program to a handler, and the answer comes back to where it asked.
+// 2. What algebraic effects are for, before any example: four things a program does besides computing, one at a
+// time. Then one mechanism does all four, and asking for a value is the simplest use: the example starts there.
+const USES: {name: string; color: string; what: string; items: string[]}[] = [
+  {name: 'Side effects', color: PROD, what: 'it changes the world outside', items: ['print', 'save a file', 'send a message']},
+  {name: 'Dependencies', color: ACCENT, what: 'it needs a value from outside', items: ['a price', 'a setting', 'a database']},
+  {name: 'Async and scheduling', color: K, what: 'it decides when things run', items: ['wait', 'retry', 'many tasks at once']},
+  {name: 'Swapping', color: TEST, what: 'one program, run many ways', items: ['tests', 'replay', 'production']},
+];
+const USE = {top: 165, w: 280, h: 336};
+const useX = (i: number) => 53 + i * 298;
+const use = (start: number) => chain(after(start), [
+  ['card', 0.4],
+  ['items', 0.6],
+]);
+const U0 = 0;
+const U0_STEPS = chain(after(U0), [['slots', 0.5]]);
+const U1 = nextLine(heard(U0, 'a1'), U0_STEPS);
+const U1_STEPS = use(U1);
+const U2 = nextLine(heard(U1, 'p1'), U1_STEPS);
+const U2_STEPS = use(U2);
+const U3 = nextLine(heard(U2, 'p2'), U2_STEPS);
+const U3_STEPS = use(U3);
+const U4 = nextLine(heard(U3, 'p3'), U3_STEPS);
+const U4_STEPS = use(U4);
+const U5 = nextLine(heard(U4, 'p4'), U4_STEPS);
+const U5_STEPS = chain(after(U5), [
+  ['one', 0.8],
+  ['effect', 0.4],
+  ['simplest', 0.5],
+]);
+const USE_STEPS = [U1_STEPS, U2_STEPS, U3_STEPS, U4_STEPS];
+// The use the example starts from.
+const SIMPLEST = 1;
+const PURPOSE_SAID: Said = [
+  [U0, [['What are algebraic effects'], ['for?', LOOK]]],
+  [U1, [['Side effects:', PROD], ['printing, saving, sending']]],
+  [U2, [['Dependencies:', ACCENT], ['a value from outside']]],
+  [U3, [['Async and scheduling:', K], ['waiting, retrying, many tasks at once']]],
+  [U4, [['Swapping:', TEST], ['tests, replay, production']]],
+  [U5, [['One mechanism does all four.'], ['A value is the simplest use', ACCENT]]],
+];
+const PURPOSE = f(sceneEnd(heard(U5, 'p5'), U5_STEPS));
+
+// The sign of a use: something leaves the program, something comes in, tasks overlap in time, one runner for another.
+const Glyph: React.FC<{i: number; color: string}> = ({i, color}) => {
+  const line = {fill: 'none', stroke: color, strokeWidth: 3, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const};
+  const box = {fill: `${color}22`, stroke: color, strokeWidth: 2};
+  return (
+    <svg width="240" height="56" style={{position: 'absolute', left: 20, top: 98}}>
+      {i === 0 && (
+        <>
+          <rect x="2" y="10" width="60" height="36" rx="9" {...box} />
+          <path d="M 72 28 L 160 28 M 146 17 L 162 28 L 146 39" {...line} />
+        </>
+      )}
+      {i === 1 && (
+        <>
+          <path d="M 2 28 L 90 28 M 76 17 L 92 28 L 76 39" {...line} />
+          <rect x="102" y="10" width="60" height="36" rx="9" {...box} />
+        </>
+      )}
+      {i === 2 && (
+        <>
+          <rect x="2" y="4" width="96" height="11" rx="5.5" {...box} />
+          <rect x="44" y="23" width="118" height="11" rx="5.5" {...box} />
+          <rect x="100" y="42" width="84" height="11" rx="5.5" {...box} />
+        </>
+      )}
+      {i === 3 && (
+        <>
+          <rect x="2" y="10" width="60" height="36" rx="9" {...box} />
+          <path d="M 74 21 L 112 21 M 102 13 L 114 21 L 102 29 M 112 37 L 74 37 M 84 29 L 72 37 L 84 45" {...line} strokeWidth={2.5} />
+          <rect x="124" y="10" width="60" height="36" rx="9" {...box} strokeDasharray="5 6" />
+        </>
+      )}
+    </svg>
+  );
+};
+
+const Purpose: React.FC = () => {
+  const frame = useSceneFrame();
+  const at = (seconds: number) => frame >= f(seconds);
+  const chosen = fadeAt(frame, U5_STEPS.simplest.from, 0.4);
+  return (
+    <AbsoluteFill>
+      <Chapter n={2} of={SCENES} name="What they are for" />
+      <Headline lines={PURPOSE_SAID} />
+      {/* Four places, before what fills them. */}
+      {USES.map((_, i) => (
+        <Rise key={i} at={U0_STEPS.slots.from + i * 0.08} out={USE_STEPS[i].card.from} y={20}>
+          <div style={{position: 'absolute', left: useX(i), top: USE.top, width: USE.w, height: USE.h, boxSizing: 'border-box', borderRadius: 18, border: '1.5px dashed rgba(255,255,255,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center'}}>
+            <div style={{fontFamily: DISPLAY, fontSize: 130, fontWeight: 800, lineHeight: 1, color: 'transparent', WebkitTextStroke: '1.5px rgba(255,255,255,0.3)'}}>{i + 1}</div>
+          </div>
+        </Rise>
+      ))}
+      {USES.map(({name, color, what, items}, i) => {
+        const {card, items: listed} = USE_STEPS[i];
+        const cx = useX(i) + USE.w / 2;
+        return (
+          <div key={name} style={{position: 'absolute', inset: 0, opacity: i === SIMPLEST ? 1 : 1 - 0.55 * chosen}}>
+            <Rise at={card.from} y={40} scale={0.92} origin={[cx, USE.top + USE.h / 2]}>
+              <div style={{position: 'absolute', left: useX(i), top: USE.top, width: USE.w, height: USE.h, boxSizing: 'border-box', ...glass(`${color}88`, i === SIMPLEST && at(U5_STEPS.simplest.from)), background: SOLID}}>
+                <div style={{padding: '20px 20px 0', fontFamily: DISPLAY, fontSize: 22, fontWeight: 800, letterSpacing: '-0.01em', color, whiteSpace: 'nowrap'}}>{name}</div>
+                <div style={{padding: '4px 20px 0', fontFamily: DISPLAY, fontSize: 16, color: MUTED}}>{what}</div>
+                <Glyph i={i} color={color} />
+                <div style={{position: 'absolute', left: 20, right: 20, top: 180, display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 10}}>
+                  {items.map((item, j) => {
+                    const from = listed.from + j * 0.15;
+                    return (
+                      <div
+                        key={item}
+                        style={{
+                          padding: '6px 14px', borderRadius: 12, border: `1.5px solid ${color}`, background: `${color}1c`, fontFamily: DISPLAY, fontSize: 19, fontWeight: 600, color: TEXT,
+                          opacity: fadeAt(frame, from, 0.2), transform: `translateY(${(1 - pop(frame, from)) * 14}px)`,
+                        }}
+                      >
+                        {item}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </Rise>
+            <Draw id={`use-${i}`} d={`M ${cx} ${USE.top + USE.h + 4} C ${cx} 556, ${640 + (cx - 640) * 0.2} 540, ${640 + (cx - 640) * 0.2} 580`} color={color} step={U5_STEPS.one} />
+          </div>
+        );
+      })}
+      <Rise at={U5_STEPS.effect.from} y={0} scale={0.6} origin={[640, 602]}>
+        <Capsule x={640} y={602} text="one mechanism: an effect" color={ACCENT} mono={false} size={22} />
+      </Rise>
+      <Rise at={U5_STEPS.simplest.from} y={12}>
+        <Note x={240} y={640} w={800} text="asking for a value is the simplest use: the example starts there" color={ACCENT} size={21} align="center" />
+      </Rise>
+    </AbsoluteFill>
+  );
+};
+
+// 3. The idea, with no code, on the simplest use. The example first: what it is and why it was chosen. Then its
+// request goes out across the edge of the program to a handler, and the answer comes back to where it asked.
 const TEA_ROWS = ['takes an order for tea', 'needs: what does tea cost?', 'needs: may I pay that much?', 'buys it, or skips it'];
 const P = {x: 90, y: 220, w: 500};
 const ASK_Y = rowMid(P.y, 1);
-const A1 = 0;
-const A1_STEPS = chain(after(A1), [
-  ['seam', 0.5],
-  ['price', 0.3],
-  ['person', 0.3],
-  ['time', 0.3],
-]);
-const TEA = nextLine(heard(A1, 'a1'), A1_STEPS);
+const TEA = 0;
 const TEA_STEPS = chain(after(TEA), [
+  ['seam', 0.5],
   ['program', 0.5],
   ['why', 0.4],
   ['needs', 0.6],
@@ -177,7 +310,6 @@ const A4_STEPS = chain(after(A4), [
   ['goes', 0.4],
 ]);
 const IDEA_SAID: Said = [
-  [A1, [['A program needs things from'], ['outside itself', TEST]]],
   [TEA, [['Our example:'], ['a program that buys tea', LOOK]]],
   [A2, [['The program only says'], ['what it needs:', ACCENT], ['an effect', ACCENT]]],
   [A3, [['A handler,', TEST], ['outside the program, decides'], ['how', TEST]]],
@@ -190,28 +322,26 @@ const ASK_BACK = arcOf(1010, 356, P.x + P.w + 30, ASK_Y + 4, 150);
 const Idea: React.FC = () => {
   const frame = useSceneFrame();
   const at = (seconds: number) => frame >= f(seconds);
-  const seam = along(frame, A1_STEPS.seam);
+  const seam = along(frame, TEA_STEPS.seam);
   const rows = TEA_ROWS.map((text, i) => ({
     text,
     lit: i === 1 && at(TEA_STEPS.needs.from) ? ACCENT : i === 2 && at(TEA_STEPS.needs.from) && !at(A2) ? ACCENT : i === 2 && at(A4_STEPS.goes.from) ? LOOK : undefined,
   }));
   return (
     <AbsoluteFill>
-      <Chapter n={2} of={SCENES} name="The idea" />
+      <Chapter n={3} of={SCENES} name="The idea" />
       <Headline lines={IDEA_SAID} />
-      {at(A1_STEPS.seam.from) && (
+      {at(TEA_STEPS.seam.from) && (
         <div style={{position: 'absolute', inset: 0, clipPath: `inset(0 0 ${(1 - seam) * 100}% 0)`}}>
           <Seam x={670} top={160} bottom={690} />
         </div>
       )}
-      <Rise at={A1_STEPS.price.from} out={A3} y={14}>
+      {/* The two things it needs, outside the program. */}
+      <Rise at={TEA_STEPS.needs.from} out={A3} y={14}>
         <Capsule x={900} y={262} text="a price?" color={TEXT} mono={false} size={26} ghost />
       </Rise>
-      <Rise at={A1_STEPS.person.from} out={A3} y={14}>
+      <Rise at={TEA_STEPS.needs.from + 0.15} out={A3} y={14}>
         <Capsule x={950} y={392} text="a yes or no from a person?" color={TEXT} mono={false} size={22} ghost />
-      </Rise>
-      <Rise at={A1_STEPS.time.from} out={TEA} y={14}>
-        <Capsule x={880} y={520} text="the time?" color={MUTED} mono={false} size={20} ghost />
       </Rise>
       <Rise at={TEA_STEPS.program.from} y={40} scale={0.94} origin={[P.x + P.w / 2, P.y + 120]}>
         <Program title="a program: buying tea" x={P.x} y={P.y} w={P.w} rows={rows} />
@@ -244,7 +374,7 @@ const Idea: React.FC = () => {
   );
 };
 
-// 3. Next to an exception: both go out to a handler outside the program, and only the effect comes back.
+// 4. Next to an exception: both go out to a handler outside the program, and only the effect comes back.
 const TOP = 160;
 const BOTTOM = 410;
 const B1 = 0;
@@ -286,7 +416,7 @@ const Compare: React.FC = () => {
   const cross = pointOn(NO_WAY, 0.5);
   return (
     <AbsoluteFill>
-      <Chapter n={3} of={SCENES} name="Exception or effect" />
+      <Chapter n={4} of={SCENES} name="Exception or effect" />
       <Headline lines={COMPARE_SAID} />
       <Rise at={B1_STEPS.lane.from} y={30}>
         <Program
@@ -339,7 +469,7 @@ const PRICE = 2;
 const CONFIRM = 3;
 const RETURN = 4;
 
-// 4. The same program in doeff: its rows become the lines of order, read from the top. Each yield hands an effect out.
+// 5. The same program in doeff: its rows become the lines of order, read from the top. Each yield hands an effect out.
 const FN = {x: 70, y: 190, w: 740, size: 22, line: 44};
 const F1 = 0;
 const F1_STEPS = chain(after(F1), [['code', 0.8]]);
@@ -368,7 +498,7 @@ const Fn: React.FC = () => {
   const scan = 1 + along(frame, F2_STEPS.price) + along(frame, F3_STEPS.confirm) + along(frame, F3_STEPS.ret);
   return (
     <AbsoluteFill>
-      <Chapter n={4} of={SCENES} name="In doeff" />
+      <Chapter n={5} of={SCENES} name="In doeff" />
       <Headline lines={FN_SAID} />
       {/* The tea program of the idea, in the place its code takes. */}
       <div style={{position: 'absolute', inset: 0, opacity: 1 - code, transform: `translateY(${-code * 24}px)`}}>
@@ -394,7 +524,7 @@ const Fn: React.FC = () => {
   );
 };
 
-// 5. Handlers are rings around order. Price goes out to prices and its answer comes back; Confirm goes out to yes,
+// 6. Handlers are rings around order. Price goes out to prices and its answer comes back; Confirm goes out to yes,
 // and k, the rest of order, goes with it; yes resumes k, once. Then what a handler can do with k, side by side.
 const HC = {x: 50, y: 210, w: 650, size: 18, line: 38};
 const RING = {cx: 970, cy: 392};
@@ -455,7 +585,7 @@ const Handling: React.FC = () => {
   const sweep = along(frame, {from: H4_STEPS.keep.from, to: H4_STEPS.keep.from + 2.4});
   return (
     <AbsoluteFill>
-      <Chapter n={5} of={SCENES} name="Handlers and k" />
+      <Chapter n={6} of={SCENES} name="Handlers and k" />
       <Headline lines={HANDLE_SAID} size={36} />
       <Rise at={0} out={H4} y={0}>
         <CodeWindow file="order.py" lines={ORDER_CODE} x={HC.x} y={HC.y} w={HC.w} size={HC.size} line={HC.line} scan={scan} k={held ? [RETURN, RETURN] : undefined} kColor={K} />
@@ -515,7 +645,7 @@ const Handling: React.FC = () => {
   );
 };
 
-// 6. The same function in five stacks, side by side.
+// 7. The same function in five stacks, side by side.
 const S1 = 0;
 const S1_STEPS = chain(after(S1), [
   ['line', 0.5],
@@ -547,7 +677,7 @@ const Stacks: React.FC = () => {
   const line = along(frame, S1_STEPS.line);
   return (
     <AbsoluteFill>
-      <Chapter n={6} of={SCENES} name="Swap the stack" />
+      <Chapter n={7} of={SCENES} name="Swap the stack" />
       <Headline lines={STACK_SAID} />
       {/* One function runs through every stack. */}
       <div style={{position: 'absolute', left: 640 - 620 * line, width: 1240 * line, top: 369, height: 3, background: `linear-gradient(90deg, transparent, ${ACCENT}, ${ACCENT}, transparent)`, boxShadow: `0 0 26px ${ACCENT}`, opacity: fadeAt(frame, S1_STEPS.line.from, 0.2)}} />
@@ -569,7 +699,7 @@ const Stacks: React.FC = () => {
   );
 };
 
-// 7. How to start.
+// 8. How to start.
 const E1 = 0;
 // The three things come as the line says them, after pip install doeff.
 const E1_STEPS = chain(after(E1), [
@@ -591,7 +721,7 @@ const Start: React.FC = () => {
   const blink = Math.floor(frame / 30) % 2 === 0 || frame < f(E1_STEPS.pip.to);
   return (
     <AbsoluteFill>
-      <Chapter n={7} of={SCENES} name="Start" />
+      <Chapter n={8} of={SCENES} name="Start" />
       <Headline lines={START_SAID} />
       <div style={{position: 'absolute', left: 320, top: 180, width: 640, ...glass(), overflow: 'hidden'}}>
         <div style={{height: 34, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px', borderBottom: `1px solid ${LINE}`, background: 'rgba(0,0,0,0.25)'}}>
@@ -616,7 +746,7 @@ const Start: React.FC = () => {
   );
 };
 
-// 8. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
+// 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
 // the article's scripted run shows: T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike),
 // then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks.
 const C1 = 0;
@@ -690,7 +820,7 @@ const Fight: React.FC = () => {
   const dot = pointOn(ROUND, turn);
   return (
     <AbsoluteFill>
-      <Chapter n={8} of={SCENES} name="Next: the card fight" />
+      <Chapter n={9} of={SCENES} name="Next: the card fight" />
       <Headline lines={FIGHT_SAID} />
       {/* What battle does: the table. */}
       <Rise at={0} out={C3} y={0}>
@@ -790,7 +920,8 @@ export const ARTICLE_CONCEPT = narrate(
   NARRATION,
   [
     {length: TITLE, starts: saidStarts(TITLE_SAID), ids: ['i1', 'i2'], node: <Title />},
-    {length: IDEA, starts: saidStarts(IDEA_SAID), ids: ['a1', 't1', 'a2', 'a3', 'a4'], node: <Idea />},
+    {length: PURPOSE, starts: saidStarts(PURPOSE_SAID), ids: ['a1', 'p1', 'p2', 'p3', 'p4', 'p5'], node: <Purpose />},
+    {length: IDEA, starts: saidStarts(IDEA_SAID), ids: ['t1', 'a2', 'a3', 'a4'], node: <Idea />},
     {length: COMPARE, starts: saidStarts(COMPARE_SAID), ids: ['a5', 'a6', 'a7', 'a8'], node: <Compare />},
     {length: FN_LENGTH, starts: saidStarts(FN_SAID), ids: ['b1', 'b2', 'b3'], node: <Fn />},
     {length: HANDLE, starts: saidStarts(HANDLE_SAID), ids: ['b4', 'b5', 'b6', 'b7'], node: <Handling />},
@@ -809,7 +940,8 @@ const paced = (lines: Said, steps: Record<string, Step>[], length: number) => ({
 });
 export const PACED: Record<string, {motions: Step[]; seconds: number}> = {
   Title: paced(TITLE_SAID.slice(1), [T1_STEPS, T2_STEPS], TITLE),
-  Idea: paced(IDEA_SAID, [A1_STEPS, TEA_STEPS, A2_STEPS, A3_STEPS, A4_STEPS], IDEA),
+  Purpose: paced(PURPOSE_SAID, [U0_STEPS, U1_STEPS, U2_STEPS, U3_STEPS, U4_STEPS, U5_STEPS], PURPOSE),
+  Idea: paced(IDEA_SAID, [TEA_STEPS, A2_STEPS, A3_STEPS, A4_STEPS], IDEA),
   Compare: paced(COMPARE_SAID, [B1_STEPS, B2_STEPS, B3_STEPS, B4_STEPS], COMPARE),
   Function: paced(FN_SAID, [F1_STEPS, F2_STEPS, F3_STEPS], FN_LENGTH),
   Handling: paced(HANDLE_SAID, [H1_STEPS, H2_STEPS, H3_STEPS, H4_STEPS], HANDLE),

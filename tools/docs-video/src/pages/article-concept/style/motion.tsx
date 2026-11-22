@@ -106,23 +106,25 @@ export const Travel: React.FC<{
 };
 
 // A line that draws itself during a step, and stays (a dashed one for a way not taken yet, or one that stops short).
-export const Draw: React.FC<{d: string; color: string; step: Step; dashed?: boolean; upTo?: number; width?: number; out?: number}> = ({
-  d, color, step, dashed = false, upTo = 1, width = 2.5, out = Infinity,
+export const Draw: React.FC<{d: string; color: string; step: Step; dashed?: boolean; upTo?: number; width?: number; out?: number; id?: string}> = ({
+  d, color, step, dashed = false, upTo = 1, width = 2.5, out = Infinity, id,
 }) => {
   const frame = useSceneFrame();
   if (frame < f(step.from)) return null;
   const length = getLength(d);
   const shown = length * upTo * along(frame, step);
+  // Lines of the same length drawn at the same time need ids of their own.
+  const mask = id ?? `draw-${d.length}-${Math.round(length)}-${Math.round(step.from * 100)}`;
   return (
     <svg width="1280" height="720" style={{position: 'absolute', overflow: 'visible', opacity: 1 - gone(frame, out)}}>
       <defs>
-        <mask id={`draw-${d.length}-${Math.round(length)}-${Math.round(step.from * 100)}`} maskUnits="userSpaceOnUse" x="-100" y="-100" width="1480" height="920">
+        <mask id={mask} maskUnits="userSpaceOnUse" x="-100" y="-100" width="1480" height="920">
           <path d={d} fill="none" stroke="#fff" strokeWidth={width + 8} strokeDasharray={`${shown} ${length}`} />
         </mask>
       </defs>
       <path
         d={d} fill="none" stroke={color} strokeWidth={width} strokeLinecap="round" strokeDasharray={dashed ? '3 9' : undefined}
-        mask={`url(#draw-${d.length}-${Math.round(length)}-${Math.round(step.from * 100)})`} style={{filter: dashed ? undefined : `drop-shadow(0 0 8px ${color})`}}
+        mask={`url(#${mask})`} style={{filter: dashed ? undefined : `drop-shadow(0 0 8px ${color})`}}
       />
     </svg>
   );
