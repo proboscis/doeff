@@ -107,7 +107,7 @@ What algebraic effects are for, what they are, and how you write them with doeff
 function yields effects, handlers stacked outside it answer them with the rest of the function as
 `k`, and the same function runs under many stacks.
 
-[![Video (3:55): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/cPA5K4W5NVI/maxresdefault.jpg)](https://youtu.be/cPA5K4W5NVI)
+[![Video (3:55): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/bw4M_i0BPNU/maxresdefault.jpg)](https://youtu.be/bw4M_i0BPNU)
 
 [The video as an mp4 file (3:55)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
 

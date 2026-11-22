@@ -361,7 +361,7 @@ def test_the_hook_gives_a_captioned_video_its_track(tmp_path: Path) -> None:
 def test_the_concept_video_comes_before_the_card_fight_video() -> None:
     article = ARTICLE.read_text(encoding="utf-8")
     concept = re.search(
-        r"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/cPA5K4W5NVI/maxresdefault\.jpg\)\]\(https://youtu\.be/cPA5K4W5NVI\)\n\n"
+        r"^\[!\[[^\]]+\]\(https://img\.youtube\.com/vi/bw4M_i0BPNU/maxresdefault\.jpg\)\]\(https://youtu\.be/bw4M_i0BPNU\)\n\n"
         r"\[The same video as an mp4 file \(\d:\d\d\)\]\(\.\./assets/videos/article-concept\.mp4\)\n",
         article,
         re.MULTILINE,
@@ -371,7 +371,7 @@ def test_the_concept_video_comes_before_the_card_fight_video() -> None:
     )
     readme = README.read_text(encoding="utf-8")
     linked = re.findall(README_YOUTUBE_LINE, readme, re.MULTILINE)
-    assert linked[:2] == ["cPA5K4W5NVI", "BRYMn0aoiEk"], (
+    assert linked[:2] == ["bw4M_i0BPNU", "BRYMn0aoiEk"], (
         "README does not link the article-concept video above the card fight video"
     )
     assert 0 <= readme.find("docs/assets/videos/article-concept.mp4") < readme.find("https://youtu.be/BRYMn0aoiEk")
