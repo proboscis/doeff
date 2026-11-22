@@ -676,14 +676,14 @@
 
 
 (defclass [(dataclass :frozen True)] ReapJob [EffectBase]
-  "終了を観測した process を観測の表から外す。memory-killed-spec = 機体の memory の見張りがこの process の木の単位を止めていれば、その
+  "process を観測の表から外す(終わりを観測していない process — exit-code が None — は止めて回収する)。memory-killed-spec = 機体の memory の見張りがこの process の木の単位を止めていれば、その
    process の spec の指紋(spec-hash — 記憶の数え record-after が読む)・止めていなければ None。stop-reason = 機体の memory の訳でこの process
    が止められた訳(見張りの止めか jobs の層の kernel の OOM kill — policy の stop-reason-of・None = memory の訳ではない)。over-need-mib = 見張りが
    要りの越えでこの process の木を止めていれば、止めた時の使い(MiB — MemoryStops.over-needs)・ほかは None。"
   (#^ str name)
   (#^ int pid)
   (#^ Outcome outcome)
-  (#^ int exit-code)
+  (#^ (| int None) exit-code)
   (setv #^ (| str None) memory-killed-spec None)
   (setv #^ (| str None) stop-reason None)
   (setv #^ (| int None) over-need-mib None))

@@ -22,7 +22,7 @@
 ;;;                  layer = jobs(task を置く jobs の層 — worker/core/job_cgroup)・ticket = job の名(task/<id>)・kind = task の名
 ;;;                  (JobSpec.task-name — coordinator の task の行の name をそのまま。種類への読み替えは読み手。無ければ null)・cpu = 子の
 ;;;                  CPU 秒(usage_usec — 子孫と shim を含む・ms まで)・peak_mib = 子の memory の山(memory.peak の MiB の切り捨て — 1024 以上 =
-;;;                  1 GiB 以上)・rc = 終了 code・stopped = 止めた訳(機体の memory の訳 — ReapJob.stop-reason。無ければ worker が止めを
+;;;                  1 GiB 以上)・rc = 終了 code(終わりを観測していない回収は null)・stopped = 止めた訳(機体の memory の訳 — ReapJob.stop-reason。無ければ worker が止めを
 ;;;                  求めた訳の語 — process_host の task-stop-word。止めを求めずに終わった task は null)。鍵の綴りは送り先の表の行の形に揃える
 ;;;                  (形を決めるのは上に載る系 — 同じ表に別の書き手の行が並ぶ)。子に置かなかった task(置き分けない worker・頼みの cgroup を
 ;;;                  受けない版の待ちの子から分けた task)と読めなかった値は null(0 で埋めない — 層の子に memory を掛ける前の子は memory.peak を
@@ -68,14 +68,14 @@
 
 (defrecord TaskEnd
   "回収した task 1 本の終わり(行の欄の元 — 頭の註の欄): job = job の名(task/<id>)・kind = task の名(無ければ None)・attempt = 試みの
-   番号・started-ms・ended-ms = 起こした刻と回収した刻(epoch ms)・exit-code = 終了 code・usage = 子の使い・stopped = 止めた訳
+   番号・started-ms・ended-ms = 起こした刻と回収した刻(epoch ms)・exit-code = 終了 code(終わりを観測していない回収は None)・usage = 子の使い・stopped = 止めた訳
    (無ければ None)。"
   (#^ str job)
   (#^ (| str None) kind)
   (#^ int attempt)
   (#^ int started-ms)
   (#^ int ended-ms)
-  (#^ int exit-code)
+  (#^ (| int None) exit-code)
   (#^ TaskUsage usage)
   (#^ (| str None) stopped))
 

@@ -914,7 +914,7 @@
    (終わった子の起こした刻と spec)・records = その action を数えた後の記憶(起こし直すまでの間は数えた後の続けて終わった回数で決まる)。"
   (tuple
     (gfor action actions
-          :if (and (isinstance action ReapJob) (= action.outcome Outcome.EXITED))
+          :if (and (isinstance action ReapJob) (= action.outcome Outcome.EXITED) (is-not action.exit-code None))
           :setv process (next (gfor p world.processes :if (and (= p.name action.name) (= p.pid action.pid)) p) None)
           :if (is-not process None)
           :setv record (.get records action.name (JobRecord action.name))

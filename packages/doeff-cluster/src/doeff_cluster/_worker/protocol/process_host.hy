@@ -475,7 +475,7 @@
 
 
 (defk recorded-task-end [settings started outcome exit-code stop-reason]
-  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: exit-code int) (: stop-reason (| str None))] :post [(: % None)]
+  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: exit-code (| int None)) (: stop-reason (| str None))] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
   "回収する task の終わりの行を、設定の送り先へ拍の外の task で 1 回送るため(worker/core/task_record — 常駐の job と、送り先の無い worker は
    送らない)。拍は送りの終わりを待たない — 送り先が遅い・届かない時も、回収と次の job の起動と状態の報告を止めない。"

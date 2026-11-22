@@ -74,25 +74,26 @@
     (resume "box-1")))
 
 
-(defk reaped-then-settled [settings started outcome stop-reason]
-  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: stop-reason (| str None))] :post [(: % int)]
+(defk reaped-then-settled [settings started outcome stop-reason [exit-code 3]]
+  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: stop-reason (| str None)) (: exit-code (| int None))] :post [(: % int)]
    :tags {:context "doeff-cluster-test" :role "program"}}
   "回収の時の行の送りを 1 回頼み(拍の代役)、頼みの間に進んだ模擬の ms を測ってから、送りの task が終わるまで待つため。答え = 頼みの間に
    進んだ模擬の ms(拍が送りを待たなければ 0)。"
   (<- began int (now-epoch-ms))
-  (<- (recorded-task-end settings started outcome 3 stop-reason))
+  (<- (recorded-task-end settings started outcome exit-code stop-reason))
   (<- asked int (now-epoch-ms))
   (<- (Delay SETTLE-SECONDS))
   (- asked began))
 
 
-(defk run-reaped [settings started collector told [outcome Outcome.EXITED] [stop-reason "memory-watch"]]
-  {:pre [(: settings HostSettings) (: started Started) (: collector Collector) (: told ToldLines) (: outcome Outcome) (: stop-reason (| str None))]
+(defk run-reaped [settings started collector told [outcome Outcome.EXITED] [stop-reason "memory-watch"] [exit-code 3]]
+  {:pre [(: settings HostSettings) (: started Started) (: collector Collector) (: told ToldLines) (: outcome Outcome) (: stop-reason (| str None))
+         (: exit-code (| int None))]
    :post [(: % int)] :tags {:context "doeff-cluster-test" :role "entry"}}
   "筋書き reaped-then-settled を、本物の file の答え手(子の cgroup の file の読み)・遅い送り先の代役・2026-11-16 12:00 UTC から進む模擬の
    時計の下で回すため。"
   (<- took int (scheduled (with-handlers [(sim-time-handler :start-time NOON) os-file-handler (recording-log told) (stand-in-collector collector)]
-                            (reaped-then-settled settings started outcome stop-reason))))
+                            (reaped-then-settled settings started outcome stop-reason exit-code))))
   took)
 
 
@@ -252,6 +253,19 @@
   (<- rows tuple (posted-fields collector))
   (setv #(#(_ _ fields _)) rows)
   (assert (= #((get fields "cpu") (get fields "peak_mib") (get fields "stopped")) #(None None "spec-changed")) fields))
+
+
+(deftest test-a-task-reaped-without-an-observed-exit-writes-null-rc [#^ Path tmp-path]
+  ;; 終わりを観測していない回収(ReapJob の exit-code が None)でも recorded-task-end は断らず、行の rc に null を書く。
+  (<- base HostSettings (host-settings tmp-path))
+  (val settings (dataclasses.replace base :task-record TARGET))
+  (val collector (Collector (HttpResponse 200 {} b"" "" ENDPOINT 0.0)))
+  (<- (run-reaped settings (Started :view (ProcessView "task/t8" TASK 1 1 0) :fork None) collector (ToldLines)
+                  :outcome Outcome.STOPPED :stop-reason None :exit-code None))
+  (<- rows tuple (posted-fields collector))
+  (setv #(#(_ _ fields _)) rows)
+  (assert (is (get fields "rc") None) fields)
+  (assert (= (get fields "stopped") "stopped") fields))
 
 
 (deftest test-the-stop-word-is-the-asked-reason-or-the-outcome
