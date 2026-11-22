@@ -61,7 +61,7 @@
 (val WarmAnswer (| WarmState WarmUnreachable))
 
 
-(defclass [(dataclass :frozen True)] WarmRuntimeEnv [EffectBase]
+(defclass [(dataclass :frozen True)] WarmRuntimeEnv [(get EffectBase WarmAnswer)]
   "env を needs の合う worker で温めるよう頼む(needs = 要る能力の名の frozenset・同じ env と needs の組は同じ行 — 頼み直すと期限だけ延びる)。
    ttl-seconds = 行の期限(過ぎた行は配らず・掃除の固定からも外れる)・holder = 頼んだ主体(記録と表示だけ)・urgent = 急ぎの名乗り
    (送り手の宣言 — 真なら、worker は行の root の待ちの子を、上に載る系の残す線を外した jobs の層の空きで起こしてよいか判じる。
@@ -77,7 +77,7 @@
   (setv #^ bool urgent False))
 
 
-(defclass [(dataclass :frozen True)] ReadWarmState [EffectBase]
+(defclass [(dataclass :frozen True)] ReadWarmState [(get EffectBase WarmAnswer)]
   "温める表の行 key の今の姿を読む。答え = WarmAnswer(WarmState — 表に無い行は ready も preparing も空・until-ms = 0 — か、
    coordinator に届かなかった WarmUnreachable)。"
   (#^ str key))
@@ -111,7 +111,7 @@
 (val WarmWaitAnswer (| WarmReady WarmFailed WarmWaitExpired))
 
 
-(defclass [(dataclass :frozen True)] AwaitWarm [EffectBase]
+(defclass [(dataclass :frozen True)] AwaitWarm [(get EffectBase WarmWaitAnswer)]
   "温める表の行 key が組み上がるか落ちるまで、timeout-seconds を上限に待つ。答え = WarmWaitAnswer(WarmReady・WarmFailed・WarmWaitExpired)。
    表に無い行・coordinator に届かない間・準備中・retryable の失敗は待ち続ける(期限で WarmWaitExpired)。"
   (#^ str key)

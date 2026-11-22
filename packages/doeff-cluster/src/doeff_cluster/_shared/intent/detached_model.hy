@@ -63,125 +63,6 @@
   (setv #^ str part ""))
 
 
-;; --- effect ----------------------------------------------------------------------
-
-(defclass [(dataclass :frozen True)] SubmitDetached [EffectBase]
-  "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・key = 呼び手の決めた job id(冪等の単位)・
-   needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides — ADR-DOE-CLUSTER-001 R4b)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
-   答え = DetachedSubmitted か DetachedUnreachable(coordinator に届かなかった — 送れたかは分からない。key で冪等なので送り直してよい)。
-   同じ key がまだ在れば何も作らない(created = False)。"
-  (#^ Program program)
-  (#^ str key)
-  (setv #^ (get frozenset str) needs (frozenset))
-  (setv #^ str name "")
-  (setv #^ float lease-seconds DETACHED-DEFAULT-LEASE-SECONDS)
-  (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)
-  ;; 子の環境変数(EnvVar の tuple・既定は空 — 名と値の規則は service の :environ と同じ EnvVar 1 つ)。同じ key の送り直しで違えば
-  ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
-  (setv #^ (get tuple #(EnvVar ...)) environ #())
-  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の予約の半分〔切り上げ〕を使わない)と同時数の上限の組(TaskLimit の tuple — 値は系の
-  ;; 宣言が持つ)。coordinator の置き方が守る(2026-10-11)。同じ key の送り直しの比べには入れない(置き方の名乗りで、仕事の中身ではない)。
-  ;; 形の検めは構築関数。
-  (setv #^ int priority 0)
-  (setv #^ (get tuple #(TaskLimit ...)) limits #())
-  ;; 知らせ先(2026-10-21): 終わった時に結末を知らせる先を呼び手が決めた 1 語で名乗る(空 = 知らせない)。coordinator は
-  ;; 中身を読まず、task が終わりへ移った歩で 1 度だけ出口(outbox — 下の節)へ積む。同じ key の送り直しの比べには入れない。
-  (setv #^ str notify "")
-  ;; memory の要り(2026-11-02): task 1 本の memory の山(MiB)。coordinator の置き先は、置いた task ごとに測った空きから「要り − 今の
-  ;; 使い」(まだ伸びる分)を予約し、要りが残りの空きに入る worker にだけ置く。needs の合うどの worker の線よりも大きい要りは積む時に
-  ;; 断る。要りは必須で、None(名乗らない)の送りは構築関数が TypeError で、受け口が 400 で断る(2026-11-02)。同じ key の送り直しの
-  ;; 比べには入れない。形の検めは構築関数。
-  (setv #^ (| int None) memory-mib None)
-  ;; 走らせ直しの名乗り(2026-11-04): 担い手の worker が消えた時(lease 切れ・止まり始めた worker が止めた)に、lost で終わらず同じ key の次の試行として
-  ;; 待ちの行へ戻す。次の試行は最初から走る(途中から続くのは Program が途中の結果を残す時だけ)ので、2 度走って困る仕事は名乗らない。沈黙から戻った
-  ;; 前の試行の process は worker が止める。回数は coordinator の上限まで(cluster_policy.RERUN-LIMIT — 予定した退きで止まった試行は数えない)・試行が変わると知らせ先へ出口の行(kind reran)を
-  ;; 積む。同じ key の送り直しの比べには入れない。
-  (setv #^ bool rerun False)
-  ;; 仕事の形(2026-11-10): 同じ程の memory を使う仕事に呼び手が付ける不透明な 1 語(空 = 名乗らない)。coordinator は worker の測りが名乗る
-  ;; task ごとの今の使いの最大を行に持ち、置き先の要りを、この task と同じ形の task(保持の間の終わった行を含む)の測った山から数える
-  ;; (measured_room.learned-need)— 同じ形に終わりまで走った回が在れば、名乗りが実の山より小さくても大きくても測った山 + 余裕で置かれる
-  ;; (名乗りは終わりまで測った山の無い回の見込み)。同じ key の
-  ;; 送り直しの比べには入れない。形の検めは構築関数。
-  (setv #^ str shape "")
-  ;; 仕事の形の族(2026-11-15 — ADR-DOE-CLUSTER-005 R4 の改め): 同じ程の memory を使う仕事の形の集まりに呼び手が付ける不透明な 1 語
-  ;; (空 = 名乗らない)。形に近い回の終わりまで走った行が無い task の要りを、coordinator は同じ族の形の近い回の測った山から数える
-  ;; (task_table.family-peaks-of — 引く順は 形の山 → 族の近い回の山 → 名乗り)。形を名乗らない task は族も名乗れない(構築関数と受け口が
-  ;; 断る)。同じ key の送り直しの比べには入れない。形の検めは構築関数。
-  (setv #^ str family "")
-  ;; 測った空きの門の外(2026-11-11): 真 = coordinator の置き先が機体の測った空き(CPU・memory・PSI)と予約を判じずに置く task(版の入れ替えの
-  ;; ような、混んだ時ほど要る仕事 — 空きを待つと混みが解けるまで走らない)。memory の要りを名乗らず(memory-mib は None)、同時数は系の
-  ;; 宣言の組(limits — 1 つ以上)の上限だけが限る。同じ key の送り直しの比べには入れない。形の検めは構築関数。
-  (setv #^ bool ungated False)
-  ;; 場所を譲る名乗り(2026-11-11): 真 = 優先の高い task(急ぎの優先 — coordinator/core/measured_room の KEEP-NOW-PRIORITY 以上)が memory の
-  ;; 空きに入らない時、coordinator がこの task(その task より優先の低い物だけ)を止めて場所を空けてよい。止めた task は走らせ直しの道で
-  ;; id の替わった次の試行として列へ戻り、最初から走る(担い手の消失の上限に数えない)。走らせ直し rerun も名乗る(構築関数と受け口が断る)。
-  ;; 名乗らない task は止めない(今までどおり)。同じ key の送り直しの比べには入れない。
-  (setv #^ bool preemptible False)
-  ;; 待ちの期限(2026-11-12): queued のまま置かれずに待ってよい長さの秒(None = 期限なし — 今までどおり置けるまで待つ)。積んだ刻(走らせ直しと
-  ;; 場所の譲りの次の試行は積み直した刻)から数え、この秒を越えても置かれない task を coordinator は phase cancelled で終え、detail に待った
-  ;; 長さと最後の置かれない理由を書く(cluster_policy.settle-detached)— 終わりなので知らせ先へ出口の終わりの行が届く。置いた task には効かない。
-  ;; 同じ key の送り直しの比べには入れない。形の検めは構築関数。
-  (setv #^ (| int None) queue-limit-seconds None)
-  (defn #^ None __post-init__ [self]
-    "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
-     EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
-     doeff_cluster._shared.core.detached_rules.submit-detached-task を通す(intent は core を読まない・#2564)。"
-    (when (not (and (isinstance self.environ tuple) (all (gfor v self.environ (isinstance v EnvVar)))))
-      (raise (TypeError (.format "SubmitDetached.environ: EnvVar の tuple(名 → 文字列の写像ではない — env-vars-of で組む): {!r}"
-                                 self.environ))))
-    (setv names (lfor v self.environ v.name))
-    (setv twice (sorted (sfor n names :if (> (.count names n) 1) n)))
-    (when twice
-      (raise (TypeError (+ "SubmitDetached.environ: 名が重なる(写像に戻すと片方が黙って消える): " (.join "・" twice)))))))
-
-
-(defclass [(dataclass :frozen True)] AwaitDetached [EffectBase]
-  "答え = DetachedOutcome(終わった)か DetachedPending(timeout-seconds を過ぎてもまだ終わらない)か DetachedUnreachable(timeout-seconds
-   を決めた待ちで coordinator に届かなかった — task の生死は分からない。死んだとみなさない。timeout-seconds = None の待ちは届くまで待つ)。呼び手が抜けても task は続く。
-   timeout-seconds = None なら終わるまで待つ。timeout は問い合わせの間隔の積算で数える。"
-  (#^ str key)
-  (setv #^ (| float None) timeout-seconds None))
-
-
-(defclass [(dataclass :frozen True)] CancelDetached [EffectBase]
-  "答え = bool。終わっていなければ取り消して True(以後の await は DetachedCancelled)。終わっていれば何もせず False(結果は保持)。
-   知らない key も False。"
-  (#^ str key))
-
-
-(defclass [(dataclass :frozen True)] ReleaseDetached [EffectBase]
-  "答え = bool。終わった task の保持を解いて True(以後その key は DetachedUnknown・同じ key で送り直せる)。知らない key は False。
-   まだ終わっていなければ DetachedRefused(先に取り消す)。"
-  (#^ str key))
-
-
-(defclass [(dataclass :frozen True)] ReadRunners [EffectBase]
-  "task を受ける担い手(worker)の名簿を読む — 生存と drain の正本は coordinator の名簿(heartbeat)1 つ。呼び手が置き先を選ぶ・
-   機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
-
-
-(defclass [(dataclass :frozen True)] AwaitRunnersChange [EffectBase]
-  "名簿を写す呼び手が、coordinator の版(資源の spec / status が変わるたびに進む数 — GET /watch)が after から変わるまで待つ(上限
-   timeout-seconds — coordinator の拍の刻で返るので、最大で拍 1 つ分長い)。名簿を周回ごとに読み直さず、変化で起きるための待ち(#1934)。
-   版に入らない変化(worker の生死の切り替わり)は上限で起きて読み直す。答え = RunnersChange(版と変わったか)・RunnersWatchMissing
-   (待つ口の無い旧い coordinator — 呼び手は周回に戻る)・RunnersUnreachable。after は前の答えの revision(最初は 0)。"
-  (#^ int after)
-  (setv #^ float timeout-seconds 1.0))
-
-
-(defclass [(dataclass :frozen True)] AwaitServiceReady [EffectBase]
-  "名を挙げた Service が Ready になるまで待つ(#3470 — 依る service の短い停止を落ちずに越える呼び手が、戻りを出来事として知るため。
-   使い手 = 依る service の変化を待つ合図の源・その service への追記の書き手)。coordinator の Service の status.serving(版を問わず process が
-   今答えているか — 宣言の新しい版が組めない間も、旧い版の process が答えていれば戻る。欄の無い旧い coordinator は status.ready が Ready
-   か)を読み、答えていなければ
-   coordinator の版(GET /watch)が変わるまで待って読み直す — 時間で起きて確かめない。上限は持たない(待つ側が上限つきで待つ)。
-   coordinator に届かない間も待ち続ける(間を置いて問い直すのは答え手の中だけ)。答え = ServiceReady。"
-  (#^ str name)
-  (defn #^ None __post_init__ [self]
-    (when (or (not (isinstance self.name str)) (not self.name))
-      (raise (ValueError (.format "AwaitServiceReady.name は空でない Service の名: {!r}" self.name))))))
-
-
 ;; --- 答え --------------------------------------------------------------------------
 
 (defclass [(dataclass :frozen True)] DetachedSubmitted []
@@ -395,6 +276,127 @@
 
 (setv DetachedAwaited (| DetachedOutcome DetachedPending DetachedUnreachable))
 (setv DetachedSubmitAnswer (| DetachedSubmitted DetachedUnreachable))
+
+;; --- effect ----------------------------------------------------------------------
+;; effect は答えの型を宣言する(利用側の `(<- answer (AwaitDetached key))` が答えの型を得る — 素の EffectBase では Any)ので、
+;; 答えの型(上の節)の後に置く。
+
+(defclass [(dataclass :frozen True)] SubmitDetached [(get EffectBase DetachedSubmitAnswer)]
+  "program = 未実行の Program(値 — handler は Program の中の with-handlers で並べる・ADR-DOE-CLUSTER-001 R1・R2)・key = 呼び手の決めた job id(冪等の単位)・
+   needs = 要る能力の名の frozenset(置く worker は needs ⊆ provides — ADR-DOE-CLUSTER-001 R4b)・lease-seconds = 担い手の worker が沈黙してから消失とみなすまで・retain-seconds = 結果の保持。
+   答え = DetachedSubmitted か DetachedUnreachable(coordinator に届かなかった — 送れたかは分からない。key で冪等なので送り直してよい)。
+   同じ key がまだ在れば何も作らない(created = False)。"
+  (#^ Program program)
+  (#^ str key)
+  (setv #^ (get frozenset str) needs (frozenset))
+  (setv #^ str name "")
+  (setv #^ float lease-seconds DETACHED-DEFAULT-LEASE-SECONDS)
+  (setv #^ float retain-seconds DETACHED-DEFAULT-RETAIN-SECONDS)
+  ;; 子の環境変数(EnvVar の tuple・既定は空 — 名と値の規則は service の :environ と同じ EnvVar 1 つ)。同じ key の送り直しで違えば
+  ;; 別の仕事(409)。名 → 値の写像では受けない(呼び手は境目で env-vars-of を通す・coordinator への本文は handler が env-mapping で綴る・#2179)。
+  (setv #^ (get tuple #(EnvVar ...)) environ #())
+  ;; 置く順の優先(大きいほど先・負 = 背景の仕事で worker の予約の半分〔切り上げ〕を使わない)と同時数の上限の組(TaskLimit の tuple — 値は系の
+  ;; 宣言が持つ)。coordinator の置き方が守る(2026-10-11)。同じ key の送り直しの比べには入れない(置き方の名乗りで、仕事の中身ではない)。
+  ;; 形の検めは構築関数。
+  (setv #^ int priority 0)
+  (setv #^ (get tuple #(TaskLimit ...)) limits #())
+  ;; 知らせ先(2026-10-21): 終わった時に結末を知らせる先を呼び手が決めた 1 語で名乗る(空 = 知らせない)。coordinator は
+  ;; 中身を読まず、task が終わりへ移った歩で 1 度だけ出口(outbox — 下の節)へ積む。同じ key の送り直しの比べには入れない。
+  (setv #^ str notify "")
+  ;; memory の要り(2026-11-02): task 1 本の memory の山(MiB)。coordinator の置き先は、置いた task ごとに測った空きから「要り − 今の
+  ;; 使い」(まだ伸びる分)を予約し、要りが残りの空きに入る worker にだけ置く。needs の合うどの worker の線よりも大きい要りは積む時に
+  ;; 断る。要りは必須で、None(名乗らない)の送りは構築関数が TypeError で、受け口が 400 で断る(2026-11-02)。同じ key の送り直しの
+  ;; 比べには入れない。形の検めは構築関数。
+  (setv #^ (| int None) memory-mib None)
+  ;; 走らせ直しの名乗り(2026-11-04): 担い手の worker が消えた時(lease 切れ・止まり始めた worker が止めた)に、lost で終わらず同じ key の次の試行として
+  ;; 待ちの行へ戻す。次の試行は最初から走る(途中から続くのは Program が途中の結果を残す時だけ)ので、2 度走って困る仕事は名乗らない。沈黙から戻った
+  ;; 前の試行の process は worker が止める。回数は coordinator の上限まで(cluster_policy.RERUN-LIMIT — 予定した退きで止まった試行は数えない)・試行が変わると知らせ先へ出口の行(kind reran)を
+  ;; 積む。同じ key の送り直しの比べには入れない。
+  (setv #^ bool rerun False)
+  ;; 仕事の形(2026-11-10): 同じ程の memory を使う仕事に呼び手が付ける不透明な 1 語(空 = 名乗らない)。coordinator は worker の測りが名乗る
+  ;; task ごとの今の使いの最大を行に持ち、置き先の要りを、この task と同じ形の task(保持の間の終わった行を含む)の測った山から数える
+  ;; (measured_room.learned-need)— 同じ形に終わりまで走った回が在れば、名乗りが実の山より小さくても大きくても測った山 + 余裕で置かれる
+  ;; (名乗りは終わりまで測った山の無い回の見込み)。同じ key の
+  ;; 送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ str shape "")
+  ;; 仕事の形の族(2026-11-15 — ADR-DOE-CLUSTER-005 R4 の改め): 同じ程の memory を使う仕事の形の集まりに呼び手が付ける不透明な 1 語
+  ;; (空 = 名乗らない)。形に近い回の終わりまで走った行が無い task の要りを、coordinator は同じ族の形の近い回の測った山から数える
+  ;; (task_table.family-peaks-of — 引く順は 形の山 → 族の近い回の山 → 名乗り)。形を名乗らない task は族も名乗れない(構築関数と受け口が
+  ;; 断る)。同じ key の送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ str family "")
+  ;; 測った空きの門の外(2026-11-11): 真 = coordinator の置き先が機体の測った空き(CPU・memory・PSI)と予約を判じずに置く task(版の入れ替えの
+  ;; ような、混んだ時ほど要る仕事 — 空きを待つと混みが解けるまで走らない)。memory の要りを名乗らず(memory-mib は None)、同時数は系の
+  ;; 宣言の組(limits — 1 つ以上)の上限だけが限る。同じ key の送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ bool ungated False)
+  ;; 場所を譲る名乗り(2026-11-11): 真 = 優先の高い task(急ぎの優先 — coordinator/core/measured_room の KEEP-NOW-PRIORITY 以上)が memory の
+  ;; 空きに入らない時、coordinator がこの task(その task より優先の低い物だけ)を止めて場所を空けてよい。止めた task は走らせ直しの道で
+  ;; id の替わった次の試行として列へ戻り、最初から走る(担い手の消失の上限に数えない)。走らせ直し rerun も名乗る(構築関数と受け口が断る)。
+  ;; 名乗らない task は止めない(今までどおり)。同じ key の送り直しの比べには入れない。
+  (setv #^ bool preemptible False)
+  ;; 待ちの期限(2026-11-12): queued のまま置かれずに待ってよい長さの秒(None = 期限なし — 今までどおり置けるまで待つ)。積んだ刻(走らせ直しと
+  ;; 場所の譲りの次の試行は積み直した刻)から数え、この秒を越えても置かれない task を coordinator は phase cancelled で終え、detail に待った
+  ;; 長さと最後の置かれない理由を書く(cluster_policy.settle-detached)— 終わりなので知らせ先へ出口の終わりの行が届く。置いた task には効かない。
+  ;; 同じ key の送り直しの比べには入れない。形の検めは構築関数。
+  (setv #^ (| int None) queue-limit-seconds None)
+  (defn #^ None __post-init__ [self]
+    "environ が EnvVar の重ならない tuple であることを作る時に検める(名 → 値の写像・名の重なりを黙って受けない。予約の名・秘密の名は
+     EnvVar が作る時に断る)。needs の検め(能力の名の空でない frozenset — 旧い Requirement の tuple を断る)は型の外 — 作り手は構築関数
+     doeff_cluster._shared.core.detached_rules.submit-detached-task を通す(intent は core を読まない・#2564)。"
+    (when (not (and (isinstance self.environ tuple) (all (gfor v self.environ (isinstance v EnvVar)))))
+      (raise (TypeError (.format "SubmitDetached.environ: EnvVar の tuple(名 → 文字列の写像ではない — env-vars-of で組む): {!r}"
+                                 self.environ))))
+    (setv names (lfor v self.environ v.name))
+    (setv twice (sorted (sfor n names :if (> (.count names n) 1) n)))
+    (when twice
+      (raise (TypeError (+ "SubmitDetached.environ: 名が重なる(写像に戻すと片方が黙って消える): " (.join "・" twice)))))))
+
+
+(defclass [(dataclass :frozen True)] AwaitDetached [(get EffectBase DetachedAwaited)]
+  "答え = DetachedOutcome(終わった)か DetachedPending(timeout-seconds を過ぎてもまだ終わらない)か DetachedUnreachable(timeout-seconds
+   を決めた待ちで coordinator に届かなかった — task の生死は分からない。死んだとみなさない。timeout-seconds = None の待ちは届くまで待つ)。呼び手が抜けても task は続く。
+   timeout-seconds = None なら終わるまで待つ。timeout は問い合わせの間隔の積算で数える。"
+  (#^ str key)
+  (setv #^ (| float None) timeout-seconds None))
+
+
+(defclass [(dataclass :frozen True)] CancelDetached [(get EffectBase bool)]
+  "答え = bool。終わっていなければ取り消して True(以後の await は DetachedCancelled)。終わっていれば何もせず False(結果は保持)。
+   知らない key も False。"
+  (#^ str key))
+
+
+(defclass [(dataclass :frozen True)] ReleaseDetached [(get EffectBase bool)]
+  "答え = bool。終わった task の保持を解いて True(以後その key は DetachedUnknown・同じ key で送り直せる)。知らない key は False。
+   まだ終わっていなければ DetachedRefused(先に取り消す)。"
+  (#^ str key))
+
+
+(defclass [(dataclass :frozen True)] ReadRunners [(get EffectBase RunnersAnswer)]
+  "task を受ける担い手(worker)の名簿を読む — 生存と drain の正本は coordinator の名簿(heartbeat)1 つ。呼び手が置き先を選ぶ・
+   機体の戻りを待つための読み。答え = RunnerFact の tuple(名の順)か RunnersUnreachable。")
+
+
+(defclass [(dataclass :frozen True)] AwaitRunnersChange [(get EffectBase RunnersChangeAnswer)]
+  "名簿を写す呼び手が、coordinator の版(資源の spec / status が変わるたびに進む数 — GET /watch)が after から変わるまで待つ(上限
+   timeout-seconds — coordinator の拍の刻で返るので、最大で拍 1 つ分長い)。名簿を周回ごとに読み直さず、変化で起きるための待ち(#1934)。
+   版に入らない変化(worker の生死の切り替わり)は上限で起きて読み直す。答え = RunnersChange(版と変わったか)・RunnersWatchMissing
+   (待つ口の無い旧い coordinator — 呼び手は周回に戻る)・RunnersUnreachable。after は前の答えの revision(最初は 0)。"
+  (#^ int after)
+  (setv #^ float timeout-seconds 1.0))
+
+
+(defclass [(dataclass :frozen True)] AwaitServiceReady [(get EffectBase ServiceReady)]
+  "名を挙げた Service が Ready になるまで待つ(#3470 — 依る service の短い停止を落ちずに越える呼び手が、戻りを出来事として知るため。
+   使い手 = 依る service の変化を待つ合図の源・その service への追記の書き手)。coordinator の Service の status.serving(版を問わず process が
+   今答えているか — 宣言の新しい版が組めない間も、旧い版の process が答えていれば戻る。欄の無い旧い coordinator は status.ready が Ready
+   か)を読み、答えていなければ
+   coordinator の版(GET /watch)が変わるまで待って読み直す — 時間で起きて確かめない。上限は持たない(待つ側が上限つきで待つ)。
+   coordinator に届かない間も待ち続ける(間を置いて問い直すのは答え手の中だけ)。答え = ServiceReady。"
+  (#^ str name)
+  (defn #^ None __post_init__ [self]
+    (when (or (not (isinstance self.name str)) (not self.name))
+      (raise (ValueError (.format "AwaitServiceReady.name は空でない Service の名: {!r}" self.name))))))
+
 
 
 (defrecord DetachedRetarget

@@ -26,7 +26,8 @@
   "The last 43 rows of doeff-records were removed and its entry became empty. The submodules they name (admission, http_server, laws, main, maintenance, memory, pg, pg_sql, schema_digest, service, typed, values, wire) are all hidden with _ (R5), so the rows were read by name and root alone as the 13 names the entry point shows, and the inventory verifies an allowed shape for each: the 9 schema declaration types (ByKeySuffix, DescendingWithin, FieldDecl, KeepFor, KeepForever, RecordsSchema, RememberKeysFor, RememberNoKeys, TableDecl — reached from MemoryStore.schema and PreparedStore.schema through RecordsSchema.tables and the fields of TableDecl and StreamDecl) are handler setting types, RowChanged and RowRemoved are effect answer types (ChangeLog.changes, Changes.items), StoreUnreachable at the entry point is the exception class of the pg handler (the record of the same name in http_server is no longer shown), and purge_expired at the entry point is the program helper of pg (R25). 11 of the names already had rows in the allowed table; DescendingWithin and FieldDecl (the 2 rows of the group \"Violation — annotate the factory arguments or move inside\") moved to the group \"Allowed — handler setting type\" on the basis of R2.",
   "The last 4 rows of the doeff-core-effects group \"Violation — annotate the factory arguments or move inside\" were removed and the doeff-core-effects entry became empty. StackDumpLedger and stack_dumps_at (the ledger and counting of the stack-dump watchdog) left the entry point and stay in the inner _stack_dump_effects: the factory watched_stack_dump_handler(watch) now holds the ledger, takes only the real watchdog as a function of the new deadline, and builds memory_stack_dump_handler and faulthandler_stack_dump_handler. SqliteFile left the entry point and stays in the inner _sqlite_file_sql: open_sqlite_files now takes a dict of database name to file path. The outside caller (agora-controllers controllers/foundation/stack_dumps.hy and sqlite_store.hy) was rewritten first, the order of ADR-DOE-API-001 R20 (doeff efc1c68d, agora-controllers 696d8c684d); the 3 rows of stack_dumps_at in the group \"Allowed — program helper\" of the allowed table were removed with them.",
   "The 81 names of doeff-cluster defined in the section _shared that the inventory reads as fitting an allowed shape (357 rows — 351 rows of the group \"Violation — move to an inner module\" and 6 rows of \"added names\") were moved to the allowed table at the entry point doeff_cluster, without changing code: 30 effect answer types, 19 effect value types and 9 handler setting types (R2), 16 conversion functions (R35), 6 program helpers that outside repos use (R18, R25) and 1 builder (R37). The names were sorted by direction of fix name by name, counting the callers in the origin/main of outside repos.",
-  "The 45 names of doeff-cluster defined in the sections _coordinator, _foundation, _sim, _worker that the inventory reads as fitting an allowed shape (132 rows) were moved to the allowed table at the entry point doeff_cluster, without changing code: 12 conversion function, 3 effect answer type, 16 effect value type, 7 handler setting type, 5 program helper, 2 program-shape builder and type. Allowed rows of the same names at old submodule paths, which the entry rows replace, were removed. cut_lines stays in the group \"Violation — move to an inner module\": the class CutLines it returns is not shown by the package, so it does not fit the builder group."
+  "The 45 names of doeff-cluster defined in the sections _coordinator, _foundation, _sim, _worker that the inventory reads as fitting an allowed shape (132 rows) were moved to the allowed table at the entry point doeff_cluster, without changing code: 12 conversion function, 3 effect answer type, 16 effect value type, 7 handler setting type, 5 program helper, 2 program-shape builder and type. Allowed rows of the same names at old submodule paths, which the entry rows replace, were removed. cut_lines stays in the group \"Violation — move to an inner module\": the class CutLines it returns is not shown by the package, so it does not fit the builder group.",
+  "The 17 names of doeff-cluster that its effects answer (56 rows) were moved to the allowed table at the entry point doeff_cluster as effect answer types, after the effects of _shared/intent/detached_model.hy and warm_model.hy declared their answer types (EffectBase[T]). Allowed rows of the same names at old submodule paths were removed."
  ],
  "packages": {
   "doeff-adr": {
@@ -63,9 +64,7 @@
       "WorkerGone"
      ],
      "doeff_cluster.coordinator.core.detached_policy": [
-      "DETACHED_DEFAULT_LEASE_SECONDS",
-      "DetachedCancelled",
-      "DetachedSubmitted"
+      "DETACHED_DEFAULT_LEASE_SECONDS"
      ],
      "doeff_cluster.coordinator.core.drain_policy": [
       "service_readiness"
@@ -92,8 +91,7 @@
       "tick_due"
      ],
      "doeff_cluster.coordinator.core.warm_policy": [
-      "WarmFailure",
-      "WarmState"
+      "WarmFailure"
      ],
      "doeff_cluster.coordinator.entry.handler_sets": [
       "WORKER_NOTICE_ROUTES",
@@ -106,8 +104,6 @@
       "process_lines"
      ],
      "doeff_cluster.coordinator.intent.cluster_model": [
-      "DetachedCancelled",
-      "DetachedSubmitted",
       "UnplacedKind",
       "WorkerLoad"
      ],
@@ -116,10 +112,7 @@
       "WorkerGone"
      ],
      "doeff_cluster.coordinator.protocol.replies": [
-      "DetachedCancelled",
-      "DetachedSubmitted",
-      "LeaseAnswer",
-      "WarmState"
+      "LeaseAnswer"
      ],
      "doeff_cluster.coordinator.protocol.request_bodies": [
       "responded"
@@ -169,8 +162,7 @@
       "RecordArgument"
      ],
      "doeff_cluster.shared.core.detached_rules": [
-      "DETACHED_DEFAULT_LEASE_SECONDS",
-      "DetachedSubmitAnswer"
+      "DETACHED_DEFAULT_LEASE_SECONDS"
      ],
      "doeff_cluster.shared.core.lease_rules": [
       "FENCE_MARGIN_MS",
@@ -209,9 +201,6 @@
       "STANDBY"
      ],
      "doeff_cluster.shared.core.service_back": [
-      "RunnersChange",
-      "RunnersUnreachable",
-      "RunnersWatchMissing",
       "SERVICE_BACK_CHANGE_SECONDS",
       "ServiceReady"
      ],
@@ -220,9 +209,7 @@
       "environ_overlay_refusal"
      ],
      "doeff_cluster.shared.core.warm_rules": [
-      "WarmFailure",
-      "WarmState",
-      "WarmUnreachable"
+      "WarmFailure"
      ],
      "doeff_cluster.shared.entry.client_foundation": [
       "with_detached_client"
@@ -252,22 +239,7 @@
      ],
      "doeff_cluster.shared.intent.detached_model": [
       "DETACHED_DEFAULT_LEASE_SECONDS",
-      "DetachedAwaited",
-      "DetachedCancelled",
-      "DetachedEnvUnavailable",
-      "DetachedFailed",
-      "DetachedLost",
-      "DetachedPending",
-      "DetachedSubmitAnswer",
-      "DetachedSubmitted",
-      "DetachedSucceeded",
-      "DetachedUnrunnable",
-      "DetachedVersionMismatch",
       "RunnerFact",
-      "RunnersChange",
-      "RunnersChangeAnswer",
-      "RunnersUnreachable",
-      "RunnersWatchMissing",
       "ServiceListWire",
       "ServiceReady"
      ],
@@ -311,36 +283,17 @@
       "WorkerFactName"
      ],
      "doeff_cluster.shared.intent.warm_model": [
-      "WarmFailure",
-      "WarmState",
-      "WarmUnreachable"
+      "WarmFailure"
      ],
      "doeff_cluster.shared.protocol.checkout_reads": [
       "SENDER_SOURCE_DIR"
      ],
      "doeff_cluster.shared.protocol.detached": [
-      "DetachedAwaited",
-      "DetachedCancelled",
-      "DetachedEnvUnavailable",
-      "DetachedFailed",
-      "DetachedLost",
-      "DetachedPending",
-      "DetachedSubmitAnswer",
-      "DetachedSubmitted",
-      "DetachedSucceeded",
-      "DetachedUnrunnable",
-      "DetachedVersionMismatch",
       "RunnerFact",
-      "RunnersChange",
-      "RunnersChangeAnswer",
-      "RunnersUnreachable",
-      "RunnersWatchMissing",
       "ServiceListWire",
       "ServiceReady",
       "TaskFailed",
       "TaskSucceeded",
-      "WarmState",
-      "WarmUnreachable",
       "encode_program",
       "hyx_runtime_env_XgreaterHthan_signXjson",
       "service_readiness"
@@ -395,18 +348,11 @@
       "CodeView",
       "DRAIN_DEADLINE_SECONDS",
       "DeclaredReply",
-      "DetachedAwaited",
-      "DetachedSubmitAnswer",
-      "DetachedSubmitted",
       "HOST_CONTRACT",
       "LeaseAnswer",
       "ProbeState",
       "ProbeView",
       "ProcessView",
-      "RunnersChange",
-      "RunnersChangeAnswer",
-      "RunnersUnreachable",
-      "RunnersWatchMissing",
       "SEMAPHORE_PREFIX",
       "SIM_PASSABLE",
       "SIM_START_MS",
@@ -416,7 +362,6 @@
       "TaskFailed",
       "TaskSucceeded",
       "WORKER_NOTICE_READS",
-      "WarmState",
       "WorkerGone",
       "WorldView",
       "current_platform",

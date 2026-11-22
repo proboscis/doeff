@@ -242,8 +242,43 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "DetachedAwaited",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedCancelled",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "DetachedEnded",
    "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedEnvUnavailable",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedFailed",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedLost",
+   "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -264,6 +299,13 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "DetachedOutboxAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedPending",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -292,6 +334,27 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "DetachedRetargetAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedSubmitAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedSubmitted",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedSucceeded",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -341,6 +404,20 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "DetachedUnreachable",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedUnrunnable",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedVersionMismatch",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -739,6 +816,34 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "RunnersChange",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RunnersChangeAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RunnersUnreachable",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RunnersWatchMissing",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "RuntimeEnv",
    "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
@@ -888,6 +993,20 @@
    "module": "doeff_cluster",
    "name": "TaskLimit",
    "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WarmState",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "WarmUnreachable",
+   "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
