@@ -21,7 +21,7 @@
 (import doeff_core_effects [scheduled])
 (import doeff_events [MemoryBroker])
 (import doeff_time [Delay GetTimeEffect SimClock sim-time-handler])
-(import doeff_cluster [now-epoch-ms datetime-of-epoch-ms])
+(import doeff_cluster [now-epoch-ms] doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster [ClusterTiming NextRequests Reply Request CoordinatorStopRequested])
 (import doeff_cluster [http-request])
 (import doeff_cluster._foundation.coordinator_inbox [RequestInbox RawRequest ReplySlot])

@@ -27,7 +27,7 @@
 (import tests.program_rows [SAMPLE-RUN program-placed])
 (import tests.env_fixtures [LOCK env-of])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff [run])
 (import json)
 (import os)

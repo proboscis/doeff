@@ -16,9 +16,9 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster [DueNow DueNever]
         doeff_cluster._shared.intent.due_model [DueAt])
-(import doeff_cluster [task-due liveness-due sweep-due]
+(import doeff_cluster._coordinator.core.cluster_policy [task-due liveness-due sweep-due]
         doeff_cluster._coordinator.core.cluster_policy [tasks-placed note-liveness liveness-deadline])
-(import doeff_cluster [tick tick-due])
+(import doeff_cluster [tick] doeff_cluster._coordinator.core.api_policy [tick-due])
 (import tests.state_rows [table-from-rows])
 
 

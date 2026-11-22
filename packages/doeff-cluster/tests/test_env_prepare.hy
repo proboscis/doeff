@@ -28,7 +28,7 @@
 (import doeff_time [SimClock sim-time-handler GetMonotonic Delay])
 (import doeff_cluster [RepoCheckout NativeWheel PythonProject EnvVar RuntimeEnv RuntimeEnvInvalid InvalidKind]
         doeff_cluster._shared.intent.runtime_env_model [ToolRequirement EnvFailure EnvFailureKind])
-(import doeff_cluster [env-key dependency-key runtime-env->json runtime-env-of-json]
+(import doeff_cluster [env-key dependency-key runtime-env-of-json] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json]
         doeff_cluster._shared.core.runtime_env_rules [repo-source-material key-material])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue LayerSample layer-sample->json])
 (import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]

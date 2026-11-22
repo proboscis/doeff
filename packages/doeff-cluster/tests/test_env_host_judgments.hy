@@ -32,15 +32,15 @@
         doeff_core_effects._file_effects [file-done])
 (import doeff_core_effects [StartProcess PollProcess StopProcess RunProcess ProcessOutcome ProcessStarted ProcessRunning ProcessExited])
 (import doeff_time [Delay SetTime SimClock sim-time-handler sync-time-handler])
-(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailureKind])
 (import doeff_cluster [RepoCheckout PythonProject RuntimeEnv]
         doeff_cluster._shared.intent.runtime_env_model [CHILD-PROTOCOL])
-(import doeff_cluster [runtime-env->json runtime-env-of-json env-key])
+(import doeff_cluster [runtime-env-of-json env-key] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [ENV-MARKER])
 (import doeff_cluster [EnvMarker]
         doeff_cluster._worker.intent.env_prepare_model [EnvReady])
-(import doeff_cluster [env-marker->json])
+(import doeff_cluster._worker.core.env_prepare [env-marker->json])
 (import doeff_cluster._worker.protocol.env_translation [answer-json])
 (import doeff_cluster [env-host]
         doeff_cluster._worker.protocol.env_store [EnvSettings ENV-TOOL env-root WARM-REFUSED-LOG MEMORY-UNMEASURED-LOG])
