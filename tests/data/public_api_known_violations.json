@@ -740,6 +740,11 @@
    "scope": "in scope",
    "names": {}
   },
+  "doeff-design-gate": {
+   "scope": "out of scope",
+   "basis": "A Rust binary crate that the merge queue builds and runs as the merge-time gate of doeff; it has no Python package, is not published, and shows users nothing.",
+   "names": {}
+  },
   "doeff-docker": {
    "scope": "in scope",
    "names": {}
