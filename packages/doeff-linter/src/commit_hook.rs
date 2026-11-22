@@ -525,6 +525,20 @@ pub enum Measured {
     Failed(String),
 }
 
+/// Thread count of a child linter's rayon pool when the caller did not set RAYON_NUM_THREADS. The child measures a few staged files, so the default pool (one
+/// thread per core) only adds the CPU of thread coordination, and on a loaded machine that coordination is most of the run: on a 36-core machine at load 30,
+/// one `--commit-hook` on a 2-file commit took 61 s of CPU (sys 50 s) with the default pool and 10 s (sys 3 s) with 4 threads, in a shorter wall time (4 s
+/// against 3 to 10 s). The same measurement set SINGLE_FILE_THREADS for the single-file run.
+pub const CHILD_THREADS: usize = 4;
+
+/// Pure: the RAYON_NUM_THREADS value to give a child linter -- the caller's own value if it set one (kept as is, so other counts can be measured), otherwise CHILD_THREADS.
+pub fn child_threads(caller: Option<&std::ffi::OsStr>) -> std::ffi::OsString {
+    match caller {
+        Some(value) if !value.is_empty() => value.to_os_string(),
+        _ => CHILD_THREADS.to_string().into(),
+    }
+}
+
 /// Runs the child linter with editor-json, and if it finishes within the limit, reads the output (if timeout is None, waits until it finishes; the limit is measured in the child's CPU seconds --
 /// cut_measure). Exit codes 0, 1, 3, and 4 count as measured (judged by the contents), and anything else is a failure with a reason.
 pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Duration>) -> Measured {
@@ -534,6 +548,7 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Dura
         .args(["--output-format", "editor-json", "--no-log"])
         .args(&run.args)
         .env(crate::check_slot::GATED_ENV, "1")
+        .env("RAYON_NUM_THREADS", child_threads(std::env::var_os("RAYON_NUM_THREADS").as_deref()))
         .current_dir(cwd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -1788,6 +1803,37 @@ mod tests {
         assert_eq!(cut_measure(s(16), Some(s(1)), s(4)), Some(Measure::WallBackstop));
         assert_eq!(cut_measure(s(3), None, s(4)), None);
         assert_eq!(cut_measure(s(4), None, s(4)), Some(Measure::Wall));
+    }
+
+    /// A child linter gets a small rayon pool unless the caller chose one -- an unset or empty RAYON_NUM_THREADS becomes CHILD_THREADS, a set value is kept.
+    #[test]
+    fn commit_hook_child_threads_caps_the_pool_unless_the_caller_set_one() {
+        use std::ffi::{OsStr, OsString};
+        assert_eq!(child_threads(None), OsString::from("4"));
+        assert_eq!(child_threads(Some(OsStr::new(""))), OsString::from("4"));
+        assert_eq!(child_threads(Some(OsStr::new("12"))), OsString::from("12"));
+    }
+
+    /// The child that run_linter starts sees RAYON_NUM_THREADS = CHILD_THREADS (the default pool of one thread per core made a few-file commit cost 61 s of
+    /// CPU on a loaded 36-core machine). The child here is a script that prints the value as a JSON report.
+    #[cfg(unix)]
+    #[test]
+    fn commit_hook_run_linter_gives_the_child_a_small_thread_pool() {
+        use std::os::unix::fs::PermissionsExt;
+        if std::env::var_os("RAYON_NUM_THREADS").is_some() {
+            return; // the caller chose a count, which child_threads keeps (the pure test above covers that)
+        }
+        let dir = unique_dir(&std::env::temp_dir(), "doeff-linter-child-threads").unwrap();
+        let script = dir.join("child.sh");
+        std::fs::write(&script, "#!/bin/sh\nprintf '{\"threads\": \"%s\"}' \"$RAYON_NUM_THREADS\"\n").unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let run = LintRun { side: Side::Tip, rules: ids(&["DOEFF016"]), args: Vec::new() };
+        let measured = run_linter(&script, &dir, &run, None);
+        let _ = std::fs::remove_dir_all(&dir);
+        match measured {
+            Measured::Report(report) => assert_eq!(report["threads"], "4"),
+            _ => panic!("the child script did not report"),
+        }
     }
 
     /// Reads the sum of utime, stime, cutime, and cstime of /proc/<pid>/stat (the 14th to 17th; 1/100 second). Not confused by ')' and spaces in the name field.
