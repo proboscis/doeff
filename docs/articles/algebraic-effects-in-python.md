@@ -4,11 +4,11 @@ Algebraic effects in Python, with doeff, an open-source library whose core is wr
 
 This post stacks such handlers around one small program, one layer at a time; if you know what `yield` does, you know most of what you need.
 
-First, the idea in a short video: what algebraic effects are, then how doeff writes them: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
+First, the idea in a short video: what algebraic effects are for and what they are, then how doeff writes them: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
 
-[![Video (3:14): what algebraic effects are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/0PKybv3mY6I/maxresdefault.jpg)](https://youtu.be/0PKybv3mY6I)
+[![Video (3:45): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/0PKybv3mY6I/maxresdefault.jpg)](https://youtu.be/0PKybv3mY6I)
 
-[The same video as an mp4 file (3:14)](../assets/videos/article-concept.mp4)
+[The same video as an mp4 file (3:45)](../assets/videos/article-concept.mp4)
 
 Then the card fight this post builds on, as one function with handlers stacked around it:
 
