@@ -10,7 +10,7 @@
 (import pytest)
 (import doeff_time [Delay])
 (import doeff_events [ArmedTimer ArmTimerEffect DisarmTimerEffect Publish WaitForEventEffect PublishEffect event-handler timer-handler])
-(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster [sim-cluster SimOutside SimDeadlockError AwaitProcessStarted CutWorker SimProcess SIM-START-MS]
         doeff_cluster._sim.local [SimDeadlock WaitSnapshot LiveProcess BusinessWait deadlock-of earliest-due])

@@ -14,7 +14,7 @@
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord])
 (import doeff_cluster._coordinator.core [cluster_policy :as cluster-policy])
-(import doeff_cluster [task-due]
+(import doeff_cluster._coordinator.core.cluster_policy [task-due]
         doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
 (import doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_hy._table [table-of])

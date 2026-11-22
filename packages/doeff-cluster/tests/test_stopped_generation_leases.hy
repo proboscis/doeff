@@ -16,7 +16,7 @@
 (import doeff_cluster [http-request])
 (import doeff_cluster [lease-holder holder-tokens-prefix])
 (import doeff_cluster [ClusterState])
-(import doeff_cluster [tick tick-due])
+(import doeff_cluster [tick] doeff_cluster._coordinator.core.api_policy [tick-due])
 (import doeff_cluster._shared.intent.due_model [DueAt DueNow DueNever])
 (import doeff_cluster._coordinator.intent.cluster_model [Watcher WatchRefusal WatchStep])
 (import doeff_cluster._coordinator.core.watch_policy [watch-of settle-watch])

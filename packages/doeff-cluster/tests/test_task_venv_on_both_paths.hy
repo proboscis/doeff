@@ -52,7 +52,7 @@
 (import doeff_cluster [HOST-CONTRACT])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [CodeLayout ForgetWarmChild StartWarmChild StopWarmChild StopStage WorkerPolicy]
         doeff_cluster._worker.intent.worker_model [WarmLaunch WarmChildView])
 (import doeff_cluster [ObserveWarmChildren])
