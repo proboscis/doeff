@@ -22,14 +22,17 @@
  {"id": "b5", "text": "With Confirm, the handler also gets k: the rest of order, paused at the yield."},
  {"id": "b6", "text": "It resumes k with True, and order returns bought, 3."},
  {"id": "b7", "text": "It could also keep k for later, or never resume it. Either way, k is resumed at most once."},
- {"id": "s1", "text": "Handlers stack around the function. Swap the stack, and the same function runs another way."},
+ {"id": "w1", "text": "Keeping k for later is the third use: scheduling. Take a card game."},
+ {"id": "w2", "text": "A poison hurts the enemy at the end of each of the next five turns. It is a plain loop: wait for the turn to end, then hurt."},
+ {"id": "w3", "text": "TurnEnds is an effect. Its handler is the game's turn clock: it keeps k, the rest of poison, and resumes it when the turn ends."},
+ {"id": "w4", "text": "A damage number that rises on screen is the same loop on another clock: it waits a tenth of a second."},
+ {"id": "w5", "text": "Two handlers, stacked: two kinds of time, with no locks and no events."},
+ {"id": "s1", "text": "The fourth use is swapping. Handlers stack around the function: swap the stack, and the same function runs another way."},
  {"id": "s2", "text": "Tests, replay, a bot, many at once, production. order does not change a line."},
- {"id": "e1", "text": "To start, pip install doeff. Then you need three things: @do, yield, and a handler."},
  {"id": "c1", "text": "The article needs a bigger program, so it uses battle: one small card fight."},
  {"id": "c2", "text": "Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP."},
  {"id": "c3", "text": "It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count."},
  {"id": "c4", "text": "And each of those can be answered in many ways: by a script, a bot, a tape, or a person."},
- {"id": "c5", "text": "Scheduling is an effect too. A poison that lasts five turns is a plain loop: it waits for the end of a turn, and the game's own handler keeps the rest of it until then."},
- {"id": "c6", "text": "A number that rises on screen is the same kind of loop on another clock: it waits a tenth of a second. Two handlers, stacked around one fight, with no locks and no events."},
- {"id": "e2", "text": "The article runs battle under six stacks, and does not change a line of it."}
+ {"id": "e2", "text": "The article runs battle under six stacks, and does not change a line of it."},
+ {"id": "e1", "text": "To start, pip install doeff. Then you need three things: @do, yield, and a handler."}
 ]

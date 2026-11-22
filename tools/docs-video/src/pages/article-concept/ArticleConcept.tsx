@@ -11,10 +11,12 @@
 //    effect out, and order never says who answers.
 // 6. Handlers are rings around order. One of them gets k, the rest of order; it resumes it, keeps it or never resumes
 //    it, at most once.
-// 7. The same function, unchanged, in five stacks.
-// 8. How to start.
+// 7. Keeping k for later is scheduling: in a card game, a poison waits for the end of a turn and the game's turn
+//    clock keeps its k; a number that rises on screen waits for seconds on another clock, stacked around the same game.
+// 8. Swapping: the same function, unchanged, in five stacks.
 // 9. The article's example before the article uses it: what battle does, and why it was chosen (it needs four things
 //    from outside, and each can be answered in many ways).
+// 10. How to start.
 // Every code line on screen is a line of measure/order.py or of examples/effects_tour/clocks.py (check_code.py checks
 // it), and every result is a line of their output; the card fight's numbers and handler names are those of the
 // article's listing of spire.py and its runs.
@@ -38,7 +40,7 @@ const heard = heardBy(DURATIONS);
 const after = (headline: number) => headline + LINE_FADE + PAUSE;
 // A headline as a motion, for PACED.
 const headline = (from: number): Step => ({from, to: from + LINE_FADE});
-const SCENES = 9;
+const SCENES = 10;
 // A panel things pass behind.
 const SOLID = 'linear-gradient(160deg, #1b1d2c, #0c0d15)';
 
@@ -646,165 +648,51 @@ const Handling: React.FC = () => {
   );
 };
 
-// 7. The same function in five stacks, side by side.
-const S1 = 0;
-const S1_STEPS = chain(after(S1), [
-  ['line', 0.5],
-  ['tests', 0.5],
+// 7. Keeping k for later is scheduling, on the two clocks of examples/effects_tour/clocks.py. A card game first: a
+// poison hurts at the end of each of five turns. It is a loop that waits for the end of a turn, and the game's own turn
+// clock keeps its k until the turn ends. A number that rises on screen is the same kind of loop and waits 0.1 s on
+// doeff-time's virtual clock. The turns and the frames drawn are those clocks.py prints.
+const W1 = 0;
+const W1_STEPS = chain(after(W1), [
+  ['fates', 0.5],
+  ['keep', 0.5],
+  ['card', 0.6],
 ]);
-const S2 = nextLine(heard(S1, 's1'), S1_STEPS);
-const S2_STEPS = chain(after(S2), [
-  ['replay', 0.5],
-  ['bot', 0.5],
-  ['many', 0.5],
-  ['production', 0.5],
-  ['zero', 0.6],
-]);
-const STACK_SAID: Said = [
-  [S1, [['Swap the'], ['stack:', TEST], ['the same function runs another way']]],
-  [S2, [['One function,'], ['unchanged,', LOOK], ['under many stacks']]],
-];
-const STACKS_LENGTH = f(sceneEnd(heard(S2, 's2'), S2_STEPS));
-const STACKS: [Step, string, RingOf[]][] = [
-  [S1_STEPS.tests, 'tests', [{label: 'yes'}, {label: 'prices'}]],
-  [S2_STEPS.replay, 'replay', [{label: 'replay(tape)'}]],
-  [S2_STEPS.bot, 'a bot', [{label: 'bot'}, {label: 'prices'}]],
-  [S2_STEPS.many, 'many at once', [{label: 'yes'}, {label: 'prices'}, {label: 'scheduled'}]],
-  [S2_STEPS.production, 'production', [{label: 'ask a person', color: PROD}, {label: 'shop prices', color: PROD}]],
-];
-
-const Stacks: React.FC = () => {
-  const frame = useSceneFrame();
-  const line = along(frame, S1_STEPS.line);
-  return (
-    <AbsoluteFill>
-      <Chapter n={7} of={SCENES} name="Swap the stack" />
-      <Headline lines={STACK_SAID} />
-      {/* One function runs through every stack. */}
-      <div style={{position: 'absolute', left: 640 - 620 * line, width: 1240 * line, top: 369, height: 3, background: `linear-gradient(90deg, transparent, ${ACCENT}, ${ACCENT}, transparent)`, boxShadow: `0 0 26px ${ACCENT}`, opacity: fadeAt(frame, S1_STEPS.line.from, 0.2)}} />
-      {STACKS.map(([step, name, rings], i) => {
-        const cx = 148 + i * 246;
-        return (
-          <Rise key={name} at={step.from} y={0} scale={0.6} origin={[cx, 370]}>
-            <Rings cx={cx} cy={370} core="order()" rings={rings} w={116} h={52} gap={21} font={12} />
-            <Note x={cx - 120} y={500} w={240} text={name} size={22} align="center" />
-          </Rise>
-        );
-      })}
-      <Rise at={S2_STEPS.zero.from} y={30} scale={0.9} origin={[640, 590]}>
-        <div style={{position: 'absolute', left: 0, right: 0, top: 568, textAlign: 'center', fontFamily: DISPLAY, fontSize: 38, fontWeight: 800, color: TEXT}}>
-          <span style={{fontFamily: CODE}}>order()</span>: <span style={{color: LOOK, textShadow: `0 0 26px ${LOOK}88`}}>0 lines changed</span>
-        </div>
-      </Rise>
-    </AbsoluteFill>
-  );
-};
-
-// 8. How to start.
-const E1 = 0;
-// The three things come as the line says them, after pip install doeff.
-const E1_STEPS = chain(after(E1), [
-  ['pip', 0.9],
-  ['do', 0.4, 1.6],
-  ['yield', 0.4],
-  ['handler', 0.4],
-]);
-const START_SAID: Said = [[E1, [['To start:'], ['three things', LOOK]]]];
-const START = f(sceneEnd(heard(E1, 'e1'), E1_STEPS));
-const THREE: [Step, string, string, string][] = [
-  [E1_STEPS.do, '@do', ACCENT, 'makes a generator function a program'],
-  [E1_STEPS.yield, 'yield', ACCENT, 'hands an effect out and gets the answer'],
-  [E1_STEPS.handler, 'a handler', TEST, 'answers effects, and holds k'],
-];
-
-const Start: React.FC = () => {
-  const frame = useSceneFrame();
-  const blink = Math.floor(frame / 30) % 2 === 0 || frame < f(E1_STEPS.pip.to);
-  return (
-    <AbsoluteFill>
-      <Chapter n={8} of={SCENES} name="Start" />
-      <Headline lines={START_SAID} />
-      <div style={{position: 'absolute', left: 320, top: 180, width: 640, ...glass(), overflow: 'hidden'}}>
-        <div style={{height: 34, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px', borderBottom: `1px solid ${LINE}`, background: 'rgba(0,0,0,0.25)'}}>
-          {['#ff6b81', '#ffb86b', '#3ecfb2'].map((color) => <div key={color} style={{width: 11, height: 11, borderRadius: '50%', background: color, opacity: 0.85}} />)}
-        </div>
-        <div style={{padding: '20px 28px', height: 44, fontFamily: CODE, fontSize: 36, fontWeight: 700, color: TEST, display: 'flex', alignItems: 'center', whiteSpace: 'pre'}}>
-          <span style={{color: MUTED, marginRight: 18}}>$</span>
-          {typed(frame, 'pip install doeff', E1_STEPS.pip)}
-          <span style={{display: 'inline-block', width: 18, height: 40, marginLeft: 10, background: LOOK, boxShadow: `0 0 18px ${LOOK}`, opacity: blink ? 1 : 0}} />
-        </div>
-      </div>
-      {THREE.map(([step, name, color, what], i) => (
-        <Rise key={name} at={step.from} y={40} scale={0.9} origin={[280 + i * 360, 465]}>
-          <div style={{position: 'absolute', left: 110 + i * 360, top: 370, width: 340, height: 190, padding: '22px 26px', ...glass(`${color}88`)}}>
-            <div style={{position: 'absolute', right: 22, top: 14, fontFamily: DISPLAY, fontSize: 54, fontWeight: 800, color: 'transparent', WebkitTextStroke: `1.5px ${LOOK}88`}}>{i + 1}</div>
-            <div style={{fontFamily: CODE, fontSize: 42, fontWeight: 700, color, textShadow: `0 0 22px ${color}77`}}>{name}</div>
-            <div style={{fontFamily: DISPLAY, fontSize: 20, fontWeight: 600, color: TEXT, marginTop: 14, lineHeight: 1.3}}>{what}</div>
-          </div>
-        </Rise>
-      ))}
-    </AbsoluteFill>
-  );
-};
-
-// 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
-// the article's scripted run shows: T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike),
-// then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks, and
-// scheduling, on the two clocks of examples/effects_tour/clocks.py: a poison is a loop that waits for the end of a
-// turn, and the game's own turn clock keeps its k until the turn ends; a number that rises on screen is the same kind
-// of loop and waits 0.1 s on doeff-time's virtual clock. The turns and the frames drawn are those clocks.py prints.
-const C1 = 0;
-const C1_STEPS = chain(after(C1), [['sides', 0.6]]);
-const C2 = nextLine(heard(C1, 'c1'), C1_STEPS);
-const C2_STEPS = chain(after(C2), [
-  ['hand', 0.9],
-  ['turn', 1.4],
-  ['until', 0.4],
-]);
-const C3 = nextLine(heard(C2, 'c2'), C2_STEPS);
-const C3_STEPS = chain(after(C3), [
-  ['hub', 0.6],
-  ['roll', 0.7],
-  ['choose', 0.7],
-  ['show', 0.7],
-  ['played', 0.7],
-]);
-const C4 = nextLine(heard(C3, 'c3'), C3_STEPS);
-const C4_STEPS = chain(after(C4), [
-  ['dice', 0.4],
-  ['card', 0.4],
-  ['screen', 0.4],
-  ['count', 0.4],
-]);
-const C5 = nextLine(heard(C4, 'c4'), C4_STEPS);
-const C5_STEPS = chain(after(C5), [
+const W2 = nextLine(heard(W1, 'w1'), W1_STEPS);
+const W2_STEPS = chain(after(W2), [
   ['poison', 0.6],
+  ['loop', 0.5],
+]);
+const W3 = nextLine(heard(W2, 'w2'), W2_STEPS);
+const W3_STEPS = chain(after(W3), [
   ['clock', 0.5],
   ['wait', 0.9],
   ['keep', 0.5],
   ['ends', 0.9],
   ['hurt', 0.4],
 ]);
-const C6 = nextLine(heard(C5, 'c5'), C5_STEPS);
-const C6_STEPS = chain(after(C6), [
+const W4 = nextLine(heard(W3, 'w3'), W3_STEPS);
+const W4_STEPS = chain(after(W4), [
   ['rising', 0.6],
   ['seconds', 0.5],
   ['play', 3.0],
+]);
+const W5 = nextLine(heard(W4, 'w4'), W4_STEPS);
+const W5_STEPS = chain(after(W5), [
   ['stack', 0.5],
   ['more', 0.5],
 ]);
-const C7 = nextLine(heard(C6, 'c6'), C6_STEPS);
-const C7_STEPS = chain(after(C7), [['six', 0.6]]);
-const FIGHT_SAID: Said = [
-  [C1, [["The article's example:"], ['battle(),', ACCENT], ['one small card fight']]],
-  [C2, [['Each turn:'], ['draw,', K], ['play,', PROD], ['and the enemy hits back', FAIL]]],
-  [C3, [['Why this example:'], ['four', ACCENT], ['things it needs from'], ['outside', TEST]]],
-  [C4, [['Each can be answered in'], ['many ways', TEST]]],
-  [C5, [['Scheduling', K], ['is an effect too:'], ['a poison waits for'], ['turns', K]]],
-  [C6, [['Two clocks,'], ['stacked:', TEST], ['turns', K], ['and'], ['seconds', PROD]]],
-  [C7, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
+const CLOCKS_SAID: Said = [
+  [W1, [['Keep'], ['k', K], ['for later: that is'], ['scheduling', K]]],
+  [W2, [['A poison:'], ['wait for the turn to end,', K], ['then hurt']]],
+  [W3, [['The turn clock'], ['keeps k', K], ['until the turn ends']]],
+  [W4, [['The same loop on another clock:'], ['seconds', PROD]]],
+  [W5, [['Two clocks,'], ['stacked:', TEST], ['turns', K], ['and'], ['seconds', PROD]]],
 ];
-const FIGHT = f(sceneEnd(heard(C7, 'e2'), C7_STEPS));
+const CLOCKS = f(sceneEnd(heard(W5, 'w5'), W5_STEPS));
+// What a handler can do with k, as the scene before said; keeping it is the one this scene is about.
+const FATES = ['resume k now', 'keep k for later', 'never resume k'];
+const KEPT = 1;
 // The two loops of clocks.py, side by side.
 const POISON_CODE = [
   '@do',
@@ -842,7 +730,267 @@ const FRAMES: [number, number, string][] = [
 ];
 // The second of the run the playhead is at, and the scene time it reaches a second of the run.
 const PLAYED = 1.03;
-const reached = (seconds: number) => C6_STEPS.play.from + (seconds / PLAYED) * (C6_STEPS.play.to - C6_STEPS.play.from);
+const reached = (seconds: number) => W4_STEPS.play.from + (seconds / PLAYED) * (W4_STEPS.play.to - W4_STEPS.play.from);
+
+const Clocks: React.FC = () => {
+  const frame = useSceneFrame();
+  return (
+    <AbsoluteFill>
+      <Chapter n={7} of={SCENES} name="Scheduling: keep k" />
+      <Headline lines={CLOCKS_SAID} />
+      {/* What a handler can do with k; then a card of a card game, whose effect lasts five turns. */}
+      <Rise at={W1_STEPS.fates.from} out={W2} y={20}>
+        {FATES.map((fate, i) => {
+          const lit = i === KEPT && frame >= f(W1_STEPS.keep.from);
+          return (
+            <div
+              key={fate}
+              style={{
+                position: 'absolute', left: 150, top: 196 + i * 78, width: 380, boxSizing: 'border-box', padding: '14px 22px', ...glass(lit ? `${LOOK}cc` : LINE), fontFamily: DISPLAY, fontSize: 24, fontWeight: 700,
+                color: lit ? LOOK : i === KEPT ? TEXT : MUTED, boxShadow: lit ? `0 0 30px ${LOOK}55` : undefined,
+              }}
+            >
+              {fate}
+            </div>
+          );
+        })}
+      </Rise>
+      <Rise at={W1_STEPS.card.from} out={W3} y={30} scale={0.9} origin={[930, 262]}>
+        <div style={{position: 'absolute', left: 850, top: 152, width: 160, height: 220, ...glass(`${TEST}cc`), background: `linear-gradient(170deg, ${TEST}40, rgba(12,13,20,0.92) 55%)`, boxShadow: `0 18px 40px rgba(0,0,0,0.55), 0 0 22px ${TEST}44`}}>
+          <div style={{position: 'absolute', left: 0, right: 0, top: 46, textAlign: 'center', fontFamily: DISPLAY, fontSize: 27, fontWeight: 800, color: TEXT}}>Poison</div>
+          <div style={{position: 'absolute', left: 14, right: 14, top: 100, textAlign: 'center', fontFamily: DISPLAY, fontSize: 17, fontWeight: 600, lineHeight: 1.4, color: TEST}}>3 damage at the end of each turn, for 5 turns</div>
+        </div>
+        <Note x={770} y={388} w={320} text="a card of a card game" color={MUTED} size={16} align="center" />
+      </Rise>
+      {/* The poison: its TurnEnds goes out to the turn clock, which keeps k until the turn ends. */}
+      <Rise at={W2_STEPS.poison.from} y={24} scale={0.96} origin={[340, 258]}>
+        <CodeWindow
+          file="clocks.py" lines={POISON_CODE} x={LOOP.poison} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line}
+          scan={frame >= f(W2_STEPS.loop.from) ? WAITS + along(frame, W3_STEPS.ends) : undefined}
+          k={frame >= f(W3_STEPS.keep.from) && frame < f(W3_STEPS.ends.from) ? [2, ACTS] : undefined}
+        />
+      </Rise>
+      <Rise at={W3_STEPS.clock.from} y={16}>
+        <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 46, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: K, whiteSpace: 'nowrap'}}>
+          turns()<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — the game's own turn clock: it keeps each waiting k, and resumes it when a turn ends</span>
+        </div>
+        <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${K}88`}} />
+        {TURN_ENDS.map((seconds, i) => {
+          const lit = frame >= f(i === 0 ? W3_STEPS.ends.from : reached(seconds));
+          return (
+            <React.Fragment key={seconds}>
+              <div style={{position: 'absolute', left: secondX(seconds) - 2, top: TURN_Y - 11, width: 4, height: 22, borderRadius: 2, background: lit ? LOOK : K, boxShadow: lit ? `0 0 14px ${LOOK}` : undefined}} />
+              <div style={{position: 'absolute', left: secondX(seconds) - 60, top: TURN_Y + 13, width: 120, textAlign: 'center', fontFamily: DISPLAY, fontSize: 14, fontWeight: 600, color: lit ? TEXT : MUTED}}>turn {i + 1} ends</div>
+            </React.Fragment>
+          );
+        })}
+      </Rise>
+      <Travel id="c5-wait" d={arcOf(398, codeMid(LOOP.y, LOOP.line, WAITS), secondX(0.25), TURN_Y, -50)} color={K} step={W3_STEPS.wait} text="TurnEnds()" until={W3_STEPS.keep.from} size={18} leave />
+      <Rise at={W3_STEPS.keep.from} out={W3_STEPS.ends.from} y={0} scale={0.7} origin={[secondX(0.25), TURN_Y]}>
+        <Capsule x={secondX(0.25)} y={TURN_Y} text="k" color={K} size={18} />
+      </Rise>
+      <Rise at={W3_STEPS.keep.from} out={W4} y={16}>
+        <div style={{position: 'absolute', left: 680, top: 188, width: 500, padding: '18px 24px', ...glass(`${K}66`), fontFamily: DISPLAY, fontSize: 21, fontWeight: 600, lineHeight: 1.5, color: TEXT}}>
+          The turn clock keeps <span style={{fontFamily: CODE, fontWeight: 700, color: K}}>k</span>, the rest of poison, and resumes it when the turn ends.
+        </div>
+      </Rise>
+      <Ping x={secondX(0.25)} y={TURN_Y} color={LOOK} at={W3_STEPS.ends.from} />
+      <Travel id="c5-back" d={arcOf(secondX(0.25), TURN_Y, 340, codeMid(LOOP.y, LOOP.line, ACTS), -50)} color={K} step={W3_STEPS.ends} text="k" until={W3_STEPS.hurt.from} size={18} leave />
+      <Rise at={W3_STEPS.hurt.from} out={W4} y={0} scale={0.7} origin={[470, codeMid(LOOP.y, LOOP.line, ACTS)]}>
+        <Capsule x={470} y={codeMid(LOOP.y, LOOP.line, ACTS)} text="enemy -3" color={FAIL} size={18} />
+      </Rise>
+      {/* Then the number that rises: the same kind of loop on doeff-time's seconds, and the run of clocks.py on both clocks. */}
+      <Rise at={W4_STEPS.rising.from} y={24} scale={0.96} origin={[940, 258]}>
+        <CodeWindow file="clocks.py" lines={RISING_CODE} x={LOOP.rising} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line} scan={frame >= f(W4_STEPS.seconds.from) ? ACTS : undefined} />
+      </Rise>
+      <Rise at={W4_STEPS.seconds.from} y={16}>
+        <div style={{position: 'absolute', left: secondX(0), top: TURN_Y + 40, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: PROD, whiteSpace: 'nowrap'}}>
+          sim_time_handler<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — seconds, from doeff-time: a virtual clock, so the fight runs in an instant</span>
+        </div>
+        <div style={{position: 'absolute', left: secondX(0), top: SECOND_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${PROD}88`}} />
+        {TURN_ENDS.map((seconds) => (
+          <React.Fragment key={seconds}>
+            <div style={{position: 'absolute', left: secondX(seconds) - 1, top: SECOND_Y - 5, width: 2, height: 10, background: PROD}} />
+            <div style={{position: 'absolute', left: secondX(seconds) - 40, top: SECOND_Y + 7, width: 80, textAlign: 'center', fontFamily: CODE, fontSize: 13, color: MUTED}}>{seconds.toFixed(2)} s</div>
+          </React.Fragment>
+        ))}
+        <div style={{position: 'absolute', left: 40, top: FRAME_Y - 46, width: 150, textAlign: 'right', fontFamily: CODE, fontSize: 15, fontWeight: 700, lineHeight: 1.5}}>
+          <div style={{color: PROD}}>rising("-6")</div>
+          <div style={{color: K}}>rising("-3")</div>
+        </div>
+      </Rise>
+      {frame >= f(W4_STEPS.play.from) && TURN_ENDS.slice(1).map((seconds) => <Ping key={seconds} x={secondX(seconds)} y={TURN_Y} color={LOOK} at={reached(seconds)} />)}
+      {frame >= f(W4_STEPS.play.from) && FRAMES.map(([seconds, height, text], i) => {
+        const color = text === '-6' ? PROD : K;
+        // A -6 and a -3 drawn at the same second sit side by side.
+        const side = FRAMES.some(([s2, , t2]) => s2 === seconds && t2 !== text) ? (text === '-6' ? -15 : 15) : 0;
+        return (
+          <div
+            key={i}
+            style={{
+              position: 'absolute', left: secondX(seconds) + side - 20, top: FRAME_Y - height * 15 - 10, width: 40, textAlign: 'center', fontFamily: CODE, fontSize: 16, fontWeight: 700, color,
+              opacity: fadeAt(frame, reached(seconds), 0.12), textShadow: `0 0 10px ${color}88`,
+            }}
+          >
+            {text}
+          </div>
+        );
+      })}
+      {frame >= f(W4_STEPS.play.from) && (
+        <div
+          style={{
+            position: 'absolute', left: secondX(interpolate(frame, [f(W4_STEPS.play.from), f(W4_STEPS.play.to)], [0, PLAYED], clamp)) - 1, top: TURN_Y - 16, width: 2, height: SECOND_Y - TURN_Y + 22,
+            background: LOOK, boxShadow: `0 0 12px ${LOOK}`, opacity: 1 - fadeAt(frame, W4_STEPS.play.to, 0.3),
+          }}
+        />
+      )}
+      <Rise at={W5_STEPS.stack.from} y={12}>
+        <Note x={140} y={602} w={1000} text="two handlers, stacked around one fight  ·  no lock, no event" color={LOOK} size={20} align="center" />
+      </Rise>
+      <Rise at={W5_STEPS.more.from} y={12}>
+        <Note x={140} y={634} w={1000} text="the same loop can wait for a click in a UI, or for a fill in a trading strategy" color={TEXT} size={18} align="center" />
+      </Rise>
+    </AbsoluteFill>
+  );
+};
+
+// 8. The same function in five stacks, side by side.
+const S1 = 0;
+const S1_STEPS = chain(after(S1), [
+  ['line', 0.5],
+  ['tests', 0.5],
+]);
+const S2 = nextLine(heard(S1, 's1'), S1_STEPS);
+const S2_STEPS = chain(after(S2), [
+  ['replay', 0.5],
+  ['bot', 0.5],
+  ['many', 0.5],
+  ['production', 0.5],
+  ['zero', 0.6],
+]);
+const STACK_SAID: Said = [
+  [S1, [['Swap the'], ['stack:', TEST], ['the same function runs another way']]],
+  [S2, [['One function,'], ['unchanged,', LOOK], ['under many stacks']]],
+];
+const STACKS_LENGTH = f(sceneEnd(heard(S2, 's2'), S2_STEPS));
+const STACKS: [Step, string, RingOf[]][] = [
+  [S1_STEPS.tests, 'tests', [{label: 'yes'}, {label: 'prices'}]],
+  [S2_STEPS.replay, 'replay', [{label: 'replay(tape)'}]],
+  [S2_STEPS.bot, 'a bot', [{label: 'bot'}, {label: 'prices'}]],
+  [S2_STEPS.many, 'many at once', [{label: 'yes'}, {label: 'prices'}, {label: 'scheduled'}]],
+  [S2_STEPS.production, 'production', [{label: 'ask a person', color: PROD}, {label: 'shop prices', color: PROD}]],
+];
+
+const Stacks: React.FC = () => {
+  const frame = useSceneFrame();
+  const line = along(frame, S1_STEPS.line);
+  return (
+    <AbsoluteFill>
+      <Chapter n={8} of={SCENES} name="Swap the stack" />
+      <Headline lines={STACK_SAID} />
+      {/* One function runs through every stack. */}
+      <div style={{position: 'absolute', left: 640 - 620 * line, width: 1240 * line, top: 369, height: 3, background: `linear-gradient(90deg, transparent, ${ACCENT}, ${ACCENT}, transparent)`, boxShadow: `0 0 26px ${ACCENT}`, opacity: fadeAt(frame, S1_STEPS.line.from, 0.2)}} />
+      {STACKS.map(([step, name, rings], i) => {
+        const cx = 148 + i * 246;
+        return (
+          <Rise key={name} at={step.from} y={0} scale={0.6} origin={[cx, 370]}>
+            <Rings cx={cx} cy={370} core="order()" rings={rings} w={116} h={52} gap={21} font={12} />
+            <Note x={cx - 120} y={500} w={240} text={name} size={22} align="center" />
+          </Rise>
+        );
+      })}
+      <Rise at={S2_STEPS.zero.from} y={30} scale={0.9} origin={[640, 590]}>
+        <div style={{position: 'absolute', left: 0, right: 0, top: 568, textAlign: 'center', fontFamily: DISPLAY, fontSize: 38, fontWeight: 800, color: TEXT}}>
+          <span style={{fontFamily: CODE}}>order()</span>: <span style={{color: LOOK, textShadow: `0 0 26px ${LOOK}88`}}>0 lines changed</span>
+        </div>
+      </Rise>
+    </AbsoluteFill>
+  );
+};
+
+// 10. How to start.
+const E1 = 0;
+// The three things come as the line says them, after pip install doeff.
+const E1_STEPS = chain(after(E1), [
+  ['pip', 0.9],
+  ['do', 0.4, 1.6],
+  ['yield', 0.4],
+  ['handler', 0.4],
+]);
+const START_SAID: Said = [[E1, [['To start:'], ['three things', LOOK]]]];
+const START = f(sceneEnd(heard(E1, 'e1'), E1_STEPS));
+const THREE: [Step, string, string, string][] = [
+  [E1_STEPS.do, '@do', ACCENT, 'makes a generator function a program'],
+  [E1_STEPS.yield, 'yield', ACCENT, 'hands an effect out and gets the answer'],
+  [E1_STEPS.handler, 'a handler', TEST, 'answers effects, and holds k'],
+];
+
+const Start: React.FC = () => {
+  const frame = useSceneFrame();
+  const blink = Math.floor(frame / 30) % 2 === 0 || frame < f(E1_STEPS.pip.to);
+  return (
+    <AbsoluteFill>
+      <Chapter n={10} of={SCENES} name="Start" />
+      <Headline lines={START_SAID} />
+      <div style={{position: 'absolute', left: 320, top: 180, width: 640, ...glass(), overflow: 'hidden'}}>
+        <div style={{height: 34, display: 'flex', alignItems: 'center', gap: 8, padding: '0 16px', borderBottom: `1px solid ${LINE}`, background: 'rgba(0,0,0,0.25)'}}>
+          {['#ff6b81', '#ffb86b', '#3ecfb2'].map((color) => <div key={color} style={{width: 11, height: 11, borderRadius: '50%', background: color, opacity: 0.85}} />)}
+        </div>
+        <div style={{padding: '20px 28px', height: 44, fontFamily: CODE, fontSize: 36, fontWeight: 700, color: TEST, display: 'flex', alignItems: 'center', whiteSpace: 'pre'}}>
+          <span style={{color: MUTED, marginRight: 18}}>$</span>
+          {typed(frame, 'pip install doeff', E1_STEPS.pip)}
+          <span style={{display: 'inline-block', width: 18, height: 40, marginLeft: 10, background: LOOK, boxShadow: `0 0 18px ${LOOK}`, opacity: blink ? 1 : 0}} />
+        </div>
+      </div>
+      {THREE.map(([step, name, color, what], i) => (
+        <Rise key={name} at={step.from} y={40} scale={0.9} origin={[280 + i * 360, 465]}>
+          <div style={{position: 'absolute', left: 110 + i * 360, top: 370, width: 340, height: 190, padding: '22px 26px', ...glass(`${color}88`)}}>
+            <div style={{position: 'absolute', right: 22, top: 14, fontFamily: DISPLAY, fontSize: 54, fontWeight: 800, color: 'transparent', WebkitTextStroke: `1.5px ${LOOK}88`}}>{i + 1}</div>
+            <div style={{fontFamily: CODE, fontSize: 42, fontWeight: 700, color, textShadow: `0 0 22px ${color}77`}}>{name}</div>
+            <div style={{fontFamily: DISPLAY, fontSize: 20, fontWeight: 600, color: TEXT, marginTop: 14, lineHeight: 1.3}}>{what}</div>
+          </div>
+        </Rise>
+      ))}
+    </AbsoluteFill>
+  );
+};
+
+// 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
+// the article's scripted run shows: T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike),
+// then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks.
+const C1 = 0;
+const C1_STEPS = chain(after(C1), [['sides', 0.6]]);
+const C2 = nextLine(heard(C1, 'c1'), C1_STEPS);
+const C2_STEPS = chain(after(C2), [
+  ['hand', 0.9],
+  ['turn', 1.4],
+  ['until', 0.4],
+]);
+const C3 = nextLine(heard(C2, 'c2'), C2_STEPS);
+const C3_STEPS = chain(after(C3), [
+  ['hub', 0.6],
+  ['roll', 0.7],
+  ['choose', 0.7],
+  ['show', 0.7],
+  ['played', 0.7],
+]);
+const C4 = nextLine(heard(C3, 'c3'), C3_STEPS);
+const C4_STEPS = chain(after(C4), [
+  ['dice', 0.4],
+  ['card', 0.4],
+  ['screen', 0.4],
+  ['count', 0.4],
+]);
+const C5 = nextLine(heard(C4, 'c4'), C4_STEPS);
+const C5_STEPS = chain(after(C5), [['six', 0.6]]);
+const FIGHT_SAID: Said = [
+  [C1, [["The article's example:"], ['battle(),', ACCENT], ['one small card fight']]],
+  [C2, [['Each turn:'], ['draw,', K], ['play,', PROD], ['and the enemy hits back', FAIL]]],
+  [C3, [['Why this example:'], ['four', ACCENT], ['things it needs from'], ['outside', TEST]]],
+  [C4, [['Each can be answered in'], ['many ways', TEST]]],
+  [C5, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
+];
+const FIGHT = f(sceneEnd(heard(C5, 'e2'), C5_STEPS));
 const HAND = ['Defend', 'Strike', 'Defend', 'Defend', 'Strike'];
 const CARD: Record<string, [string, string]> = {Strike: [PROD, 'deal 6'], Defend: [K, 'block 5']};
 const KAPPA = 0.5523;
@@ -881,7 +1029,7 @@ const Fight: React.FC = () => {
   const dot = pointOn(ROUND, turn);
   return (
     <AbsoluteFill>
-      <Chapter n={9} of={SCENES} name="Next: the card fight" />
+      <Chapter n={9} of={SCENES} name="The example of the article" />
       <Headline lines={FIGHT_SAID} />
       {/* What battle does: the table. */}
       <Rise at={0} out={C3} y={0}>
@@ -932,7 +1080,7 @@ const Fight: React.FC = () => {
         </Rise>
       </Rise>
       {/* Why battle: what it needs from outside, and who can answer. */}
-      <Rise at={0} out={C5} y={0}>
+      <Rise at={0} y={0}>
       <Rise at={C3_STEPS.hub.from} y={0} scale={0.7} origin={[640, 392]}>
         <Rings cx={640} cy={392} core="battle()" rings={[]} w={224} h={92} font={20} note="one function" />
       </Rise>
@@ -968,97 +1116,7 @@ const Fight: React.FC = () => {
         );
       })}
       </Rise>
-      {/* Scheduling, on two clocks. First the poison: its TurnEnds goes out to the turn clock, which keeps k until the turn ends. */}
-      <div style={{position: 'absolute', inset: 0, opacity: 1 - 0.6 * fadeAt(frame, C7, 0.4)}}>
-        <Rise at={C5_STEPS.poison.from} y={24} scale={0.96} origin={[340, 258]}>
-          <CodeWindow
-            file="clocks.py" lines={POISON_CODE} x={LOOP.poison} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line}
-            scan={frame >= f(C5_STEPS.wait.from) ? WAITS + along(frame, C5_STEPS.ends) : undefined}
-            k={frame >= f(C5_STEPS.keep.from) && frame < f(C5_STEPS.ends.from) ? [2, ACTS] : undefined}
-          />
-        </Rise>
-        <Rise at={C5_STEPS.clock.from} y={16}>
-          <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 46, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: K, whiteSpace: 'nowrap'}}>
-            turns()<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — the game's own turn clock: it keeps each waiting k, and resumes it when a turn ends</span>
-          </div>
-          <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${K}88`}} />
-          {TURN_ENDS.map((seconds, i) => {
-            const lit = frame >= f(i === 0 ? C5_STEPS.ends.from : reached(seconds));
-            return (
-              <React.Fragment key={seconds}>
-                <div style={{position: 'absolute', left: secondX(seconds) - 2, top: TURN_Y - 11, width: 4, height: 22, borderRadius: 2, background: lit ? LOOK : K, boxShadow: lit ? `0 0 14px ${LOOK}` : undefined}} />
-                <div style={{position: 'absolute', left: secondX(seconds) - 60, top: TURN_Y + 13, width: 120, textAlign: 'center', fontFamily: DISPLAY, fontSize: 14, fontWeight: 600, color: lit ? TEXT : MUTED}}>turn {i + 1} ends</div>
-              </React.Fragment>
-            );
-          })}
-        </Rise>
-        <Travel id="c5-wait" d={arcOf(398, codeMid(LOOP.y, LOOP.line, WAITS), secondX(0.25), TURN_Y, -50)} color={K} step={C5_STEPS.wait} text="TurnEnds()" until={C5_STEPS.keep.from} size={18} leave />
-        <Rise at={C5_STEPS.keep.from} out={C5_STEPS.ends.from} y={0} scale={0.7} origin={[secondX(0.25), TURN_Y]}>
-          <Capsule x={secondX(0.25)} y={TURN_Y} text="k" color={K} size={18} />
-        </Rise>
-        <Rise at={C5_STEPS.keep.from} out={C6} y={16}>
-          <div style={{position: 'absolute', left: 680, top: 188, width: 500, padding: '18px 24px', ...glass(`${K}66`), fontFamily: DISPLAY, fontSize: 21, fontWeight: 600, lineHeight: 1.5, color: TEXT}}>
-            The turn clock keeps <span style={{fontFamily: CODE, fontWeight: 700, color: K}}>k</span>, the rest of poison, and resumes it when the turn ends.
-          </div>
-        </Rise>
-        <Ping x={secondX(0.25)} y={TURN_Y} color={LOOK} at={C5_STEPS.ends.from} />
-        <Travel id="c5-back" d={arcOf(secondX(0.25), TURN_Y, 340, codeMid(LOOP.y, LOOP.line, ACTS), -50)} color={K} step={C5_STEPS.ends} text="k" until={C5_STEPS.hurt.from} size={18} leave />
-        <Rise at={C5_STEPS.hurt.from} out={C6} y={0} scale={0.7} origin={[470, codeMid(LOOP.y, LOOP.line, ACTS)]}>
-          <Capsule x={470} y={codeMid(LOOP.y, LOOP.line, ACTS)} text="enemy -3" color={FAIL} size={18} />
-        </Rise>
-        {/* Then the number that rises: the same kind of loop on doeff-time's seconds, and the run of clocks.py on both clocks. */}
-        <Rise at={C6_STEPS.rising.from} y={24} scale={0.96} origin={[940, 258]}>
-          <CodeWindow file="clocks.py" lines={RISING_CODE} x={LOOP.rising} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line} scan={frame >= f(C6_STEPS.seconds.from) ? ACTS : undefined} />
-        </Rise>
-        <Rise at={C6_STEPS.seconds.from} y={16}>
-          <div style={{position: 'absolute', left: secondX(0), top: TURN_Y + 40, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: PROD, whiteSpace: 'nowrap'}}>
-            sim_time_handler<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — seconds, from doeff-time: a virtual clock, so the fight runs in an instant</span>
-          </div>
-          <div style={{position: 'absolute', left: secondX(0), top: SECOND_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${PROD}88`}} />
-          {TURN_ENDS.map((seconds) => (
-            <React.Fragment key={seconds}>
-              <div style={{position: 'absolute', left: secondX(seconds) - 1, top: SECOND_Y - 5, width: 2, height: 10, background: PROD}} />
-              <div style={{position: 'absolute', left: secondX(seconds) - 40, top: SECOND_Y + 7, width: 80, textAlign: 'center', fontFamily: CODE, fontSize: 13, color: MUTED}}>{seconds.toFixed(2)} s</div>
-            </React.Fragment>
-          ))}
-          <div style={{position: 'absolute', left: 40, top: FRAME_Y - 46, width: 150, textAlign: 'right', fontFamily: CODE, fontSize: 15, fontWeight: 700, lineHeight: 1.5}}>
-            <div style={{color: PROD}}>rising("-6")</div>
-            <div style={{color: K}}>rising("-3")</div>
-          </div>
-        </Rise>
-        {frame >= f(C6_STEPS.play.from) && TURN_ENDS.slice(1).map((seconds) => <Ping key={seconds} x={secondX(seconds)} y={TURN_Y} color={LOOK} at={reached(seconds)} />)}
-        {frame >= f(C6_STEPS.play.from) && FRAMES.map(([seconds, height, text], i) => {
-          const color = text === '-6' ? PROD : K;
-          // A -6 and a -3 drawn at the same second sit side by side.
-          const side = FRAMES.some(([s2, , t2]) => s2 === seconds && t2 !== text) ? (text === '-6' ? -15 : 15) : 0;
-          return (
-            <div
-              key={i}
-              style={{
-                position: 'absolute', left: secondX(seconds) + side - 20, top: FRAME_Y - height * 15 - 10, width: 40, textAlign: 'center', fontFamily: CODE, fontSize: 16, fontWeight: 700, color,
-                opacity: fadeAt(frame, reached(seconds), 0.12), textShadow: `0 0 10px ${color}88`,
-              }}
-            >
-              {text}
-            </div>
-          );
-        })}
-        {frame >= f(C6_STEPS.play.from) && (
-          <div
-            style={{
-              position: 'absolute', left: secondX(interpolate(frame, [f(C6_STEPS.play.from), f(C6_STEPS.play.to)], [0, PLAYED], clamp)) - 1, top: TURN_Y - 16, width: 2, height: SECOND_Y - TURN_Y + 22,
-              background: LOOK, boxShadow: `0 0 12px ${LOOK}`, opacity: 1 - fadeAt(frame, C6_STEPS.play.to, 0.3),
-            }}
-          />
-        )}
-        <Rise at={C6_STEPS.stack.from} out={C7} y={12}>
-          <Note x={140} y={602} w={1000} text="two handlers, stacked around one fight  ·  no lock, no event" color={LOOK} size={20} align="center" />
-        </Rise>
-        <Rise at={C6_STEPS.more.from} out={C7} y={12}>
-          <Note x={140} y={634} w={1000} text="the same loop can wait for a click in a UI, or for a fill in a trading strategy" color={TEXT} size={18} align="center" />
-        </Rise>
-      </div>
-      <Rise at={C7_STEPS.six.from} y={30} scale={0.9} origin={[640, 656]}>
+      <Rise at={C5_STEPS.six.from} y={30} scale={0.9} origin={[640, 656]}>
         <div style={{position: 'absolute', left: 0, right: 0, top: 640, textAlign: 'center', fontFamily: DISPLAY, fontSize: 28, fontWeight: 800, color: TEXT}}>
           one function · six stacks · <span style={{color: LOOK, textShadow: `0 0 26px ${LOOK}88`}}>0 lines changed</span>
         </div>
@@ -1078,9 +1136,10 @@ export const ARTICLE_CONCEPT = narrate(
     {length: COMPARE, starts: saidStarts(COMPARE_SAID), ids: ['a5', 'a6', 'a7', 'a8'], node: <Compare />},
     {length: FN_LENGTH, starts: saidStarts(FN_SAID), ids: ['b1', 'b2', 'b3'], node: <Fn />},
     {length: HANDLE, starts: saidStarts(HANDLE_SAID), ids: ['b4', 'b5', 'b6', 'b7'], node: <Handling />},
+    {length: CLOCKS, starts: saidStarts(CLOCKS_SAID), ids: ['w1', 'w2', 'w3', 'w4', 'w5'], node: <Clocks />},
     {length: STACKS_LENGTH, starts: saidStarts(STACK_SAID), ids: ['s1', 's2'], node: <Stacks />},
+    {length: FIGHT, starts: saidStarts(FIGHT_SAID), ids: ['c1', 'c2', 'c3', 'c4', 'e2'], node: <Fight />},
     {length: START, starts: saidStarts(START_SAID), ids: ['e1'], node: <Start />},
-    {length: FIGHT, starts: saidStarts(FIGHT_SAID), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'e2'], node: <Fight />},
   ],
   // The backdrop sits behind every scene, and the camera moves through the cuts.
   {backdrop: () => <Backdrop />, dolly: true},
@@ -1098,7 +1157,8 @@ export const PACED: Record<string, {motions: Step[]; seconds: number}> = {
   Compare: paced(COMPARE_SAID, [B1_STEPS, B2_STEPS, B3_STEPS, B4_STEPS], COMPARE),
   Function: paced(FN_SAID, [F1_STEPS, F2_STEPS, F3_STEPS], FN_LENGTH),
   Handling: paced(HANDLE_SAID, [H1_STEPS, H2_STEPS, H3_STEPS, H4_STEPS], HANDLE),
+  Clocks: paced(CLOCKS_SAID, [W1_STEPS, W2_STEPS, W3_STEPS, W4_STEPS, W5_STEPS], CLOCKS),
   Stacks: paced(STACK_SAID, [S1_STEPS, S2_STEPS], STACKS_LENGTH),
+  Fight: paced(FIGHT_SAID, [C1_STEPS, C2_STEPS, C3_STEPS, C4_STEPS, C5_STEPS], FIGHT),
   Start: paced(START_SAID, [E1_STEPS], START),
-  Fight: paced(FIGHT_SAID, [C1_STEPS, C2_STEPS, C3_STEPS, C4_STEPS, C5_STEPS, C6_STEPS, C7_STEPS], FIGHT),
 };
