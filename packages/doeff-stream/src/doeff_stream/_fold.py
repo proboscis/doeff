@@ -26,6 +26,10 @@ tag (the fold's ``origin`` and the step's tag). Its ``TimerFired`` reaches every
 those of its own origin, gives the step ``TimerFired(tag)``, and reads past the other folds' ones. A ``TimerFired``
 whose tag is not a ``_FoldTimer`` (a ``Run`` of ``ArmTimer``) reaches the step as it is.
 
+``fold_clocked`` runs the same loop and reads the clock once (``GetTime``) right before each step: the step is given
+``Clocked(at, input)`` for every input alike, and ``at`` never goes back. The clock is the caller's clock handler, as
+for the measures.
+
 The fold installs one handler, around a step's Program only: the one that refuses every effect (``step_answer``).
 The caller installs the bus handler subscribed to ``inputs.event_types`` (``subscribed_event_handler``) and, for
 ``timers()``, the timer handler inside it — under ``scheduled``.
@@ -37,13 +41,14 @@ and ``GetMonotonic`` (the clock handler). Without such a handler it measures not
 
 from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass, replace
+from datetime import datetime
 from functools import cache
 from types import FunctionType
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 from doeff_core_effects import Cancel, Spawn, Task, TaskCancelledError, Wait, shielded
 from doeff_events import ArmTimer, CountQueued, DisarmTimer, Publish, TimerFired, WaitForEvent
-from doeff_time import GetMonotonic
+from doeff_time import GetMonotonic, GetTime
 
 from doeff import Program, do
 from doeff_stream._measure import FoldMeasured, caller_measures
@@ -54,6 +59,7 @@ from doeff_stream._step import (
     Arm,
     Cancelled,
     CancelRun,
+    Clocked,
     Disarm,
     Finish,
     Next,
@@ -206,6 +212,35 @@ def _own_input(
 
 
 @do
+def _taken(
+    event: object, inputs: Inputs, *, measured: bool, clocked: bool, previous: datetime | None
+) -> Generator[Any, Any, tuple[object, _StepClock | None]]:
+    """The input as the step is given it, and what the fold read before the step when it measures.
+
+    ``clocked`` (``fold_clocked``): the input inside a ``Clocked`` with the clock read now (``GetTime``), or ``previous``
+    — the instant given with the input before — when the clock reads earlier. Then the queue and the clock
+    (``_start_clock``) when ``measured``.
+    """
+    if clocked:
+        now: datetime = yield GetTime()
+        event = Clocked(now if previous is None or now > previous else previous, event)
+    clock = (yield _start_clock(inputs)) if measured else None
+    return event, clock
+
+
+@do
+def _answered(
+    step: Callable[[S, Any], "Next[S, A] | Program[Next[S, A]]"], state: S, event: object
+) -> Generator[Any, Any, object]:
+    """The step's answer to ``event``: what it answered, or the value of the Program it answered, evaluated under the
+    handler that refuses every effect (``step_answer``). Not checked yet (``checked_next``)."""
+    answer = step(state, event)
+    if is_program_answer(answer):
+        answer = yield step_answer(step, answer)
+    return answer
+
+
+@do
 def _start_clock(inputs: Inputs) -> Generator[Any, Any, _StepClock]:
     """Read the queue behind the input just taken, then the clock — right before the step."""
     queued: int = yield CountQueued(*inputs.event_types)
@@ -267,7 +302,11 @@ def _ended(entry: _Running) -> Generator[Any, Any, None]:
 
 @do
 def fold(
-    step: Callable[[S, object], "Next[S, A] | Program[Next[S, A]]"], initial: S, inputs: Inputs
+    step: Callable[[S, object], "Next[S, A] | Program[Next[S, A]]"],
+    initial: S,
+    inputs: Inputs,
+    *,
+    _clocked: bool = False,
 ) -> Generator[Any, Any, A]:
     """Run ``step`` over the inputs of ``inputs`` from ``initial`` until it answers ``Finish(value)``; answer ``value``.
 
@@ -284,6 +323,10 @@ def fold(
 
     Under a handler annotated with ``FoldMeasured``, the fold performs one ``FoldMeasured`` after each input it gave
     the step (its effects carried out); under none it measures nothing.
+
+    ``_clocked`` is ``fold_clocked``'s, not a caller's: the loop is this one frame, so the runs of both entries are
+    counted under the site ``fold`` (``Run``'s ``name``). A step of ``fold_clocked`` takes a ``Clocked``, so its type
+    does not pass for this ``step``.
     """
     origin = object()
     # The fold's own table of the runs it started (key -> tasks): its loop state, never shared.
@@ -293,6 +336,8 @@ def fold(
     # The ends of the inline runs carried out and not given to the step yet: they go before any input on the bus.
     inline_ends: list[RunEnd] = []
     state = initial
+    # The instant given with the last input (fold_clocked): the next one is never earlier.
+    taken_at: datetime | None = None
     measured: bool = yield caller_measures()
     try:
         while True:
@@ -303,10 +348,9 @@ def fold(
                 event = _own_input(event, origin, running, armed)
                 if event is _FOREIGN:
                     continue
-            clock = (yield _start_clock(inputs)) if measured else None
-            answer = step(state, event)
-            if is_program_answer(answer):
-                answer = yield step_answer(step, answer)
+            event, clock = yield _taken(event, inputs, measured=measured, clocked=_clocked, previous=taken_at)
+            taken_at = event.at if isinstance(event, Clocked) else None
+            answer = yield _answered(step, state, event)
             answer = checked_next(answer, frozenset(running) | {end.key for end in inline_ends})
             step_seconds = (yield GetMonotonic()) - clock.began if clock is not None else 0.0
             state = answer.state
@@ -346,8 +390,25 @@ def fold(
         raise
 
 
+@do
+def fold_clocked(
+    step: Callable[[S, Clocked], "Next[S, A] | Program[Next[S, A]]"], initial: S, inputs: Inputs
+) -> Generator[Any, Any, A]:
+    """``fold``, giving the step each input inside a ``Clocked``: the input with the instant the fold took it.
+
+    Right before each step the fold reads the clock once (``GetTime`` — the clock handler around the fold) and gives
+    the step ``Clocked(at, input)``, for every input alike: an event, the end of a run, a ``TimerFired``. ``at`` never
+    goes back: a clock read earlier than the ``at`` of the input before (a wall clock set back) gives that ``at``
+    again. A step that judges deadlines reads "now" from ``at`` alone, whichever input woke it.
+    """
+    # The loop gives this step only Clocked inputs (_clocked), so the step's narrower input type is what it is given.
+    bare_typed = cast("Callable[[S, object], Next[S, A] | Program[Next[S, A]]]", step)
+    return (yield fold(bare_typed, initial, inputs, _clocked=True))
+
+
 # The declaration doeff-effect-analyzer reads for the fold: the ``program`` of each ``Run`` the function handed as
 # ``step`` builds (``Run.__doeff_runs_carried__``) runs in a task the fold spawns, under the handlers around the fold.
 # The reader reads each such program where the step (or a function it calls) writes the Run, carried by ``Spawn``,
 # and the runner's ``yield program`` adds nothing (the Run's program taken out by the ``case Run(...)`` above).
 fold.__doeff_runs_built__ = {"step": Spawn}  # type: ignore[attr-defined] — the analyzer's mark on a function (no typed slot)
+fold_clocked.__doeff_runs_built__ = {"step": Spawn}  # type: ignore[attr-defined] — the same mark: it runs the same loop
