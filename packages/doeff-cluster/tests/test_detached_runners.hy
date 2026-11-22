@@ -129,7 +129,7 @@
   {:pre [(: tmp-path Path)] :post [(: % RunnersRig)] :tags {:context "doeff-cluster-test" :role "foundation"}}
   "coordinator の組を開くため(担い手 a・b の RigWorker と、本物の detached-cluster・operator の口)。"
   (let [clock (SimClock)
-        coordinator (MemoryCoordinator clock TIMING)
+        coordinator (MemoryCoordinator clock TIMING :workers (tuple (gfor f RUNNERS f.name)))
         transport (httpx.MockTransport coordinator.handle)
         runners (CoordinatorRunners tmp-path transport)
         admin (httpx.Client :transport transport :base-url "http://coordinator" :headers {"x-actor" "operator"})]

@@ -63,7 +63,9 @@
 (import doeff_cluster._shared.intent.cluster_control [ServiceReadiness ReadinessOf KillWorker StopWorker StopCoordinator
                                                      CrashCoordinator Redeclare RestartService ServiceRestarted RestartRefused Crash AwaitReadiness ServiceFailed ReadinessWaitExpired
                                                      AwaitJobProcess JobProcessSeen JobProcessWaitExpired])
-(import doeff_cluster._sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute])
+(import doeff_hy._table [Table])
+(import doeff_cluster._shared.core.compartment_rules [machine-compartments-spec])
+(import doeff_cluster._sim.local [SimWorker ReadCoordinator CutWorker StallWorker FailRoute sim-compartments])
 
 ;; 配備と同じ起動の script(packages/doeff-cluster/deploy/boot.sh — この file は src/doeff_cluster/_sim/ に在る)。
 (val BOOT-SCRIPT (str (/ (get (. (Path __file__) parents) 3) "deploy" "boot.sh")))
@@ -519,6 +521,21 @@
     (raise (MachineCannotAnswer (+ "FailRoute(" method " " path ")— 手元の 1 台は 5xx を返させない(sim だけが答える)")))))
 
 
+(defk machine-compartments-declared [url machine]
+  {:pre [(: url str) (: machine LocalMachine)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
+  "手元の 1 台の worker ごとの tasks 区画(ADR-DOE-CLUSTER-005 R1・R5 — sim-cluster の sim-compartments と同じ宣言)を、site の宣言の
+   代役として coordinator の資源の口へ書くため。"
+  (<- compartments Table (sim-compartments machine.workers))
+  (for [row (.rows compartments)]
+    (<- answer (HttpRequest "POST" (+ url "/resources/MachineCompartments")
+                            :headers {"X-Actor" MACHINE-ACTOR "Content-Type" "application/json"}
+                            :body {"name" row.machine "spec" (machine-compartments-spec row)}
+                            :timeout-seconds 10.0 :max-retries 0 :failures-as-values True))
+    (when (or (not (isinstance answer HttpResponse)) (!= answer.status 201))
+      (raise (RuntimeError (+ "区画の宣言を書けない: " row.machine " — " (repr answer))))))
+  None)
+
+
 (defk machine-run [scenario cell machine]
   {:pre [(: scenario (| Program EffectBase)) (: cell MachineCell) (: machine LocalMachine)]
    :post [(: % "scenario の答え(型は筋書きごと)")]
@@ -536,6 +553,7 @@
   (setv cell.roles #(coordinator))
   (try
     (<- (await-up url coordinator (fn [_state] True) machine.boot-seconds))
+    (<- (machine-compartments-declared url machine))
     (for [worker machine.workers]
       (<- (written-repo-table machine (/ (Path machine.work-dir) "workers" worker.name)))
       (<- worker-vars tuple (worker-env machine worker url))

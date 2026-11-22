@@ -135,10 +135,10 @@
 (defclass MemoryCoordinator []
   "本物の api_policy.respond / tick を httpx の MockTransport の後ろに置く。時刻は仮想の時計。要求の前に tick する(本物の調停
    ループは要求の無い拍に tick する)。答えた後は本物の 1 歩と同じく終わりの出口へ積む(detached_policy.outbox-noted)。"
-  (defn #^ None __init__ [self #^ SimClock clock #^ ClusterTiming [timing (ClusterTiming)]]
+  (defn #^ None __init__ [self #^ SimClock clock #^ ClusterTiming [timing (ClusterTiming)] #^ tuple [workers #("w1")]]
     (setv self.clock clock
-          ;; 担い手 w1 の tasks 区画を名乗る前に宣言して置く(置き方は区画の申告の和で置く — ADR-DOE-CLUSTER-005)。
-          self.state (ClusterState :machine-compartments (room-compartments #("w1") 10))
+          ;; 名乗る担い手 workers の tasks 区画を名乗る前に宣言して置く(置き方は区画の申告の和で置く — ADR-DOE-CLUSTER-005)。
+          self.state (ClusterState :machine-compartments (room-compartments workers 10))
           self.timing timing))
 
   (defn #^ httpx.Response handle [self #^ httpx.Request request]
