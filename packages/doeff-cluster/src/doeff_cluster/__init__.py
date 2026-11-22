@@ -368,7 +368,6 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.protocol.kube import kube_api as kube_api
     from doeff_cluster._coordinator.protocol.kube import kube_memory as kube_memory
     from doeff_cluster._coordinator.protocol.kube import kube_unavailable as kube_unavailable
-    from doeff_cluster._coordinator.core.cluster_policy import liveness_due as liveness_due
     from doeff_cluster._coordinator.core.cluster_policy import memory_misfit as memory_misfit
     from doeff_cluster._coordinator.core.cluster_policy import memory_misfits as memory_misfits
     from doeff_cluster._coordinator.core.cluster_policy import memory_room_of as memory_room_of
@@ -386,11 +385,7 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.core.cluster_policy import (
         spec_of_declaration as spec_of_declaration,
     )
-    from doeff_cluster._coordinator.core.cluster_policy import sweep_due as sweep_due
-    from doeff_cluster._coordinator.core.cluster_policy import task_due as task_due
-    from doeff_cluster._coordinator.core.cluster_policy import task_room_of as task_room_of
     from doeff_cluster._coordinator.core.api_policy import tick as tick
-    from doeff_cluster._coordinator.core.api_policy import tick_due as tick_due
     from doeff_cluster._coordinator.core.cluster_policy import unplaced_kind as unplaced_kind
     from doeff_cluster._coordinator.core.cluster_policy import unplaced_memory as unplaced_memory
     from doeff_cluster._coordinator.protocol.store import wal_store as wal_store
@@ -469,15 +464,10 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.entry.code_prepare import closure_reads as closure_reads
     from doeff_cluster._worker.core.worker_rules import code_key as code_key
     from doeff_cluster._worker.protocol.drain_requests import coordinator_calls as coordinator_calls
-    from doeff_cluster._worker.entry.line_stamp import coordinator_log_plan as coordinator_log_plan
     from doeff_cluster._worker.entry.line_stamp import cut_lines as cut_lines
     from doeff_cluster._shared.protocol.program_codec import decode_program as decode_program
     from doeff_cluster._worker.core.drain_client import drain_outcome as drain_outcome
     from doeff_cluster._worker.protocol.drain_requests import drain_request as drain_request
-    from doeff_cluster._worker.core.worker_due import fence_due as fence_due
-    from doeff_cluster._worker.core.env_prepare import (
-        hyx_env_marker_XgreaterHthan_signXjson as hyx_env_marker_XgreaterHthan_signXjson,
-    )
     from doeff_cluster._worker.entry.line_stamp import logs_body as logs_body
     from doeff_cluster._worker.entry.hosted_socket import hosted_client as hosted_client
     from doeff_cluster._worker.entry.hosted_socket import hosted_socket_path as hosted_socket_path
@@ -489,7 +479,6 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.core.policy import prepare_action as prepare_action
     from doeff_cluster._worker.protocol.process_clock import process_clock as process_clock
     from doeff_cluster._worker.protocol.process_host import process_host as process_host
-    from doeff_cluster._worker.entry.line_stamp import process_lines as process_lines
     from doeff_cluster._worker.core.launch import program_file as program_file
     from doeff_cluster._worker.core.launch import program_file_text as program_file_text
     from doeff_cluster._worker.entry.code_prepare import progress_marks as progress_marks
@@ -737,7 +726,6 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.protocol.checkout_reads import checkout_state_at as checkout_state_at
     from doeff_cluster._shared.core.semaphore_handlers import cluster_semaphore as cluster_semaphore
     from doeff_cluster._shared.core.native_wheel import current_platform as current_platform
-    from doeff_cluster._shared.core.clock import datetime_of_epoch_ms as datetime_of_epoch_ms
     from doeff_cluster._shared.core.declaring import declaring_refusal as declaring_refusal
     from doeff_cluster._shared.protocol.program_codec import decode_outcome as decode_outcome
     from doeff_cluster._shared.entry.deployed_cluster import deployed_cluster as deployed_cluster
@@ -758,9 +746,6 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.core.lease_rules import holder_tokens_prefix as holder_tokens_prefix
     from doeff_cluster._shared.entry.host_reader import host_reader as host_reader
-    from doeff_cluster._shared.core.runtime_env_rules import (
-        hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson,
-    )
     from doeff_cluster._shared.core.service_rules import identity_of as identity_of
     from doeff_cluster._shared.entry.service_build import job as job
     from doeff_cluster._shared.protocol.job_call_handlers import job_answer_of as job_answer_of
@@ -785,7 +770,6 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.core.lease_rules import lease_op as lease_op
     from doeff_cluster._shared.core.semaphore_handlers import leases_fence as leases_fence
     from doeff_cluster._shared.core.lease_rules import live_holders as live_holders
-    from doeff_cluster._shared.core.clock import monotonic_ms_of as monotonic_ms_of
     from doeff_cluster._shared.core.semaphore_handlers import (
         named_semaphore_local as named_semaphore_local,
     )
@@ -873,12 +857,8 @@ if TYPE_CHECKING:
     from doeff_cluster._coordinator.core.resource_policy import Refused as Refused
     from doeff_cluster._coordinator.protocol.wal_format import WalCorrupted as WalCorrupted
     from doeff_cluster._coordinator.protocol.faults import coordinator_faults as coordinator_faults
-    from doeff_cluster._coordinator.core.wake_policy import next_wake as next_wake
     from doeff_cluster._coordinator.protocol.request_queue import queued_requests as queued_requests
     from doeff_cluster._coordinator.protocol.replies import reply_bodies as reply_bodies
-    from doeff_cluster._coordinator.core.resource_policy import (
-        service_readiness as service_readiness,
-    )
     from doeff_cluster._worker.protocol.observations import CodeTimings as CodeTimings
     from doeff_cluster._worker.intent.code_model import CompileSources as CompileSources
     from doeff_cluster._worker.intent.code_model import ImportClosure as ImportClosure
@@ -918,7 +898,6 @@ if TYPE_CHECKING:
     from doeff_cluster._worker.protocol.worker_wakes import no_wakes as no_wakes
     from doeff_cluster._worker.protocol.pod_labels import pod_job_labels as pod_job_labels
     from doeff_cluster._worker.protocol.probes import probe_host as probe_host
-    from doeff_cluster._worker.core.heartbeat_rules import silent_ms as silent_ms
     from doeff_cluster._worker.protocol.status_file import status_file as status_file
     from doeff_cluster._worker.protocol.tree_files import tree_files as tree_files
     from doeff_cluster._worker.protocol.warm_host import warm_host as warm_host
@@ -930,9 +909,6 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.protocol.remote import remote_cluster as remote_cluster
     from doeff_cluster._shared.protocol.shared_handlers import shared_http as shared_http
-    from doeff_cluster._shared.core.supplied_spelling import (
-        supplied_spellings as supplied_spellings,
-    )
     from doeff_cluster._shared.protocol.declaration_requests import update_body as update_body
 _LAZY_EXPORTS: dict[str, str] = {
     "AckDetachedOutbox": "doeff_cluster._shared.intent.detached_model",
@@ -1255,13 +1231,11 @@ _LAZY_EXPORTS: dict[str, str] = {
     "kube_api": "doeff_cluster._coordinator.protocol.kube",
     "kube_memory": "doeff_cluster._coordinator.protocol.kube",
     "kube_unavailable": "doeff_cluster._coordinator.protocol.kube",
-    "liveness_due": "doeff_cluster._coordinator.core.cluster_policy",
     "memory_misfit": "doeff_cluster._coordinator.core.cluster_policy",
     "memory_misfits": "doeff_cluster._coordinator.core.cluster_policy",
     "memory_room_of": "doeff_cluster._coordinator.core.cluster_policy",
     "memory_store": "doeff_cluster._coordinator.protocol.store",
     "naming_from_json": "doeff_cluster._coordinator.protocol.cluster_json",
-    "next_wake": "doeff_cluster._coordinator.core.wake_policy",
     "placeable": "doeff_cluster._coordinator.core.cluster_policy",
     "queued_requests": "doeff_cluster._coordinator.protocol.request_queue",
     "reply_bodies": "doeff_cluster._coordinator.protocol.replies",
@@ -1269,13 +1243,8 @@ _LAZY_EXPORTS: dict[str, str] = {
     "responded": "doeff_cluster._coordinator.protocol.request_bodies",
     "room_file_workers": "doeff_cluster._coordinator.core.failover_room",
     "runtime_env_of_json": "doeff_cluster._shared.core.runtime_env_rules",
-    "service_readiness": "doeff_cluster._coordinator.core.resource_policy",
     "spec_of_declaration": "doeff_cluster._coordinator.core.cluster_policy",
-    "sweep_due": "doeff_cluster._coordinator.core.cluster_policy",
-    "task_due": "doeff_cluster._coordinator.core.cluster_policy",
-    "task_room_of": "doeff_cluster._coordinator.core.cluster_policy",
     "tick": "doeff_cluster._coordinator.core.api_policy",
-    "tick_due": "doeff_cluster._coordinator.core.api_policy",
     "unplaced_kind": "doeff_cluster._coordinator.core.cluster_policy",
     "unplaced_memory": "doeff_cluster._coordinator.core.cluster_policy",
     "wal_store": "doeff_cluster._coordinator.protocol.store",
@@ -1370,15 +1339,12 @@ _LAZY_EXPORTS: dict[str, str] = {
     "code_key": "doeff_cluster._worker.core.worker_rules",
     "coordinator_calls": "doeff_cluster._worker.protocol.drain_requests",
     "coordinator_link": "doeff_cluster._worker.protocol.coordinator_link",
-    "coordinator_log_plan": "doeff_cluster._worker.entry.line_stamp",
     "cut_lines": "doeff_cluster._worker.entry.line_stamp",
     "decode_program": "doeff_cluster._shared.protocol.program_codec",
     "drain_outcome": "doeff_cluster._worker.core.drain_client",
     "drain_request": "doeff_cluster._worker.protocol.drain_requests",
     "env_host": "doeff_cluster._worker.protocol.env_store",
-    "fence_due": "doeff_cluster._worker.core.worker_due",
     "file_sha256": "doeff_cluster._worker.protocol.env_translation",
-    "hyx_env_marker_XgreaterHthan_signXjson": "doeff_cluster._worker.core.env_prepare",
     "job_cgroup_placer": "doeff_cluster._worker.protocol.job_cgroup",
     "lease_release": "doeff_cluster._worker.protocol.lease_release",
     "leaving_observer": "doeff_cluster._worker.protocol.leaving_observer",
@@ -1397,7 +1363,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "probe_host": "doeff_cluster._worker.protocol.probes",
     "process_clock": "doeff_cluster._worker.protocol.process_clock",
     "process_host": "doeff_cluster._worker.protocol.process_host",
-    "process_lines": "doeff_cluster._worker.entry.line_stamp",
     "program_file": "doeff_cluster._worker.core.launch",
     "program_file_text": "doeff_cluster._worker.core.launch",
     "progress_marks": "doeff_cluster._worker.entry.code_prepare",
@@ -1406,7 +1371,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "retired_name": "doeff_cluster._worker.core.worker_rules",
     "room_of_text": "doeff_cluster._worker.core.room_rules",
     "shim_spans": "doeff_cluster._worker.core.shim_timing",
-    "silent_ms": "doeff_cluster._worker.core.heartbeat_rules",
     "status_file": "doeff_cluster._worker.protocol.status_file",
     "status_rows_json": "doeff_cluster._worker.protocol.heartbeat",
     "statuses": "doeff_cluster._worker.core.policy",
@@ -1588,7 +1552,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "checkout_state_at": "doeff_cluster._shared.protocol.checkout_reads",
     "cluster_semaphore": "doeff_cluster._shared.core.semaphore_handlers",
     "current_platform": "doeff_cluster._shared.core.native_wheel",
-    "datetime_of_epoch_ms": "doeff_cluster._shared.core.clock",
     "declaring_refusal": "doeff_cluster._shared.core.declaring",
     "decode_outcome": "doeff_cluster._shared.protocol.program_codec",
     "deployed_cluster": "doeff_cluster._shared.entry.deployed_cluster",
@@ -1601,7 +1564,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "given_runtime_facts": "doeff_cluster._shared.protocol.runtime_facts",
     "holder_tokens_prefix": "doeff_cluster._shared.core.lease_rules",
     "host_reader": "doeff_cluster._shared.entry.host_reader",
-    "hyx_runtime_env_XgreaterHthan_signXjson": "doeff_cluster._shared.core.runtime_env_rules",
     "identity_of": "doeff_cluster._shared.core.service_rules",
     "job": "doeff_cluster._shared.entry.service_build",
     "job_answer_of": "doeff_cluster._shared.protocol.job_call_handlers",
@@ -1622,7 +1584,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "live_holders": "doeff_cluster._shared.core.lease_rules",
     "metrics_http": "doeff_cluster._shared.protocol.metrics_handlers",
     "metrics_memory": "doeff_cluster._shared.protocol.metrics_memory",
-    "monotonic_ms_of": "doeff_cluster._shared.core.clock",
     "named_semaphore_local": "doeff_cluster._shared.core.semaphore_handlers",
     "outside_holders": "doeff_cluster._shared.core.lease_rules",
     "process_runtime_facts": "doeff_cluster._shared.protocol.runtime_facts",
@@ -1649,7 +1610,6 @@ _LAZY_EXPORTS: dict[str, str] = {
     "supplied_ref_of": "doeff_cluster._shared.protocol.supplied_values",
     "supplied_ref_text": "doeff_cluster._shared.protocol.supplied_values",
     "supplied_setting": "doeff_cluster._shared.protocol.supplied_values",
-    "supplied_spellings": "doeff_cluster._shared.core.supplied_spelling",
     "supplied_value": "doeff_cluster._shared.protocol.supplied_values",
     "system_declaration": "doeff_cluster._shared.entry.service_build",
     "system_of": "doeff_cluster._shared.entry.service_build",
