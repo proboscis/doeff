@@ -27,7 +27,8 @@
   "The last 4 rows of the doeff-core-effects group \"Violation — annotate the factory arguments or move inside\" were removed and the doeff-core-effects entry became empty. StackDumpLedger and stack_dumps_at (the ledger and counting of the stack-dump watchdog) left the entry point and stay in the inner _stack_dump_effects: the factory watched_stack_dump_handler(watch) now holds the ledger, takes only the real watchdog as a function of the new deadline, and builds memory_stack_dump_handler and faulthandler_stack_dump_handler. SqliteFile left the entry point and stays in the inner _sqlite_file_sql: open_sqlite_files now takes a dict of database name to file path. The outside caller (agora-controllers controllers/foundation/stack_dumps.hy and sqlite_store.hy) was rewritten first, the order of ADR-DOE-API-001 R20 (doeff efc1c68d, agora-controllers 696d8c684d); the 3 rows of stack_dumps_at in the group \"Allowed — program helper\" of the allowed table were removed with them.",
   "The 81 names of doeff-cluster defined in the section _shared that the inventory reads as fitting an allowed shape (357 rows — 351 rows of the group \"Violation — move to an inner module\" and 6 rows of \"added names\") were moved to the allowed table at the entry point doeff_cluster, without changing code: 30 effect answer types, 19 effect value types and 9 handler setting types (R2), 16 conversion functions (R35), 6 program helpers that outside repos use (R18, R25) and 1 builder (R37). The names were sorted by direction of fix name by name, counting the callers in the origin/main of outside repos.",
   "The 45 names of doeff-cluster defined in the sections _coordinator, _foundation, _sim, _worker that the inventory reads as fitting an allowed shape (132 rows) were moved to the allowed table at the entry point doeff_cluster, without changing code: 12 conversion function, 3 effect answer type, 16 effect value type, 7 handler setting type, 5 program helper, 2 program-shape builder and type. Allowed rows of the same names at old submodule paths, which the entry rows replace, were removed. cut_lines stays in the group \"Violation — move to an inner module\": the class CutLines it returns is not shown by the package, so it does not fit the builder group.",
-  "The 17 names of doeff-cluster that its effects answer (56 rows) were moved to the allowed table at the entry point doeff_cluster as effect answer types, after the effects of _shared/intent/detached_model.hy and warm_model.hy declared their answer types (EffectBase[T]). Allowed rows of the same names at old submodule paths were removed."
+  "The 17 names of doeff-cluster that its effects answer (56 rows) were moved to the allowed table at the entry point doeff_cluster as effect answer types, after the effects of _shared/intent/detached_model.hy and warm_model.hy declared their answer types (EffectBase[T]). Allowed rows of the same names at old submodule paths were removed.",
+  "The 16 names of doeff-cluster that no other repo imports (57 rows) left the entry point doeff_cluster: its tests and ADRs read them from the modules that define them (R1, R5, R15)."
  ],
  "packages": {
   "doeff-adr": {
@@ -40,12 +41,7 @@
     "Violation — move to an inner module": {
      "doeff_cluster.coordinator.core.api_policy": [
       "ALIVE_MARK_MS",
-      "SEMAPHORE_PREFIX",
-      "liveness_due",
-      "service_readiness",
-      "sweep_due",
-      "task_due",
-      "tick_due"
+      "SEMAPHORE_PREFIX"
      ],
      "doeff_cluster.coordinator.core.cluster_policy": [
       "IMAGE_FOLLOW_KEYS",
@@ -55,9 +51,6 @@
       "WorkerBack",
       "WorkerGone",
       "WorkerLoad",
-      "liveness_due",
-      "sweep_due",
-      "task_due",
       "unplaced_kind"
      ],
      "doeff_cluster.coordinator.core.coordinator_invariants": [
@@ -66,29 +59,10 @@
      "doeff_cluster.coordinator.core.detached_policy": [
       "DETACHED_DEFAULT_LEASE_SECONDS"
      ],
-     "doeff_cluster.coordinator.core.drain_policy": [
-      "service_readiness"
-     ],
-     "doeff_cluster.coordinator.core.handoff_policy": [
-      "service_readiness"
-     ],
-     "doeff_cluster.coordinator.core.metrics_policy": [
-      "service_readiness"
-     ],
-     "doeff_cluster.coordinator.core.program": [
-      "datetime_of_epoch_ms",
-      "monotonic_ms_of",
-      "next_wake"
-     ],
      "doeff_cluster.coordinator.core.resource_policy": [
       "ReadinessClaim",
       "UnplacedKind",
-      "service_readiness",
       "unplaced_kind"
-     ],
-     "doeff_cluster.coordinator.core.wake_policy": [
-      "next_wake",
-      "tick_due"
      ],
      "doeff_cluster.coordinator.core.warm_policy": [
       "WarmFailure"
@@ -99,9 +73,7 @@
      ],
      "doeff_cluster.coordinator.entry.main": [
       "SHIP_LIMITS",
-      "WalStore",
-      "coordinator_log_plan",
-      "process_lines"
+      "WalStore"
      ],
      "doeff_cluster.coordinator.intent.cluster_model": [
       "UnplacedKind",
@@ -154,10 +126,6 @@
      "doeff_cluster.foundation.wal_store": [
       "WalStore"
      ],
-     "doeff_cluster.shared.core.clock": [
-      "datetime_of_epoch_ms",
-      "monotonic_ms_of"
-     ],
      "doeff_cluster.shared.core.declaring": [
       "RecordArgument"
      ],
@@ -187,8 +155,7 @@
       "ProjectOfCheckout"
      ],
      "doeff_cluster.shared.core.runtime_env_rules": [
-      "InvalidKind",
-      "hyx_runtime_env_XgreaterHthan_signXjson"
+      "InvalidKind"
      ],
      "doeff_cluster.shared.core.runtime_identity": [
       "RuntimeIdentityMismatch"
@@ -228,7 +195,6 @@
      "doeff_cluster.shared.entry.service_build": [
       "encode_program",
       "environ_overlay_refusal",
-      "hyx_runtime_env_XgreaterHthan_signXjson",
       "resolve",
       "system_declaration",
       "system_of"
@@ -294,9 +260,7 @@
       "ServiceReady",
       "TaskFailed",
       "TaskSucceeded",
-      "encode_program",
-      "hyx_runtime_env_XgreaterHthan_signXjson",
-      "service_readiness"
+      "encode_program"
      ],
      "doeff_cluster.shared.protocol.program_codec": [
       "TaskFailed",
@@ -309,8 +273,7 @@
      "doeff_cluster.shared.protocol.remote": [
       "TaskFailed",
       "TaskSucceeded",
-      "encode_program",
-      "hyx_runtime_env_XgreaterHthan_signXjson"
+      "encode_program"
      ],
      "doeff_cluster.shared.protocol.runtime_facts": [
       "ENV_MARKER"
@@ -365,12 +328,7 @@
       "WorkerGone",
       "WorldView",
       "current_platform",
-      "datetime_of_epoch_ms",
       "encode_program",
-      "fence_due",
-      "hyx_runtime_env_XgreaterHthan_signXjson",
-      "monotonic_ms_of",
-      "silent_ms",
       "sim_cluster",
       "system_declaration",
       "wall_sim_cluster"
@@ -380,7 +338,6 @@
       "system_declaration"
      ],
      "doeff_cluster.sim.test_entries_on_sim": [
-      "datetime_of_epoch_ms",
       "sim_cluster"
      ],
      "doeff_cluster.sim.test_recording_on_sim": [
@@ -393,16 +350,6 @@
      "doeff_cluster.worker.core.drain_client": [
       "DRAIN_DEADLINE_SECONDS",
       "DRAIN_INTERVAL_SECONDS"
-     ],
-     "doeff_cluster.worker.core.env_prepare": [
-      "hyx_env_marker_XgreaterHthan_signXjson",
-      "hyx_runtime_env_XgreaterHthan_signXjson"
-     ],
-     "doeff_cluster.worker.core.env_upkeep": [
-      "sweep_due"
-     ],
-     "doeff_cluster.worker.core.heartbeat_rules": [
-      "silent_ms"
      ],
      "doeff_cluster.worker.core.invariants": [
       "WorldView"
@@ -418,10 +365,7 @@
       "WorldView"
      ],
      "doeff_cluster.worker.core.program": [
-      "WorldView",
-      "datetime_of_epoch_ms",
-      "monotonic_ms_of",
-      "silent_ms"
+      "WorldView"
      ],
      "doeff_cluster.worker.core.room_rules": [
       "RoomReading"
@@ -432,8 +376,7 @@
      "doeff_cluster.worker.core.worker_due": [
       "CodeState",
       "ProbeState",
-      "WorldView",
-      "fence_due"
+      "WorldView"
      ],
      "doeff_cluster.worker.core.worker_rules": [
       "CodeView"
@@ -451,17 +394,13 @@
       "JobLogTarget",
       "QueuedLine",
       "SHIP_LIMITS",
-      "coordinator_log_plan",
-      "cut_lines",
-      "process_lines"
+      "cut_lines"
      ],
      "doeff_cluster.worker.entry.main": [
       "HOST_CONTRACT",
       "RoomReading",
       "SERVICE_ACCOUNT_TOKEN_FILE",
-      "current_platform",
-      "monotonic_ms_of",
-      "process_lines"
+      "current_platform"
      ],
      "doeff_cluster.worker.entry.retirement_notices": [
       "HOST_CONTRACT"
@@ -483,11 +422,7 @@
      "doeff_cluster.worker.protocol.coordinator_link": [
       "DeclaredReply",
       "RoomReading",
-      "current_platform",
-      "datetime_of_epoch_ms",
-      "fence_due",
-      "monotonic_ms_of",
-      "silent_ms"
+      "current_platform"
      ],
      "doeff_cluster.worker.protocol.declared": [
       "DeclaredReply",
@@ -496,12 +431,10 @@
      "doeff_cluster.worker.protocol.env_store": [
       "CodeState",
       "CodeView",
-      "ENV_MARKER",
-      "sweep_due"
+      "ENV_MARKER"
      ],
      "doeff_cluster.worker.protocol.env_translation": [
-      "ENV_MARKER",
-      "hyx_env_marker_XgreaterHthan_signXjson"
+      "ENV_MARKER"
      ],
      "doeff_cluster.worker.protocol.heartbeat": [
       "CodeState",
@@ -510,19 +443,12 @@
      "doeff_cluster.worker.protocol.lease_release": [
       "SEMAPHORE_PREFIX"
      ],
-     "doeff_cluster.worker.protocol.memory_watch": [
-      "datetime_of_epoch_ms"
-     ],
      "doeff_cluster.worker.protocol.probes": [
       "ProbeState",
       "ProbeView"
      ],
      "doeff_cluster.worker.protocol.process_host": [
       "ProcessView"
-     ],
-     "doeff_cluster.worker.protocol.tick_pauses": [
-      "monotonic_ms_of",
-      "silent_ms"
      ],
      "doeff_cluster.worker.protocol.world": [
       "WorldView"
@@ -919,26 +845,8 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.cluster_policy",
-   "name": "supplied_spellings",
-   "reason": "Name added by ordinary development after the table was re-split into groups in R15 (06df12fc0) (doeff main d4fe279f3, ADR-DOE-CLUSTER-004 — not in the table in the inventory of doeff main 5b57bdc8a). It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _ and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.core.supplied_spelling",
    "name": "OBJECT_SPELLING",
-   "reason": "Name added by ordinary development after the table was re-split into groups in R15 (06df12fc0) (doeff main d4fe279f3, ADR-DOE-CLUSTER-004 — not in the table in the inventory of doeff main 5b57bdc8a). It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _ and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.supplied_spelling",
-   "name": "supplied_spellings",
-   "reason": "Name added by ordinary development after the table was re-split into groups in R15 (06df12fc0) (doeff main d4fe279f3, ADR-DOE-CLUSTER-004 — not in the table in the inventory of doeff main 5b57bdc8a). It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _ and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "datetime_of_epoch_ms",
    "reason": "Name added by ordinary development after the table was re-split into groups in R15 (06df12fc0) (doeff main d4fe279f3, ADR-DOE-CLUSTER-004 — not in the table in the inventory of doeff main 5b57bdc8a). It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _ and step 3 removes the forwarding module"
   },
   {
@@ -946,12 +854,6 @@
    "module": "doeff_core_effects.scripted_http_server",
    "name": "WsShortcutFailed",
    "reason": "Name added when 4fa2eb931 split the ws-interface answers into steps. The type that the scripted handler imports is visible from the module. It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster",
-   "name": "task_room_of",
-   "reason": "Program helper exported from the root so that packages/doeff-cluster/tests/test_cluster_policy.hy can read it, after the forwarding module of the coordinator section was removed (doeff main 32694cf7a — the decision that counts a worker's free task slots). It has no outside users, and it can be removed from the root once the test is changed to read from the hidden module"
   },
   {
    "package": "doeff-stream",

@@ -41,7 +41,6 @@ from doeff_cluster import (
     JobLogShipper,
     JobLogTarget,
     QueuedLine,
-    coordinator_log_plan,
     cut_lines,
     logs_body,
 )
@@ -57,6 +56,7 @@ from doeff_cluster._worker.entry.line_stamp import (
     JobLogRefused,
     OpenLine,
     ShipLimits,
+    coordinator_log_plan,
     job_log_plan,
     worker_log_plan,
 )
