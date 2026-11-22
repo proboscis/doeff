@@ -1180,7 +1180,21 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "hyx_env_marker_XgreaterHthan_signXjson",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "hyx_per_machineXquestion_markX",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "hyx_runtime_env_XgreaterHthan_signXjson",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },

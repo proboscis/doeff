@@ -468,6 +468,9 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.protocol.program_codec import decode_program as decode_program
     from doeff_cluster._worker.core.drain_client import drain_outcome as drain_outcome
     from doeff_cluster._worker.protocol.drain_requests import drain_request as drain_request
+    from doeff_cluster._worker.core.env_prepare import (
+        hyx_env_marker_XgreaterHthan_signXjson as hyx_env_marker_XgreaterHthan_signXjson,
+    )
     from doeff_cluster._worker.entry.line_stamp import logs_body as logs_body
     from doeff_cluster._worker.entry.hosted_socket import hosted_client as hosted_client
     from doeff_cluster._worker.entry.hosted_socket import hosted_socket_path as hosted_socket_path
@@ -746,6 +749,9 @@ if TYPE_CHECKING:
     )
     from doeff_cluster._shared.core.lease_rules import holder_tokens_prefix as holder_tokens_prefix
     from doeff_cluster._shared.entry.host_reader import host_reader as host_reader
+    from doeff_cluster._shared.core.runtime_env_rules import (
+        hyx_runtime_env_XgreaterHthan_signXjson as hyx_runtime_env_XgreaterHthan_signXjson,
+    )
     from doeff_cluster._shared.core.service_rules import identity_of as identity_of
     from doeff_cluster._shared.entry.service_build import job as job
     from doeff_cluster._shared.protocol.job_call_handlers import job_answer_of as job_answer_of
@@ -1345,6 +1351,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "drain_request": "doeff_cluster._worker.protocol.drain_requests",
     "env_host": "doeff_cluster._worker.protocol.env_store",
     "file_sha256": "doeff_cluster._worker.protocol.env_translation",
+    "hyx_env_marker_XgreaterHthan_signXjson": "doeff_cluster._worker.core.env_prepare",
     "job_cgroup_placer": "doeff_cluster._worker.protocol.job_cgroup",
     "lease_release": "doeff_cluster._worker.protocol.lease_release",
     "leaving_observer": "doeff_cluster._worker.protocol.leaving_observer",
@@ -1564,6 +1571,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "given_runtime_facts": "doeff_cluster._shared.protocol.runtime_facts",
     "holder_tokens_prefix": "doeff_cluster._shared.core.lease_rules",
     "host_reader": "doeff_cluster._shared.entry.host_reader",
+    "hyx_runtime_env_XgreaterHthan_signXjson": "doeff_cluster._shared.core.runtime_env_rules",
     "identity_of": "doeff_cluster._shared.core.service_rules",
     "job": "doeff_cluster._shared.entry.service_build",
     "job_answer_of": "doeff_cluster._shared.protocol.job_call_handlers",
