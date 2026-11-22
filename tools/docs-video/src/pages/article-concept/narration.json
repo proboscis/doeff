@@ -4,7 +4,7 @@
  {"id": "a1", "text": "What are algebraic effects for? Four things a program does besides computing."},
  {"id": "p1", "text": "Side effects: printing, saving a file, sending a message."},
  {"id": "p2", "text": "Dependencies: a value the program needs from outside."},
- {"id": "p3", "text": "Async and scheduling: waiting, retrying, running many tasks at once."},
+ {"id": "p3", "text": "Async and scheduling: waiting for a second, a turn or a click, retrying, running many tasks at once."},
  {"id": "p4", "text": "And swapping: the same program runs in tests, in replay, in production."},
  {"id": "p5", "text": "One mechanism does all four. Asking for a value is the simplest use, so we start there."},
  {"id": "t1", "text": "Our example is tiny: a program that buys tea. It needs two things from outside: a price, and a yes."},
@@ -29,6 +29,7 @@
  {"id": "c2", "text": "Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP."},
  {"id": "c3", "text": "It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count."},
  {"id": "c4", "text": "And each of those can be answered in many ways: by a script, a bot, a tape, or a person."},
- {"id": "c5", "text": "Scheduling is an effect too. Spawn runs a hundred fights as tasks on one thread, a handler decides when each one runs, and Gather collects the results."},
+ {"id": "c5", "text": "Scheduling is an effect too. A poison that lasts five turns is a plain loop: it waits for the end of a turn, and the game's own handler keeps the rest of it until then."},
+ {"id": "c6", "text": "A number that rises on screen is the same kind of loop on another clock: it waits a tenth of a second. Two handlers, stacked around one fight, with no locks and no events."},
  {"id": "e2", "text": "The article runs battle under six stacks, and does not change a line of it."}
 ]

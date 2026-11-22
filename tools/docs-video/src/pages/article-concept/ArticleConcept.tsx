@@ -15,12 +15,13 @@
 // 8. How to start.
 // 9. The article's example before the article uses it: what battle does, and why it was chosen (it needs four things
 //    from outside, and each can be answered in many ways).
-// Every code line on screen is a line of measure/order.py (check_code.py checks it), and every result is a line of
-// its output; the card fight's numbers and handler names are those of the article's listing of spire.py and its runs.
+// Every code line on screen is a line of measure/order.py or of examples/effects_tour/clocks.py (check_code.py checks
+// it), and every result is a line of their output; the card fight's numbers and handler names are those of the
+// article's listing of spire.py and its runs.
 // Each scene's motions come one at a time (pace.ts), and each headline waits for its line and its motions.
 import React from 'react';
-import {AbsoluteFill} from 'remotion';
-import {fadeAt} from '../../kit/motion';
+import {AbsoluteFill, interpolate} from 'remotion';
+import {clamp, fadeAt} from '../../kit/motion';
 import {narrate} from '../../kit/narrated';
 import {chain, heardBy, LINE_FADE, nextLine, PAUSE, sceneEnd, Step} from '../../kit/pace';
 import {Clock} from '../../kit/parts';
@@ -30,7 +31,7 @@ import {K} from '../article-opening/ArticleOpening';
 import DURATIONS from './durations.json';
 import NARRATION from './narration.json';
 import {arcOf, Backdrop, Capsule, Chapter, CODE, CodeWindow, codeMid, DISPLAY, glass, Handler, INK, LINE, pointOn, Program, RingOf, Rings, rowMid, Seam} from './style/look';
-import {along, Draw, Headline, pop, Rise, Said, saidStarts, Travel, typed} from './style/motion';
+import {along, Draw, Headline, Ping, pop, Rise, Said, saidStarts, Travel, typed} from './style/motion';
 
 const heard = heardBy(DURATIONS);
 // The first motion of a line: PAUSE s after its headline has arrived.
@@ -149,7 +150,7 @@ const Title: React.FC = () => {
 const USES: {name: string; color: string; what: string; items: string[]}[] = [
   {name: 'Side effects', color: PROD, what: 'it changes the world outside', items: ['print', 'save a file', 'send a message']},
   {name: 'Dependencies', color: ACCENT, what: 'it needs a value from outside', items: ['a price', 'a setting', 'a database']},
-  {name: 'Async and scheduling', color: K, what: 'it decides when things run', items: ['wait', 'retry', 'many tasks at once']},
+  {name: 'Async and scheduling', color: K, what: 'it decides when things run', items: ['wait: a second, a turn, a click', 'retry', 'many tasks at once']},
   {name: 'Swapping', color: TEST, what: 'one program, run many ways', items: ['tests', 'replay', 'production']},
 ];
 const USE = {top: 165, w: 280, h: 336};
@@ -749,8 +750,9 @@ const Start: React.FC = () => {
 // 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
 // the article's scripted run shows: T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike),
 // then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks, and
-// scheduling: win_rate Spawns a hundred fights as tasks on one thread, scheduled decides when each runs (they take
-// turns, each to its end), and Gather collects the results — the random bot wins 73 and the Monte Carlo bot all 100.
+// scheduling, on the two clocks of examples/effects_tour/clocks.py: a poison is a loop that waits for the end of a
+// turn, and the game's own turn clock keeps its k until the turn ends; a number that rises on screen is the same kind
+// of loop and waits 0.1 s on doeff-time's virtual clock. The turns and the frames drawn are those clocks.py prints.
 const C1 = 0;
 const C1_STEPS = chain(after(C1), [['sides', 0.6]]);
 const C2 = nextLine(heard(C1, 'c1'), C1_STEPS);
@@ -776,28 +778,71 @@ const C4_STEPS = chain(after(C4), [
 ]);
 const C5 = nextLine(heard(C4, 'c4'), C4_STEPS);
 const C5_STEPS = chain(after(C5), [
-  ['spawn', 1.4],
-  ['sched', 0.5],
-  ['turns', 2.0],
-  ['gather', 0.6],
-  ['result', 0.5],
+  ['poison', 0.6],
+  ['clock', 0.5],
+  ['wait', 0.9],
+  ['keep', 0.5],
+  ['ends', 0.9],
+  ['hurt', 0.4],
 ]);
 const C6 = nextLine(heard(C5, 'c5'), C5_STEPS);
-const C6_STEPS = chain(after(C6), [['six', 0.6]]);
+const C6_STEPS = chain(after(C6), [
+  ['rising', 0.6],
+  ['seconds', 0.5],
+  ['play', 3.0],
+  ['stack', 0.5],
+  ['more', 0.5],
+]);
+const C7 = nextLine(heard(C6, 'c6'), C6_STEPS);
+const C7_STEPS = chain(after(C7), [['six', 0.6]]);
 const FIGHT_SAID: Said = [
   [C1, [["The article's example:"], ['battle(),', ACCENT], ['one small card fight']]],
   [C2, [['Each turn:'], ['draw,', K], ['play,', PROD], ['and the enemy hits back', FAIL]]],
   [C3, [['Why this example:'], ['four', ACCENT], ['things it needs from'], ['outside', TEST]]],
   [C4, [['Each can be answered in'], ['many ways', TEST]]],
-  [C5, [['Scheduling', K], ['is an effect too:'], ['a hundred fights as tasks', K]]],
-  [C6, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
+  [C5, [['Scheduling', K], ['is an effect too:'], ['a poison waits for'], ['turns', K]]],
+  [C6, [['Two clocks,'], ['stacked:', TEST], ['turns', K], ['and'], ['seconds', PROD]]],
+  [C7, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
 ];
-const FIGHT = f(sceneEnd(heard(C6, 'e2'), C6_STEPS));
-// A hundred fights as tasks: a grid of 20 by 5, filled in the order Spawn starts them.
-const TASKS = 100;
-const GRID = {cols: 20, left: 124, top: 224, w: 44, h: 26, gap: 8};
-const tileX = (i: number) => GRID.left + (i % GRID.cols) * (GRID.w + GRID.gap);
-const tileY = (i: number) => GRID.top + Math.floor(i / GRID.cols) * (GRID.h + GRID.gap);
+const FIGHT = f(sceneEnd(heard(C7, 'e2'), C7_STEPS));
+// The two loops of clocks.py, side by side.
+const POISON_CODE = [
+  '@do',
+  'def poison(n: int, turns: int):',
+  '    for _ in range(turns):',
+  '        yield TurnEnds()',
+  '        yield Hurt(n)',
+];
+const RISING_CODE = [
+  '@do',
+  'def rising(text: str):',
+  '    for height in range(4):',
+  '        yield Draw(text, height)',
+  '        yield Delay(0.1)',
+];
+const LOOP = {y: 140, w: 560, size: 19, line: 34, poison: 60, rising: 660};
+const WAITS = 3;
+const ACTS = 4;
+// The run of clocks.py on its two clocks. Where a second sits on screen; the turn clock's line, the row a number
+// starts on, and the line of seconds.
+const secondX = (seconds: number) => 210 + seconds * 900;
+const TURN_Y = 438;
+const FRAME_Y = 554;
+const SECOND_Y = 572;
+// A turn ends each 0.25 s, the time the player takes to pick a card, and the poison hurts at the end of each.
+const TURN_ENDS = [0.25, 0.5, 0.75, 1.0];
+// The frames clocks.py draws: [the second, the height, the number]. A -3 is the poison's, a -6 a Strike's.
+const FRAMES: [number, number, string][] = [
+  [0.25, 0, '-3'], [0.35, 1, '-3'], [0.45, 2, '-3'], [0.55, 3, '-3'],
+  [0.5, 0, '-6'], [0.6, 1, '-6'], [0.7, 2, '-6'], [0.8, 3, '-6'],
+  [0.5, 0, '-3'], [0.6, 1, '-3'], [0.7, 2, '-3'], [0.8, 3, '-3'],
+  [0.75, 0, '-6'], [0.85, 1, '-6'], [0.95, 2, '-6'],
+  [0.75, 0, '-3'], [0.85, 1, '-3'], [0.95, 2, '-3'],
+  [1.0, 0, '-6'], [1.0, 0, '-3'],
+];
+// The second of the run the playhead is at, and the scene time it reaches a second of the run.
+const PLAYED = 1.03;
+const reached = (seconds: number) => C6_STEPS.play.from + (seconds / PLAYED) * (C6_STEPS.play.to - C6_STEPS.play.from);
 const HAND = ['Defend', 'Strike', 'Defend', 'Defend', 'Strike'];
 const CARD: Record<string, [string, string]> = {Strike: [PROD, 'deal 6'], Defend: [K, 'block 5']};
 const KAPPA = 0.5523;
@@ -923,41 +968,97 @@ const Fight: React.FC = () => {
         );
       })}
       </Rise>
-      {/* Scheduling: Spawn starts a hundred tasks, scheduled lets them take turns on one thread, Gather collects them. */}
-      <Rise at={C5_STEPS.spawn.from} y={0}>
-        <Capsule x={640} y={190} text="yield Spawn(battle())  × 100" color={K} size={18} />
-      </Rise>
-      <Rise at={C5_STEPS.sched.from} y={0} scale={0.96} origin={[640, 310]}>
-        <div style={{position: 'absolute', left: GRID.left - 22, top: GRID.top - 16, width: 20 * (GRID.w + GRID.gap) - GRID.gap + 44, height: 5 * (GRID.h + GRID.gap) - GRID.gap + 32, boxSizing: 'border-box', borderRadius: 18, border: `2px solid ${TEST}`, boxShadow: `0 0 26px ${TEST}44`}} />
-        <div style={{position: 'absolute', left: GRID.left - 22, top: GRID.top + 5 * (GRID.h + GRID.gap) + 24, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: TEST}}>
-          scheduled<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — one thread: the tasks take turns, and the handler decides when each one runs</span>
-        </div>
-      </Rise>
-      {frame >= f(C5_STEPS.spawn.from) && Array.from({length: TASKS}, (_, i) => {
-        const born = C5_STEPS.spawn.from + (i / TASKS) * (C5_STEPS.spawn.to - C5_STEPS.spawn.from);
-        const turns = C5_STEPS.turns;
-        const at = turns.from + (i / TASKS) * (turns.to - turns.from);
-        const running = frame >= f(at) && frame < f(at + (turns.to - turns.from) / TASKS);
-        const done = frame >= f(at + (turns.to - turns.from) / TASKS);
-        const color = running ? LOOK : done ? TEST : K;
-        return (
+      {/* Scheduling, on two clocks. First the poison: its TurnEnds goes out to the turn clock, which keeps k until the turn ends. */}
+      <div style={{position: 'absolute', inset: 0, opacity: 1 - 0.6 * fadeAt(frame, C7, 0.4)}}>
+        <Rise at={C5_STEPS.poison.from} y={24} scale={0.96} origin={[340, 258]}>
+          <CodeWindow
+            file="clocks.py" lines={POISON_CODE} x={LOOP.poison} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line}
+            scan={frame >= f(C5_STEPS.wait.from) ? WAITS + along(frame, C5_STEPS.ends) : undefined}
+            k={frame >= f(C5_STEPS.keep.from) && frame < f(C5_STEPS.ends.from) ? [2, ACTS] : undefined}
+          />
+        </Rise>
+        <Rise at={C5_STEPS.clock.from} y={16}>
+          <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 46, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: K, whiteSpace: 'nowrap'}}>
+            turns()<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — the game's own turn clock: it keeps each waiting k, and resumes it when a turn ends</span>
+          </div>
+          <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${K}88`}} />
+          {TURN_ENDS.map((seconds, i) => {
+            const lit = frame >= f(i === 0 ? C5_STEPS.ends.from : reached(seconds));
+            return (
+              <React.Fragment key={seconds}>
+                <div style={{position: 'absolute', left: secondX(seconds) - 2, top: TURN_Y - 11, width: 4, height: 22, borderRadius: 2, background: lit ? LOOK : K, boxShadow: lit ? `0 0 14px ${LOOK}` : undefined}} />
+                <div style={{position: 'absolute', left: secondX(seconds) - 60, top: TURN_Y + 13, width: 120, textAlign: 'center', fontFamily: DISPLAY, fontSize: 14, fontWeight: 600, color: lit ? TEXT : MUTED}}>turn {i + 1} ends</div>
+              </React.Fragment>
+            );
+          })}
+        </Rise>
+        <Travel id="c5-wait" d={arcOf(398, codeMid(LOOP.y, LOOP.line, WAITS), secondX(0.25), TURN_Y, -50)} color={K} step={C5_STEPS.wait} text="TurnEnds()" until={C5_STEPS.keep.from} size={18} leave />
+        <Rise at={C5_STEPS.keep.from} out={C5_STEPS.ends.from} y={0} scale={0.7} origin={[secondX(0.25), TURN_Y]}>
+          <Capsule x={secondX(0.25)} y={TURN_Y} text="k" color={K} size={18} />
+        </Rise>
+        <Rise at={C5_STEPS.keep.from} out={C6} y={16}>
+          <div style={{position: 'absolute', left: 680, top: 188, width: 500, padding: '18px 24px', ...glass(`${K}66`), fontFamily: DISPLAY, fontSize: 21, fontWeight: 600, lineHeight: 1.5, color: TEXT}}>
+            The turn clock keeps <span style={{fontFamily: CODE, fontWeight: 700, color: K}}>k</span>, the rest of poison, and resumes it when the turn ends.
+          </div>
+        </Rise>
+        <Ping x={secondX(0.25)} y={TURN_Y} color={LOOK} at={C5_STEPS.ends.from} />
+        <Travel id="c5-back" d={arcOf(secondX(0.25), TURN_Y, 340, codeMid(LOOP.y, LOOP.line, ACTS), -50)} color={K} step={C5_STEPS.ends} text="k" until={C5_STEPS.hurt.from} size={18} leave />
+        <Rise at={C5_STEPS.hurt.from} out={C6} y={0} scale={0.7} origin={[470, codeMid(LOOP.y, LOOP.line, ACTS)]}>
+          <Capsule x={470} y={codeMid(LOOP.y, LOOP.line, ACTS)} text="enemy -3" color={FAIL} size={18} />
+        </Rise>
+        {/* Then the number that rises: the same kind of loop on doeff-time's seconds, and the run of clocks.py on both clocks. */}
+        <Rise at={C6_STEPS.rising.from} y={24} scale={0.96} origin={[940, 258]}>
+          <CodeWindow file="clocks.py" lines={RISING_CODE} x={LOOP.rising} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line} scan={frame >= f(C6_STEPS.seconds.from) ? ACTS : undefined} />
+        </Rise>
+        <Rise at={C6_STEPS.seconds.from} y={16}>
+          <div style={{position: 'absolute', left: secondX(0), top: TURN_Y + 40, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: PROD, whiteSpace: 'nowrap'}}>
+            sim_time_handler<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — seconds, from doeff-time: a virtual clock, so the fight runs in an instant</span>
+          </div>
+          <div style={{position: 'absolute', left: secondX(0), top: SECOND_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${PROD}88`}} />
+          {TURN_ENDS.map((seconds) => (
+            <React.Fragment key={seconds}>
+              <div style={{position: 'absolute', left: secondX(seconds) - 1, top: SECOND_Y - 5, width: 2, height: 10, background: PROD}} />
+              <div style={{position: 'absolute', left: secondX(seconds) - 40, top: SECOND_Y + 7, width: 80, textAlign: 'center', fontFamily: CODE, fontSize: 13, color: MUTED}}>{seconds.toFixed(2)} s</div>
+            </React.Fragment>
+          ))}
+          <div style={{position: 'absolute', left: 40, top: FRAME_Y - 46, width: 150, textAlign: 'right', fontFamily: CODE, fontSize: 15, fontWeight: 700, lineHeight: 1.5}}>
+            <div style={{color: PROD}}>rising("-6")</div>
+            <div style={{color: K}}>rising("-3")</div>
+          </div>
+        </Rise>
+        {frame >= f(C6_STEPS.play.from) && TURN_ENDS.slice(1).map((seconds) => <Ping key={seconds} x={secondX(seconds)} y={TURN_Y} color={LOOK} at={reached(seconds)} />)}
+        {frame >= f(C6_STEPS.play.from) && FRAMES.map(([seconds, height, text], i) => {
+          const color = text === '-6' ? PROD : K;
+          // A -6 and a -3 drawn at the same second sit side by side.
+          const side = FRAMES.some(([s2, , t2]) => s2 === seconds && t2 !== text) ? (text === '-6' ? -15 : 15) : 0;
+          return (
+            <div
+              key={i}
+              style={{
+                position: 'absolute', left: secondX(seconds) + side - 20, top: FRAME_Y - height * 15 - 10, width: 40, textAlign: 'center', fontFamily: CODE, fontSize: 16, fontWeight: 700, color,
+                opacity: fadeAt(frame, reached(seconds), 0.12), textShadow: `0 0 10px ${color}88`,
+              }}
+            >
+              {text}
+            </div>
+          );
+        })}
+        {frame >= f(C6_STEPS.play.from) && (
           <div
-            key={i}
             style={{
-              position: 'absolute', left: tileX(i), top: tileY(i), width: GRID.w, height: GRID.h, boxSizing: 'border-box', borderRadius: 7, border: `1.5px solid ${color}`,
-              background: done ? `${TEST}55` : running ? `${LOOK}88` : `${K}22`, boxShadow: running ? `0 0 16px ${LOOK}` : undefined,
-              opacity: (frame >= f(born) ? fadeAt(frame, born, 0.15) : 0) * (1 - 0.6 * fadeAt(frame, C6, 0.4)),
+              position: 'absolute', left: secondX(interpolate(frame, [f(C6_STEPS.play.from), f(C6_STEPS.play.to)], [0, PLAYED], clamp)) - 1, top: TURN_Y - 16, width: 2, height: SECOND_Y - TURN_Y + 22,
+              background: LOOK, boxShadow: `0 0 12px ${LOOK}`, opacity: 1 - fadeAt(frame, C6_STEPS.play.to, 0.3),
             }}
           />
-        );
-      })}
-      <Rise at={C5_STEPS.gather.from} y={14} scale={0.8} origin={[640, 470]}>
-        <Capsule x={640} y={478} text="results = yield Gather(*tasks)" color={K} size={18} />
-      </Rise>
-      <Rise at={C5_STEPS.result.from} y={12}>
-        <Note x={140} y={516} w={1000} text="random bot wins 73 of 100  ·  Monte Carlo bot wins all 100" color={LOOK} size={24} align="center" />
-      </Rise>
-      <Rise at={C6_STEPS.six.from} y={30} scale={0.9} origin={[640, 656]}>
+        )}
+        <Rise at={C6_STEPS.stack.from} out={C7} y={12}>
+          <Note x={140} y={602} w={1000} text="two handlers, stacked around one fight  ·  no lock, no event" color={LOOK} size={20} align="center" />
+        </Rise>
+        <Rise at={C6_STEPS.more.from} out={C7} y={12}>
+          <Note x={140} y={634} w={1000} text="the same loop can wait for a click in a UI, or for a fill in a trading strategy" color={TEXT} size={18} align="center" />
+        </Rise>
+      </div>
+      <Rise at={C7_STEPS.six.from} y={30} scale={0.9} origin={[640, 656]}>
         <div style={{position: 'absolute', left: 0, right: 0, top: 640, textAlign: 'center', fontFamily: DISPLAY, fontSize: 28, fontWeight: 800, color: TEXT}}>
           one function · six stacks · <span style={{color: LOOK, textShadow: `0 0 26px ${LOOK}88`}}>0 lines changed</span>
         </div>
@@ -979,7 +1080,7 @@ export const ARTICLE_CONCEPT = narrate(
     {length: HANDLE, starts: saidStarts(HANDLE_SAID), ids: ['b4', 'b5', 'b6', 'b7'], node: <Handling />},
     {length: STACKS_LENGTH, starts: saidStarts(STACK_SAID), ids: ['s1', 's2'], node: <Stacks />},
     {length: START, starts: saidStarts(START_SAID), ids: ['e1'], node: <Start />},
-    {length: FIGHT, starts: saidStarts(FIGHT_SAID), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'e2'], node: <Fight />},
+    {length: FIGHT, starts: saidStarts(FIGHT_SAID), ids: ['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'e2'], node: <Fight />},
   ],
   // The backdrop sits behind every scene, and the camera moves through the cuts.
   {backdrop: () => <Backdrop />, dolly: true},
@@ -999,5 +1100,5 @@ export const PACED: Record<string, {motions: Step[]; seconds: number}> = {
   Handling: paced(HANDLE_SAID, [H1_STEPS, H2_STEPS, H3_STEPS, H4_STEPS], HANDLE),
   Stacks: paced(STACK_SAID, [S1_STEPS, S2_STEPS], STACKS_LENGTH),
   Start: paced(START_SAID, [E1_STEPS], START),
-  Fight: paced(FIGHT_SAID, [C1_STEPS, C2_STEPS, C3_STEPS, C4_STEPS, C5_STEPS, C6_STEPS], FIGHT),
+  Fight: paced(FIGHT_SAID, [C1_STEPS, C2_STEPS, C3_STEPS, C4_STEPS, C5_STEPS, C6_STEPS, C7_STEPS], FIGHT),
 };

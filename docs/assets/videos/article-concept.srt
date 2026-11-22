@@ -19,113 +19,121 @@ Side effects: printing, saving a file, sending a message.
 Dependencies: a value the program needs from outside.
 
 6
-00:00:31,500 --> 00:00:37,050
-Async and scheduling: waiting, retrying, running many tasks at once.
+00:00:31,500 --> 00:00:39,550
+Async and scheduling: waiting for a second, a turn or a click, retrying, running many tasks at once.
 
 7
-00:00:38,200 --> 00:00:43,150
+00:00:40,700 --> 00:00:45,650
 And swapping: the same program runs in tests, in replay, in production.
 
 8
-00:00:44,300 --> 00:00:50,950
+00:00:46,800 --> 00:00:53,450
 One mechanism does all four. Asking for a value is the simplest use, so we start there.
 
 9
-00:00:52,800 --> 00:01:00,000
+00:00:55,300 --> 00:01:02,500
 Our example is tiny: a program that buys tea. It needs two things from outside: a price, and a yes.
 
 10
-00:01:01,150 --> 00:01:07,800
+00:01:03,650 --> 00:01:10,300
 With algebraic effects, the program only says what it needs. That request is an effect.
 
 11
-00:01:08,950 --> 00:01:13,150
+00:01:11,450 --> 00:01:15,650
 How to get it is decided outside the program, by a handler.
 
 12
-00:01:14,550 --> 00:01:18,900
+00:01:17,050 --> 00:01:21,400
 The handler answers, and the program goes on from where it asked.
 
 13
-00:01:20,750 --> 00:01:27,500
+00:01:23,250 --> 00:01:30,000
 You know half of this already: an exception. It is raised inside, and caught by a handler outside.
 
 14
-00:01:28,650 --> 00:01:33,150
+00:01:31,150 --> 00:01:35,650
 But after the catch, the program never goes back to where it raised.
 
 15
-00:01:34,300 --> 00:01:40,050
+00:01:36,800 --> 00:01:42,550
 An effect handler sends an answer back, and the program picks up where it left off.
 
 16
-00:01:42,900 --> 00:01:47,300
+00:01:45,400 --> 00:01:49,800
 So the program says what it needs, and the handlers decide how.
 
 17
-00:01:49,150 --> 00:01:56,650
+00:01:51,650 --> 00:01:59,150
 Now the same idea in doeff. The tea program is a Python function, order, marked with @do.
 
 18
-00:01:57,800 --> 00:02:03,200
+00:02:00,300 --> 00:02:05,700
 Where it needs something, it yields an effect. First Price: what does the item cost?
 
 19
-00:02:04,350 --> 00:02:10,300
+00:02:06,850 --> 00:02:12,800
 Then Confirm: may I pay that much? Then it returns. It never says who answers.
 
 20
-00:02:12,150 --> 00:02:18,750
+00:02:14,650 --> 00:02:21,250
 Handlers sit outside the function. prices answers Price with 3, and order goes on.
 
 21
-00:02:19,900 --> 00:02:25,450
+00:02:22,400 --> 00:02:27,950
 With Confirm, the handler also gets k: the rest of order, paused at the yield.
 
 22
-00:02:26,600 --> 00:02:32,150
+00:02:29,100 --> 00:02:34,650
 It resumes k with True, and order returns bought, 3.
 
 23
-00:02:33,300 --> 00:02:40,800
+00:02:35,800 --> 00:02:43,300
 It could also keep k for later, or never resume it. Either way, k is resumed at most once.
 
 24
-00:02:42,650 --> 00:02:48,400
+00:02:45,150 --> 00:02:50,900
 Handlers stack around the function. Swap the stack, and the same function runs another way.
 
 25
-00:02:49,550 --> 00:02:56,250
+00:02:52,050 --> 00:02:58,750
 Tests, replay, a bot, many at once, production. order does not change a line.
 
 26
-00:02:58,550 --> 00:03:05,300
+00:03:01,050 --> 00:03:07,800
 To start, pip install doeff. Then you need three things: @do, yield, and a handler.
 
 27
-00:03:07,150 --> 00:03:13,100
+00:03:09,650 --> 00:03:15,600
 The article needs a bigger program, so it uses battle: one small card fight.
 
 28
-00:03:14,250 --> 00:03:19,150
+00:03:16,750 --> 00:03:21,650
 Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP.
 
 29
-00:03:20,850 --> 00:03:28,150
+00:03:23,350 --> 00:03:30,650
 It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count.
 
 30
-00:03:29,950 --> 00:03:36,000
+00:03:32,450 --> 00:03:38,500
 And each of those can be answered in many ways: by a script, a bot, a tape, or a person.
 
 31
-00:03:37,150 --> 00:03:42,117
-Scheduling is an effect too. Spawn runs a hundred fights as tasks on one thread,
+00:03:39,650 --> 00:03:46,833
+Scheduling is an effect too. A poison that lasts five turns is a plain loop: it waits for the end of a turn,
 
 32
-00:03:42,117 --> 00:03:46,450
-a handler decides when each one runs, and Gather collects the results.
+00:03:46,833 --> 00:03:50,750
+and the game's own handler keeps the rest of it until then.
 
 33
-00:03:47,850 --> 00:03:53,600
+00:03:51,900 --> 00:03:58,983
+A number that rises on screen is the same kind of loop on another clock: it waits a tenth of a second.
+
+34
+00:03:58,983 --> 00:04:03,700
+Two handlers, stacked around one fight, with no locks and no events.
+
+35
+00:04:04,850 --> 00:04:10,600
 The article runs battle under six stacks, and does not change a line of it.

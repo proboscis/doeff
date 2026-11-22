@@ -123,7 +123,7 @@ export const Arc: React.FC<{d: string; color: string; p?: number; tail?: number;
 export const pointOn = (d: string, p: number) => getPointAtLength(d, getLength(d) * p);
 
 const KEYWORDS = new Set(['def', 'return', 'if', 'else', 'while', 'and', 'for', 'in', 'not']);
-const EFFECTS = new Set(['Price', 'Confirm', 'Roll', 'Choose', 'Show', 'Played', 'Resume']);
+const EFFECTS = new Set(['Price', 'Confirm', 'Roll', 'Choose', 'Show', 'Played', 'Resume', 'TurnEnds', 'Hurt', 'Draw', 'Delay']);
 
 // One line of Python, coloured by what each word is. yield is the word the videos turn on, so it glows.
 export const Coloured: React.FC<{line: string}> = ({line}) => (

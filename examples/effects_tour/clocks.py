@@ -35,8 +35,9 @@ class Hurt(EffectBase):  # a lasting effect deals damage to the enemy
 
 
 @dataclass(frozen=True)
-class Draw(EffectBase):  # one line on the screen
+class Draw(EffectBase):  # a line on the screen, or a number at a height above it
     text: str
+    height: int | None = None
 
 
 @dataclass(frozen=True)
@@ -55,7 +56,7 @@ def poison(n: int, turns: int):  # a card effect: n damage at the end of each of
 @do
 def rising(text: str):  # an animation: the number rises for four frames, 0.1 s apart
     for height in range(4):
-        yield Draw(f"{' ' * 24}{text}{'^' * height}")
+        yield Draw(text, height)
         yield Delay(0.1)
 
 
@@ -124,7 +125,8 @@ START = datetime(2026, 1, 1, tzinfo=timezone.utc)
 @handler
 def printed(effect: Draw, k):
     now = yield GetTime()
-    print(f"{(now - START).total_seconds():4.2f}s  {effect.text}")
+    line = effect.text if effect.height is None else f"{' ' * 24}{effect.text}{'^' * effect.height}"
+    print(f"{(now - START).total_seconds():4.2f}s  {line}")
     return (yield Resume(k, None))
 
 

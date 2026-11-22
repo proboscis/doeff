@@ -19,16 +19,17 @@ def test_a_poison_deals_3_at_the_end_of_each_of_5_turns():
 
 
 def test_an_animation_draws_a_frame_every_tenth_of_a_second_of_virtual_time():
-    frames = []
+    frames = ()
 
     @handler
     def drawn(effect: Draw, k):
+        nonlocal frames
         now = yield GetTime()
-        frames.append(((now - START).total_seconds(), effect.text.strip()))
+        frames = (*frames, ((now - START).total_seconds(), effect.text, effect.height))
         return (yield Resume(k, None))
 
     run(scheduled(sim_time_handler(start_time=START)(drawn(rising("-6")))))
-    assert frames == [(0.0, "-6"), (0.1, "-6^"), (0.2, "-6^^"), (0.3, "-6^^^")]
+    assert frames == ((0.0, "-6", 0), (0.1, "-6", 1), (0.2, "-6", 2), (0.3, "-6", 3))
 
 
 def test_the_poison_and_four_strikes_bring_30_hit_points_down_on_turn_4():
