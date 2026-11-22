@@ -37,7 +37,7 @@
                                     lingering-handoff-beacons lingering-handoff-beacons-v2 lingering-handoff-beacons-v3
                                     holding-unloadable Unloadable spawners quitters discarders cancellers pulses detaching context-env-readers])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster._coordinator.core.coordinator_invariants [acknowledged-writes-survive RevisionRead revision-never-goes-back
                                                                  acknowledged-values-survive declared-services-survive
                                                                  ServiceVersionRead service-versions-never-go-back

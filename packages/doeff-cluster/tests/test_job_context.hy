@@ -16,7 +16,7 @@
 (import doeff_cluster [encode-program])
 (import doeff_cluster [process-versions])
 (import doeff_cluster [RepoCheckout PythonProject RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import tests.fixtures.entry_programs [context-program host-foundation])
 
 (val HY (str (/ (. (Path sys.executable) parent) "hy")))

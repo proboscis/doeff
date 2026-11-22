@@ -151,7 +151,7 @@
 
 (import json)
 (import doeff_cluster [RepoCheckout PythonProject RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster._worker.intent.env_prepare_model [BytecodeTree PrepareRequest])
 (import doeff_cluster._worker.core.env_rules [prepare-request])
 (import doeff_cluster._worker.protocol.env_translation [compile-argv request-of-json])

@@ -27,9 +27,9 @@
         doeff_cluster._worker.protocol.env_store [EnvSettings known-roots sweep-leftovers])
 (import doeff_cluster._worker.core.env_upkeep [CODE-STORE-UNUSED-SECONDS])
 (import doeff_cluster._worker.protocol.env_translation [request-of-json])
-(import doeff_cluster [env-marker->json])
+(import doeff_cluster._worker.core.env_prepare [env-marker->json])
 (import doeff_cluster [EnvMarker])
-(import doeff_cluster [RuntimeEnv runtime-env->json dependency-key])
+(import doeff_cluster [RuntimeEnv dependency-key] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import tests.env_fixtures [LOCK env-of])
 
 (val READY-NAME "0123456789abcdef01234567")
