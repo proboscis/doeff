@@ -83,15 +83,20 @@ const Title: React.FC = () => {
       <Headline lines={TITLE_SAID} size={36} />
       <Rise at={0} out={T2} y={0}>
         <Rise at={T1_STEPS.name.from} y={40} scale={0.9} origin={[640, 300]}>
-          <div
-            style={{
-              position: 'absolute', left: 0, right: 0, top: 180, textAlign: 'center', fontFamily: DISPLAY, fontSize: 200, fontWeight: 800, letterSpacing: '-0.05em', lineHeight: 1,
-              background: `linear-gradient(100deg, #ffffff ${25 - 60 * (1 - shine)}%, ${ACCENT} ${62 - 40 * (1 - shine)}%, ${TEST} 100%)`, WebkitBackgroundClip: 'text', color: 'transparent',
-              filter: `drop-shadow(0 0 40px ${ACCENT}66)`,
-            }}
-          >
-            doeff
-          </div>
+          {/* The name is filled with an SVG gradient: a CSS gradient clipped to text renders as a filled box in the
+              video (renderMedia), though a still shows it right. */}
+          <svg width="1280" height="720" style={{position: 'absolute', overflow: 'visible', filter: `drop-shadow(0 0 40px ${ACCENT}66)`}}>
+            <defs>
+              <linearGradient id="name-shine" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1280" y2="0">
+                <stop offset={Math.max(0, 0.25 - 0.6 * (1 - shine))} stopColor="#ffffff" />
+                <stop offset={0.62 - 0.4 * (1 - shine)} stopColor={ACCENT} />
+                <stop offset={1} stopColor={TEST} />
+              </linearGradient>
+            </defs>
+            <text x="640" y="353" textAnchor="middle" fontFamily={DISPLAY} fontSize="200" fontWeight="800" letterSpacing="-10" fill="url(#name-shine)">
+              doeff
+            </text>
+          </svg>
         </Rise>
         <Rise at={T1_STEPS.name.from + 0.35} y={16}>
           <div style={{position: 'absolute', left: 0, right: 0, top: 402, textAlign: 'center', fontFamily: DISPLAY, fontSize: 40, fontWeight: 600, letterSpacing: '-0.01em', color: TEXT}}>Algebraic effects for Python</div>
