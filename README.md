@@ -103,13 +103,13 @@ pip install "doeff[http]"  # + the HTTP client handlers (Hy and httpx)
 pip install "doeff[all]"   # both: what `pip install doeff` installed in 0.5.0
 ```
 
-What algebraic effects are for, what they are, and how you write them with doeff, in a narrated video (4:12): a
+What algebraic effects are for, what they are, and how you write them with doeff, in a narrated video (4:31): a
 function yields effects, handlers stacked outside it answer them with the rest of the function as
 `k`, and the same function runs under many stacks.
 
-[![Video (4:12): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/NvDkRL3LxBI/maxresdefault.jpg)](https://youtu.be/NvDkRL3LxBI)
+[![Video (4:31): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/NvDkRL3LxBI/maxresdefault.jpg)](https://youtu.be/NvDkRL3LxBI)
 
-[The video as an mp4 file (4:12)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
+[The video as an mp4 file (4:31)](https://github.com/proboscis/doeff/blob/main/docs/assets/videos/article-concept.mp4)
 
 The same idea in a narrated video (1:51): one card fight is one function, and only the handlers
 stacked around it change.

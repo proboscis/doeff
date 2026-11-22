@@ -19,6 +19,6 @@ const composition = await selectComposition({...options, id});
 console.log('frames in all', composition.durationInFrames, `(${(composition.durationInFrames / composition.fps).toFixed(1)} s)`);
 for (const frame of frames) {
   const output = path.join(outDir, `${id}-${frame.padStart(5, '0')}.${imageFormat === 'jpeg' ? 'jpg' : 'png'}`);
-  await renderStill({...options, composition, frame: Number(frame), output, scale, imageFormat, jpegQuality: 92});
+  await renderStill({...options, composition, frame: Number(frame), output, scale, imageFormat, ...(imageFormat === 'jpeg' ? {jpegQuality: 92} : {})});
   console.log('wrote', output);
 }
