@@ -10,16 +10,21 @@ The complete files of the post [Algebraic effects for Python](../../docs/article
 | `test_spire.py` | The tests of the post's section "Tests are one of the stacks": a scripted player and seeded dice, and a handler of the test's own that writes down every `Played`. `pytest.ini` makes this directory pytest's root, so `pytest` here needs only `pip install doeff pytest` |
 | `trading.py` | A candidate example: a moving-average strategy as one program, as a backtest over recorded bars with paper fills, under a risk layer that stops it, with retries against a flaky exchange, as a parameter sweep in parallel tasks, as an exact replay of a session, on a virtual clock and on the wall clock (the same strategy, a day of bars in an instant or really waited for), and live over an async exchange |
 | `test_trading.py` | The tests of `trading.py`: five hours of bars on the virtual clock end five hours and a minute after the open, the first trade happens at the minute of its bar, and the wall clock gives the PnL the virtual clock gives |
+| `clocks.py` | Two kinds of time in one card game: a poison that waits for the end of a turn and a number that rises on seconds, each a plain loop. The turn clock is a handler of the game's own that holds the k of each waiting card effect and resumes them when a turn ends; the seconds are doeff-time's virtual clock, `sim_time_handler` |
+| `test_clocks.py` | The tests of `clocks.py`: the poison deals 3 at the end of each of five turns, an animation draws a frame every 0.1 s of virtual time, and the fight ends on turn 4 |
+| `clocks_asyncio.py` | The game of `clocks.py` on asyncio, to compare: the turn is an `asyncio.Condition` handed to every card effect, and the animations wait real seconds |
 | `monitor.py` | (Kept until the third post.) One program, `monitor`, with layers of handlers stacked around it: fake pages, a budget, retries, a recording, and the wall clock |
 
 ```bash
-pip install doeff pytest
+pip install doeff doeff-time pytest
 python spend.py
 python monitor.py
 python agent.py
 python spire.py
-pytest                    # test_spire.py and test_trading.py: 5 passed
+pytest                    # test_spire.py, test_trading.py and test_clocks.py: 8 passed
 python trading.py
+python clocks.py
+python clocks_asyncio.py
 ```
 
 `monitor.py` and the clock layers of `trading.py` run the stacks on a virtual clock, so it finishes at once. The production stack in the post, `real(...)`, uses the wall clock and takes half an hour.
