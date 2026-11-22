@@ -26,7 +26,7 @@
 (import doeff_time [Delay])
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json runtime-env-of-json env-key dependency-key])
+(import doeff_cluster [runtime-env-of-json env-key dependency-key] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster._worker.protocol.heartbeat [env-report])
 (import doeff_cluster [current-platform])
 (import doeff_cluster [AwaitDetached DetachedSucceeded])

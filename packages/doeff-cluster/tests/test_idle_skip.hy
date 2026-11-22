@@ -21,11 +21,11 @@
 (import doeff_core_effects [Spawn Cancel Task])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [KeepMark])
-(import doeff_cluster [liveness-due]
+(import doeff_cluster._coordinator.core.cluster_policy [liveness-due]
         doeff_cluster._coordinator.core.cluster_policy [note-liveness forget-silent-workers alive sweep-keep-marks kept-window-ms])
 (import doeff_cluster [DueNow DueNever]
         doeff_cluster._shared.intent.due_model [DueAt])
-(import doeff_cluster [sweep-due]
+(import doeff_cluster._coordinator.core.cluster_policy [sweep-due]
         doeff_cluster._coordinator.core.cluster_policy [sweep-board sweep-drains sweep-warms])
 (import doeff_cluster._coordinator.core.program_policy [sweep-programs PROGRAM-GRACE-MS])
 (import doeff_cluster [BoardRow]
@@ -407,7 +407,7 @@
 
 (import doeff_cluster [WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
-(import doeff_cluster [task-due]
+(import doeff_cluster._coordinator.core.cluster_policy [task-due]
         doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
 (import tests.state_rows [table-from-rows])
 

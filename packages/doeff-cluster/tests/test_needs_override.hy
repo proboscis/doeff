@@ -16,7 +16,7 @@
 (import doeff_cluster [responded])
 (import doeff_cluster._coordinator.protocol.state_json [state-to-json state-from-json needs-override-from-json])
 (import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv])
-(import doeff_cluster [tick tick-due])
+(import doeff_cluster [tick] doeff_cluster._coordinator.core.api_policy [tick-due])
 (import doeff_cluster._coordinator.core.resource_policy [needs-override-due])
 (import doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [KillWorker StopWorker])

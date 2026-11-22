@@ -21,7 +21,7 @@
 (import doeff_core_effects [ProcRow])
 (import doeff_core_effects [scripted-proc-table-handler])
 (import doeff_time [SimClock sim-time-handler])
-(import doeff_cluster [datetime-of-epoch-ms])
+(import doeff_cluster._shared.core.clock [datetime-of-epoch-ms])
 (import doeff_cluster [spec-hash])
 (import doeff_cluster [JobSpec JobPhase])
 (import doeff_cluster._worker.core.memory_rules [JobRoot])
