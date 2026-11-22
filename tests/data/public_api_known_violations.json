@@ -25,7 +25,8 @@
   "Of the 19 rows of the doeff-core-effects group \"Violation — annotate the factory arguments or move inside\", 15 left the table. The 9 rows of the 5 types handed to handlers moved to the group \"Allowed — handler setting type\" of the allowed table on the basis of R2: ClickHouseDatabase and PostgresDatabase already appear in handler arguments; PostgresTimeouts is now written in the annotation of the timeouts argument of PostgresConnections; InMemoryStorage and SQLiteStorage (the two storages the package ships) are now written in the annotation of the storage argument of memo_handler and cache_handler. The 6 names with 6 rows that no handler receives (WebEdge, MemoryLatestStore, ExitEnd — state a handler builds inside itself; StepBudget, SpentStepBudget, ProcessStepBudget — the state of the process step budget that arm_step_budget of the inner _scheduler keeps) were removed from the entry point and stay only in their inner modules (0 callers in outside repos; the tests read them from the inner modules). 4 rows stay, both argument types of a public program helper rather than of a handler: StackDumpLedger (3 rows — the argument and answer of stack_dumps_at; agora-controllers builds its own stack dump handler with the two, so the outside caller is rewritten first, the order of R20) and SqliteFile (1 row — the argument of open_sqlite_files, whose answer SqliteFiles is what the handler receives).",
   "The last 43 rows of doeff-records were removed and its entry became empty. The submodules they name (admission, http_server, laws, main, maintenance, memory, pg, pg_sql, schema_digest, service, typed, values, wire) are all hidden with _ (R5), so the rows were read by name and root alone as the 13 names the entry point shows, and the inventory verifies an allowed shape for each: the 9 schema declaration types (ByKeySuffix, DescendingWithin, FieldDecl, KeepFor, KeepForever, RecordsSchema, RememberKeysFor, RememberNoKeys, TableDecl — reached from MemoryStore.schema and PreparedStore.schema through RecordsSchema.tables and the fields of TableDecl and StreamDecl) are handler setting types, RowChanged and RowRemoved are effect answer types (ChangeLog.changes, Changes.items), StoreUnreachable at the entry point is the exception class of the pg handler (the record of the same name in http_server is no longer shown), and purge_expired at the entry point is the program helper of pg (R25). 11 of the names already had rows in the allowed table; DescendingWithin and FieldDecl (the 2 rows of the group \"Violation — annotate the factory arguments or move inside\") moved to the group \"Allowed — handler setting type\" on the basis of R2.",
   "The last 4 rows of the doeff-core-effects group \"Violation — annotate the factory arguments or move inside\" were removed and the doeff-core-effects entry became empty. StackDumpLedger and stack_dumps_at (the ledger and counting of the stack-dump watchdog) left the entry point and stay in the inner _stack_dump_effects: the factory watched_stack_dump_handler(watch) now holds the ledger, takes only the real watchdog as a function of the new deadline, and builds memory_stack_dump_handler and faulthandler_stack_dump_handler. SqliteFile left the entry point and stays in the inner _sqlite_file_sql: open_sqlite_files now takes a dict of database name to file path. The outside caller (agora-controllers controllers/foundation/stack_dumps.hy and sqlite_store.hy) was rewritten first, the order of ADR-DOE-API-001 R20 (doeff efc1c68d, agora-controllers 696d8c684d); the 3 rows of stack_dumps_at in the group \"Allowed — program helper\" of the allowed table were removed with them.",
-  "The 81 names of doeff-cluster defined in the section _shared that the inventory reads as fitting an allowed shape (357 rows — 351 rows of the group \"Violation — move to an inner module\" and 6 rows of \"added names\") were moved to the allowed table at the entry point doeff_cluster, without changing code: 30 effect answer types, 19 effect value types and 9 handler setting types (R2), 16 conversion functions (R35), 6 program helpers that outside repos use (R18, R25) and 1 builder (R37). The names were sorted by direction of fix name by name, counting the callers in the origin/main of outside repos."
+  "The 81 names of doeff-cluster defined in the section _shared that the inventory reads as fitting an allowed shape (357 rows — 351 rows of the group \"Violation — move to an inner module\" and 6 rows of \"added names\") were moved to the allowed table at the entry point doeff_cluster, without changing code: 30 effect answer types, 19 effect value types and 9 handler setting types (R2), 16 conversion functions (R35), 6 program helpers that outside repos use (R18, R25) and 1 builder (R37). The names were sorted by direction of fix name by name, counting the callers in the origin/main of outside repos.",
+  "The 45 names of doeff-cluster defined in the sections _coordinator, _foundation, _sim, _worker that the inventory reads as fitting an allowed shape (132 rows) were moved to the allowed table at the entry point doeff_cluster, without changing code: 12 conversion function, 3 effect answer type, 16 effect value type, 7 handler setting type, 5 program helper, 2 program-shape builder and type. Allowed rows of the same names at old submodule paths, which the entry rows replace, were removed. cut_lines stays in the group \"Violation — move to an inner module\": the class CutLines it returns is not shown by the package, so it does not fit the builder group."
  ],
  "packages": {
   "doeff-adr": {
@@ -38,8 +39,6 @@
     "Violation — move to an inner module": {
      "doeff_cluster.coordinator.core.api_policy": [
       "ALIVE_MARK_MS",
-      "ClusterNaming",
-      "ClusterState",
       "SEMAPHORE_PREFIX",
       "liveness_due",
       "service_readiness",
@@ -48,20 +47,14 @@
       "tick_due"
      ],
      "doeff_cluster.coordinator.core.cluster_policy": [
-      "BoardRow",
-      "ClusterJob",
-      "ClusterState",
       "IMAGE_FOLLOW_KEYS",
       "RETIREMENT_HOLD",
       "SEMAPHORE_PREFIX",
       "UnplacedKind",
       "WorkerBack",
       "WorkerGone",
-      "WorkerInfo",
       "WorkerLoad",
       "liveness_due",
-      "placeable",
-      "spec_of_declaration",
       "sweep_due",
       "task_due",
       "unplaced_kind"
@@ -70,95 +63,57 @@
       "WorkerGone"
      ],
      "doeff_cluster.coordinator.core.detached_policy": [
-      "ClusterState",
       "DETACHED_DEFAULT_LEASE_SECONDS",
       "DetachedCancelled",
       "DetachedSubmitted"
      ],
      "doeff_cluster.coordinator.core.drain_policy": [
-      "ClusterJob",
-      "ClusterState",
       "service_readiness"
      ],
      "doeff_cluster.coordinator.core.handoff_policy": [
-      "ClusterJob",
-      "ClusterState",
       "service_readiness"
      ],
      "doeff_cluster.coordinator.core.metrics_policy": [
-      "ClusterState",
       "service_readiness"
      ],
      "doeff_cluster.coordinator.core.program": [
-      "ClusterNaming",
-      "ClusterState",
       "datetime_of_epoch_ms",
       "monotonic_ms_of",
       "next_wake"
      ],
-     "doeff_cluster.coordinator.core.program_policy": [
-      "ClusterState"
-     ],
      "doeff_cluster.coordinator.core.resource_policy": [
-      "ClusterJob",
-      "ClusterState",
       "ReadinessClaim",
       "UnplacedKind",
-      "WorkerInfo",
-      "placeable",
       "service_readiness",
       "unplaced_kind"
      ],
      "doeff_cluster.coordinator.core.wake_policy": [
-      "ClusterNaming",
-      "ClusterState",
       "next_wake",
       "tick_due"
      ],
      "doeff_cluster.coordinator.core.warm_policy": [
-      "ClusterState",
       "WarmFailure",
-      "WarmState",
-      "placeable"
-     ],
-     "doeff_cluster.coordinator.core.watch_policy": [
-      "ClusterState"
+      "WarmState"
      ],
      "doeff_cluster.coordinator.entry.handler_sets": [
       "WORKER_NOTICE_ROUTES",
       "WalStore"
      ],
      "doeff_cluster.coordinator.entry.main": [
-      "ClusterState",
       "SHIP_LIMITS",
       "WalStore",
       "coordinator_log_plan",
-      "naming_from_json",
       "process_lines"
      ],
      "doeff_cluster.coordinator.intent.cluster_model": [
-      "BoardRow",
-      "ClusterJob",
-      "ClusterNaming",
-      "ClusterState",
       "DetachedCancelled",
       "DetachedSubmitted",
       "UnplacedKind",
-      "WorkerInfo",
       "WorkerLoad"
      ],
      "doeff_cluster.coordinator.intent.worker_notices": [
       "WorkerBack",
       "WorkerGone"
-     ],
-     "doeff_cluster.coordinator.protocol.cluster_json": [
-      "ClusterNaming",
-      "naming_from_json"
-     ],
-     "doeff_cluster.coordinator.protocol.durable_kv": [
-      "BoardRow",
-      "ClusterState",
-      "WorkerInfo"
      ],
      "doeff_cluster.coordinator.protocol.replies": [
       "DetachedCancelled",
@@ -167,13 +122,7 @@
       "WarmState"
      ],
      "doeff_cluster.coordinator.protocol.request_bodies": [
-      "ClusterState",
       "responded"
-     ],
-     "doeff_cluster.coordinator.protocol.state_json": [
-      "BoardRow",
-      "ClusterState",
-      "WorkerInfo"
      ],
      "doeff_cluster.coordinator.protocol.worker_notices": [
       "WORKER_NOTICE_READS",
@@ -182,8 +131,7 @@
       "WorkerGone"
      ],
      "doeff_cluster.foundation.foundation_check": [
-      "FoundationClosure",
-      "hyx_closedXquestion_markX"
+      "FoundationClosure"
      ],
      "doeff_cluster.foundation.host_contract": [
       "HOST_CONTRACT",
@@ -199,8 +147,7 @@
       "EffectCodec",
       "READ",
       "register",
-      "registered_types",
-      "type_name"
+      "registered_types"
      ],
      "doeff_cluster.foundation.record_handlers": [
       "DECISION",
@@ -438,18 +385,12 @@
       "git_command"
      ],
      "doeff_cluster.sim.k8s_supplied": [
-      "HeldEntry",
-      "HeldObject",
       "KUBE_API",
       "OBJECT_PATH",
       "OBJECT_SPELLING",
-      "ReadGrant",
-      "SERVICE_ACCOUNT_TOKEN_FILE",
-      "SuppliedCluster"
+      "SERVICE_ACCOUNT_TOKEN_FILE"
      ],
      "doeff_cluster.sim.local": [
-      "ClusterNaming",
-      "ClusterState",
       "CodeState",
       "CodeView",
       "DRAIN_DEADLINE_SECONDS",
@@ -458,13 +399,10 @@
       "DetachedSubmitAnswer",
       "DetachedSubmitted",
       "HOST_CONTRACT",
-      "HandoffAbandoned",
       "LeaseAnswer",
       "ProbeState",
       "ProbeView",
-      "ProcessOutside",
       "ProcessView",
-      "Retired",
       "RunnersChange",
       "RunnersChangeAnswer",
       "RunnersUnreachable",
@@ -475,22 +413,14 @@
       "SIM_URL",
       "ServiceReady",
       "SimOutside",
-      "SimPreparation",
-      "SimProcess",
-      "SimReport",
-      "SimWorker",
-      "StopStage",
       "TaskFailed",
       "TaskSucceeded",
       "WORKER_NOTICE_READS",
       "WarmState",
       "WorkerGone",
-      "WorkerPolicy",
       "WorldView",
-      "beat_interval_ms",
       "current_platform",
       "datetime_of_epoch_ms",
-      "drain_request",
       "encode_program",
       "fence_due",
       "hyx_runtime_env_XgreaterHthan_signXjson",
@@ -501,9 +431,6 @@
       "wall_sim_cluster"
      ],
      "doeff_cluster.sim.machine": [
-      "GitSource",
-      "LocalMachine",
-      "SimWorker",
       "local_machine_cluster",
       "system_declaration"
      ],
@@ -518,20 +445,11 @@
       "OriginBranch",
       "worktree_git_command"
      ],
-     "doeff_cluster.worker.core.beat_policy": [
-      "beat_interval_ms"
-     ],
-     "doeff_cluster.worker.core.code_rules": [
-      "CodeLayout"
-     ],
      "doeff_cluster.worker.core.drain_client": [
       "DRAIN_DEADLINE_SECONDS",
-      "DRAIN_INTERVAL_SECONDS",
-      "drain_outcome",
-      "ready_of"
+      "DRAIN_INTERVAL_SECONDS"
      ],
      "doeff_cluster.worker.core.env_prepare": [
-      "EnvMarker",
       "hyx_env_marker_XgreaterHthan_signXjson",
       "hyx_runtime_env_XgreaterHthan_signXjson"
      ],
@@ -539,70 +457,41 @@
       "sweep_due"
      ],
      "doeff_cluster.worker.core.heartbeat_rules": [
-      "JobStatus",
       "silent_ms"
      ],
      "doeff_cluster.worker.core.invariants": [
       "WorldView"
      ],
-     "doeff_cluster.worker.core.launch": [
-      "CodeLayout",
-      "program_file",
-      "program_file_text"
-     ],
      "doeff_cluster.worker.core.policy": [
       "Action",
       "CodeState",
       "CodeView",
-      "HandoffAbandoned",
       "JobRecord",
-      "JobStatus",
       "ProbeState",
       "ProbeView",
       "ProcessView",
-      "Retired",
-      "StopStage",
-      "WorkerPolicy",
-      "WorldView",
-      "code_key",
-      "retired_name"
-     ],
-     "doeff_cluster.worker.core.probe_rules": [
-      "CodeLayout"
+      "WorldView"
      ],
      "doeff_cluster.worker.core.program": [
-      "WorkerPolicy",
       "WorldView",
       "datetime_of_epoch_ms",
       "monotonic_ms_of",
       "silent_ms"
      ],
      "doeff_cluster.worker.core.room_rules": [
-      "RoomReading",
-      "RoomState",
-      "WorkerRoom",
-      "room_of_text"
-     ],
-     "doeff_cluster.worker.core.shim_timing": [
-      "WorkerPolicy"
+      "RoomReading"
      ],
      "doeff_cluster.worker.core.warm_rules": [
-      "WorkerPolicy",
-      "WorldView",
-      "code_key"
+      "WorldView"
      ],
      "doeff_cluster.worker.core.worker_due": [
       "CodeState",
       "ProbeState",
-      "StopStage",
-      "WorkerPolicy",
       "WorldView",
       "fence_due"
      ],
      "doeff_cluster.worker.core.worker_rules": [
-      "CodeView",
-      "code_key",
-      "retired_name"
+      "CodeView"
      ],
      "doeff_cluster.worker.entry.drain_main": [
       "DRAIN_DEADLINE_SECONDS",
@@ -619,75 +508,45 @@
       "SHIP_LIMITS",
       "coordinator_log_plan",
       "cut_lines",
-      "logs_body",
       "process_lines"
      ],
      "doeff_cluster.worker.entry.main": [
-      "CodeLayout",
       "HOST_CONTRACT",
       "RoomReading",
-      "RoomState",
       "SERVICE_ACCOUNT_TOKEN_FILE",
-      "WorkerPolicy",
-      "WorkerRoom",
       "current_platform",
       "monotonic_ms_of",
-      "process_lines",
-      "room_of_text"
+      "process_lines"
      ],
      "doeff_cluster.worker.entry.retirement_notices": [
-      "HOST_CONTRACT",
-      "HandoffAbandoned",
-      "Retired"
-     ],
-     "doeff_cluster.worker.intent.env_prepare_model": [
-      "EnvMarker"
-     ],
-     "doeff_cluster.worker.intent.retirement_model": [
-      "HandoffAbandoned",
-      "Retired"
+      "HOST_CONTRACT"
      ],
      "doeff_cluster.worker.intent.worker_model": [
       "Action",
-      "CodeLayout",
       "CodeState",
       "CodeView",
-      "HandoffAbandoned",
       "JobRecord",
-      "JobStatus",
       "ProbeState",
       "ProbeView",
       "ProcessView",
-      "Retired",
-      "StopStage",
-      "WorkerPolicy",
       "WorldView"
      ],
      "doeff_cluster.worker.protocol.code_store": [
-      "CodeLayout",
       "CodeState",
       "CodeView"
      ],
      "doeff_cluster.worker.protocol.coordinator_link": [
       "DeclaredReply",
       "RoomReading",
-      "RoomState",
-      "WorkerRoom",
-      "beat_interval_ms",
       "current_platform",
       "datetime_of_epoch_ms",
       "fence_due",
       "monotonic_ms_of",
-      "program_file_text",
-      "room_of_text",
       "silent_ms"
      ],
      "doeff_cluster.worker.protocol.declared": [
       "DeclaredReply",
       "current_platform"
-     ],
-     "doeff_cluster.worker.protocol.drain_requests": [
-      "drain_request"
      ],
      "doeff_cluster.worker.protocol.env_store": [
       "CodeState",
@@ -701,8 +560,7 @@
      ],
      "doeff_cluster.worker.protocol.heartbeat": [
       "CodeState",
-      "CodeView",
-      "JobStatus"
+      "CodeView"
      ],
      "doeff_cluster.worker.protocol.lease_release": [
       "SEMAPHORE_PREFIX"
@@ -711,24 +569,15 @@
       "datetime_of_epoch_ms"
      ],
      "doeff_cluster.worker.protocol.probes": [
-      "CodeLayout",
       "ProbeState",
       "ProbeView"
      ],
      "doeff_cluster.worker.protocol.process_host": [
-      "CodeLayout",
-      "HandoffAbandoned",
-      "ProcessView",
-      "Retired",
-      "StopStage"
+      "ProcessView"
      ],
      "doeff_cluster.worker.protocol.tick_pauses": [
-      "WorkerPolicy",
       "monotonic_ms_of",
       "silent_ms"
-     ],
-     "doeff_cluster.worker.protocol.warm_host": [
-      "StopStage"
      ],
      "doeff_cluster.worker.protocol.world": [
       "WorldView"
@@ -891,24 +740,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.failover_policy",
-   "name": "failover_refusals",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.failover_policy",
-   "name": "hyx_per_machineXquestion_markX",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.failover_policy",
-   "name": "placeable",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.failover_room",
    "name": "ExtraProvides",
    "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
@@ -923,18 +754,6 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.failover_room",
    "name": "RoomReading",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.failover_room",
-   "name": "room_file_workers",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.failover_room",
-   "name": "room_of_text",
    "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
   },
   {
@@ -981,20 +800,8 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.kube_services",
-   "name": "kube_headers",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.sim.local",
    "name": "RoomReading",
-   "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.sim.local",
-   "name": "room_of_text",
    "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
   },
   {
@@ -1200,12 +1007,6 @@
    "module": "doeff_cluster",
    "name": "task_room_of",
    "reason": "Program helper exported from the root so that packages/doeff-cluster/tests/test_cluster_policy.hy can read it, after the forwarding module of the coordinator section was removed (doeff main 32694cf7a — the decision that counts a worker's free task slots). It has no outside users, and it can be removed from the root once the test is changed to read from the hidden module"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster",
-   "name": "SimMachine",
-   "reason": "Type of the field machine of the simulated worker (SimWorker at the root) (the coordinator places tasks by measured free capacity, so a simulated worker announces the free capacity measured from the CPU and memory of the machine it sits on). Exported from the root so that users who build a SimWorker can name the machine size. It moves together with SimWorker when it moves to the same group"
   },
   {
    "package": "doeff-stream",
