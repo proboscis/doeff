@@ -1,5 +1,5 @@
 // Renders a page's video for the docs: docs/assets/videos/<id>.mp4 (1920x1080 at 60 fps: the scenes are laid out at
-// 1280x720 and drawn at 1.5 times that size; h264 at CRF 29 with AAC audio, moov atom at the front so a browser can
+// 1280x720 and drawn at 1.5 times that size; h264 at CRF 29 with a key frame every 10 s and AAC audio at 64 kb/s, moov atom at the front so a browser can
 // start playing before the whole file is in) and <id>.jpg, the still shown on GitHub and as the player's poster. The still is the frame given (default: 2 s in). A video that comes out over 6 MB at
 // CRF 29 is rendered again at a higher CRF given as the third argument. The subtitles drawn in the video are also
 // written as <id>.vtt and <id>.srt (captions.mjs), from the same cues.
@@ -23,6 +23,8 @@ const [id, posterFrame = '120', crf = '29'] = args;
 if (!id) throw new Error('usage: node render.mjs <composition id> [<poster frame>] [<crf>] [--audio-from <mp4>]');
 // The scenes are laid out at 1280x720 (src/kit/theme.ts); the video is drawn at 1920x1080.
 const scale = 1.5;
+// The seconds between key frames: a player seeks to one of them.
+const KEY_SECONDS = 10;
 const browserExecutable = findChrome();
 const videos = path.resolve('../../docs/assets/videos');
 fs.mkdirSync(videos, {recursive: true});
@@ -54,7 +56,12 @@ const captions = writeCaptions(videos, id, composition.props.cues, composition.f
 const raw = path.join(work, `${id}.mp4`);
 let shown = -1;
 await renderMedia({
-  ...options, composition, scale, muted: Boolean(sound), codec: 'h264', crf: Number(crf), audioBitrate: '96k', pixelFormat: 'yuv420p', outputLocation: raw,
+  // The sound is one voice (tts.py), so 64 kb/s holds it. A key frame every KEY_SECONDS instead of x264's every 250
+  // frames (4 s at 60 fps): in a narrated video most frames barely change, and the key frames were a third of the
+  // picture's bytes.
+  ...options, composition, scale, muted: Boolean(sound), codec: 'h264', crf: Number(crf), audioBitrate: '64k', pixelFormat: 'yuv420p', outputLocation: raw,
+  // With parallel encoding the picture is encoded in the pre-stitcher, and the stitcher adds the sound.
+  ffmpegOverride: ({type, args}) => (type === 'pre-stitcher' ? [...args.slice(0, -1), '-g', String(composition.fps * KEY_SECONDS), args.at(-1)] : args),
   // Remotion refuses more than the cores this process may use (a container's CPU quota can be below the machine's);
   // DOCS_VIDEO_CONCURRENCY lowers it further where memory is short, since each browser tab holds its own frames.
   concurrency: Math.min(Number(process.env.DOCS_VIDEO_CONCURRENCY ?? 12), os.availableParallelism()),
