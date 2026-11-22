@@ -965,6 +965,24 @@
    "reason": "The runtime entry of doeff-stream. When a step returns a Program, fold itself wraps that Program with a handler (_refuse_every_effect) that refuses every effect — if callers had to wrap it, a step that forgot would be able to emit effects, so fold wraps it, on the condition set by the owners of cli_host and scheduling. It wraps only around the step's Program and touches neither run nor the caller's handlers. That it refuses is pinned by packages/doeff-stream/tests/test_program_step.py"
   },
   {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "Clocked",
+   "reason": "Value that a fold_clocked step reads: an input together with the instant the fold took it (timezone-aware, never going back). It is one of the values a fold step reads and writes, like Next and Answered, and stays here with them until the shape of doeff-stream's fold is decided"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "fold_clocked",
+   "reason": "fold that gives the step every input as Clocked, reading GetTime once right before each step. It runs the same loop as fold and wraps the step's Program the same way, so it does not fit the helper shape of R18 for the same reason as fold, and stays here with fold until the shape of doeff-stream's fold is decided"
+  },
+  {
+   "package": "doeff-stream",
+   "module": "doeff_stream",
+   "name": "replay_clocked",
+   "reason": "Test harness for a fold_clocked step: feeds a list of Clocked inputs to the step without the VM and returns the trace. It is replay for a step of fold_clocked, so there is no group to place it, as with replay"
+  },
+  {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects",
    "name": "cache",
