@@ -6,7 +6,7 @@ This post stacks such handlers around one small program, one layer at a time; if
 
 First, the idea in a short video: what algebraic effects are for and what they are, then how doeff writes them: a function yields effects, handlers stacked outside it answer them, and each handler gets the rest of the function as `k`.
 
-[![Video (3:45): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/0PKybv3mY6I/maxresdefault.jpg)](https://youtu.be/0PKybv3mY6I)
+[![Video (3:45): what algebraic effects are for and what they are, then doeff: a function yields effects, handlers stacked outside it answer them with k, and the same function runs under many stacks](https://img.youtube.com/vi/cPA5K4W5NVI/maxresdefault.jpg)](https://youtu.be/cPA5K4W5NVI)
 
 [The same video as an mp4 file (3:45)](../assets/videos/article-concept.mp4)
 
