@@ -16,9 +16,9 @@
 (import doeff_cluster [ClusterTiming])
 (import doeff_cluster [ClusterState WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [ClusterObservations KeepMark RolloutRow RolloutSpec RolloutStatus RolloutTarget DeploymentUnreadable NodeLabelsSeen])
-(import doeff_cluster [service-readiness]
+(import doeff_cluster._coordinator.core.resource_policy [service-readiness]
         doeff_cluster._coordinator.core.resource_policy [readiness-due carrier-stale-from report-expired-from unreported-until warm-until service-stopped service-stopped-due current-report running-process])
-(import doeff_cluster [liveness-due]
+(import doeff_cluster._coordinator.core.cluster_policy [liveness-due]
         doeff_cluster._coordinator.core.cluster_policy [liveness-deadline note-liveness reconcile nodes-to-follow])
 (import doeff_cluster [DueNow DueNever]
         doeff_cluster._shared.intent.due_model [DueAt])

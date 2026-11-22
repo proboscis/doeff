@@ -23,7 +23,7 @@
 (import doeff [with-handlers])
 (import doeff_cluster [RuntimeEnv]
         doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind])
-(import doeff_cluster [runtime-env->json env-key])
+(import doeff_cluster [env-key] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [current-platform])
 (import doeff_cluster [AwaitDetached DetachedSucceeded DetachedEnvUnavailable DetachedVersionMismatch])
 (import doeff_cluster._shared.protocol.detached [outcome-of-view])

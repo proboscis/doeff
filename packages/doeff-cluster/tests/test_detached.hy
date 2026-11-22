@@ -1006,7 +1006,7 @@
   ;; env-failed(tool-missing)で終えない(2026-11-13 日次の検証の t49996-r2 が積み直した 0.3 秒後に「宣言の道具 [] を名乗る worker が無い」で終わった)。
   (import tests.env_fixtures [LOCK env-of])
   (import doeff_cluster [RuntimeEnv])
-  (import doeff_cluster [runtime-env->json])
+  (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (val joined (! (beat (ClusterState :machine-compartments ROOMS) "w" 0)))
@@ -1029,7 +1029,7 @@
   ;; 上の待ちの対: 能力の合う生きた worker のどれも宣言の道具を名乗らなければ、待っても晴れないので tool-missing で終える。
   (import tests.env_fixtures [LOCK env-of])
   (import doeff_cluster [RuntimeEnv])
-  (import doeff_cluster [runtime-env->json])
+  (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (val joined (! (beat (ClusterState :machine-compartments ROOMS) "w" 0)))
@@ -1910,7 +1910,7 @@
   ;; 400 で理由を返し、状態を変えない(ADR-DOE-CLUSTER-001 R4b — どこにでも置ける仕事は無い・label の照合は受け付けない)。
   (import tests.env_fixtures [LOCK env-of])
   (import doeff_cluster [RuntimeEnv])
-  (import doeff_cluster [runtime-env->json])
+  (import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
   (<- env RuntimeEnv (env-of "app-1" "lib-1" LOCK))
   (<- declared (runtime-env->json env))
   (val reply-86 (! (beat (ClusterState :machine-compartments ROOMS) "w" 0)))
