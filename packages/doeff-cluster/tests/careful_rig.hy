@@ -23,7 +23,7 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster [RepoCheckout NativeWheel PythonProject RuntimeEnv]
         doeff_cluster._shared.intent.runtime_env_model [EnvFailureKind])
-(import doeff_cluster [runtime-env->json env-key])
+(import doeff_cluster [env-key] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [current-platform])
 (import doeff_cluster [LocalCheckout ProjectOfCheckout])
 (import doeff_cluster [runtime-env-of-checkouts])

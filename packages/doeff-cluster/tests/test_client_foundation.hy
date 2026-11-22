@@ -22,7 +22,7 @@
 (import doeff_cluster [process-versions]
         doeff_cluster._foundation.process_versions [RUNTIME-ENV-KEY-VAR])
 (import doeff_cluster [RuntimeEnv RepoCheckout PythonProject])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [submit-detached-task])
 (import doeff_cluster [AwaitDetached DetachedSubmitted DetachedSucceeded])
 (import tests.transport_http [transport-http COORDINATOR-URL])

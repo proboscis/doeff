@@ -622,7 +622,7 @@
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [UnplacedKind]
         doeff_cluster._coordinator.intent.cluster_model [Drain DrainPhase TaskUnplacedKind])
-(import doeff_cluster [memory-room-of memory-misfit task-room-of]
+(import doeff_cluster [memory-room-of memory-misfit] doeff_cluster._coordinator.core.cluster_policy [task-room-of]
         doeff_cluster._coordinator.core.cluster_policy [load-of task-unplaced-text durable-changed unplaced-views])
 (import doeff_cluster._coordinator.core.drain_policy [advance-drains drain-view])
 (import doeff_cluster [tick])
@@ -1223,7 +1223,7 @@
   (assert (= (.size (! (place-held {"b" live} 5001))) 0)))
 
 
-(import doeff_cluster [task-due])
+(import doeff_cluster._coordinator.core.cluster_policy [task-due])
 (import doeff_cluster [DueNow DueNever]
         doeff_cluster._shared.intent.due_model [DueAt])
 (import random)

@@ -13,7 +13,7 @@
 (import doeff-adr.macros [fact interpretation counterexample])
 (require doeff-hy.macros [deftest <-])
 (import doeff_cluster._shared.core.supplied_spelling :as spelling)
-(import doeff_cluster [supplied-spellings])
+(import doeff_cluster._shared.core.supplied_spelling [supplied-spellings])
 (import doeff_cluster._shared.protocol.supplied_values :as reader)
 
 
