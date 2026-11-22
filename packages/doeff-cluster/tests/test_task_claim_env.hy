@@ -14,7 +14,7 @@
 (import doeff_cluster._worker.core.launch [job-launch JobLaunch])
 (import doeff_cluster._worker.core.shim_timing [ShimSpans])
 (import doeff_cluster._worker.protocol.declared [task-spec])
-(import doeff_cluster [RuntimeEnv runtime-env->json])
+(import doeff_cluster [RuntimeEnv] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import tests.env_fixtures [LOCK env-of])
 
 

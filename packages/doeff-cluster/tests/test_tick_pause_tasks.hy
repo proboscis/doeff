@@ -15,7 +15,7 @@
 (import doeff_core_effects [Spawn Task Wait])
 (import doeff_core_effects [RaiseStop])
 (import doeff_core_effects [scripted-stop-handler])
-(import doeff_cluster [now-epoch-ms monotonic-ms-of])
+(import doeff_cluster [now-epoch-ms] doeff_cluster._shared.core.clock [monotonic-ms-of])
 (import doeff_cluster._shared.intent.due_model [DueAt])
 (import doeff_cluster [AwaitNextTick WorkerPolicy]
         doeff_cluster._worker.intent.worker_model [WakeSet])

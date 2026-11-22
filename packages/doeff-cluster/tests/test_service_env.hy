@@ -19,7 +19,7 @@
 (import doeff [run])
 (import dataclasses [replace])
 (import doeff_cluster [RepoCheckout PythonProject RuntimeEnv EnvVar])
-(import doeff_cluster [runtime-env->json env-key])
+(import doeff_cluster [env-key] doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [current-platform])
 (import doeff_cluster [job resolve system-of system-declaration])
 (import doeff_cluster [CallShape System])
