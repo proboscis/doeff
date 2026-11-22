@@ -20,7 +20,7 @@
 (import doeff_cluster._worker.core.beat_policy [heartbeat-due])
 (import doeff_cluster._worker.core.heartbeat_rules [desired-after-silence])
 (import doeff_cluster._worker.core.env_upkeep [RootsTally PrepareLimits prepare-overdue sweep-due SWEEP-EVERY-MS])
-(import doeff_cluster [fence-due]
+(import doeff_cluster._worker.core.worker_due [fence-due]
         doeff_cluster._worker.core.worker_due [plan-due beat-due prepare-stop-due sweep-interval-due])
 
 (val POLICY (WorkerPolicy))

@@ -19,7 +19,7 @@
 (import doeff_core_effects [process-exit-handler])
 (import doeff_core_effects [StartProcess ProcessStarted AwaitProcessExit])
 (import doeff_time [async-time-handler])
-(import doeff_cluster [now-epoch-ms monotonic-ms-of])
+(import doeff_cluster [now-epoch-ms] doeff_cluster._shared.core.clock [monotonic-ms-of])
 (import doeff [with-handlers])
 (import doeff_time [Delay GetMonotonic SimClock sim-time-handler])
 (import doeff_core_effects [CreatePromise CompletePromise Promise Spawn])

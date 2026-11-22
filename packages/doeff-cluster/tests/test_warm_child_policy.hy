@@ -10,7 +10,7 @@
         doeff_cluster [JobSpec JobPhase]
         doeff_cluster [RuntimeEnv]
         doeff_cluster._shared.intent.runtime_env_model [EnvFailure EnvFailureKind]
-        doeff_cluster [runtime-env->json]
+        doeff_cluster._shared.core.runtime_env_rules [runtime-env->json]
         doeff_cluster [code-key])
 (import doeff_cluster [plan statuses records-after]
         doeff_cluster._worker.core.policy [warm-child-step warm-child-actions])
