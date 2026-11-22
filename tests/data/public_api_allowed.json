@@ -144,7 +144,21 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "CallShape",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "CheckoutFiles",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "CheckoutState",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -158,7 +172,77 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "ClusterTiming",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "CoolingSweep",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "Counterpart",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "Declaration",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DeployedCluster",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedEnded",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedOutbox",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedOutboxAcked",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedOutboxAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedQueueGroup",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedQueueReason",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -195,6 +279,62 @@
    "module": "doeff_cluster",
    "name": "DetachedTasksAnswer",
    "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedTiming",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedTimingAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedUnknown",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DetachedUnreachable",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DueNever",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "DueNow",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "EnvVar",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "GroupLimit",
+   "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -242,8 +382,85 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "Job",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobAnswer",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobDestination",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobField",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobNoWay",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobNotReached",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "JobNotResolved",
    "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobPhase",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobProcessSeen",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobProcessWaitExpired",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobReached",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobRequest",
+   "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -256,7 +473,70 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "JobSpec",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobUnreachable",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "JobWay",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "MemoryStops",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ModuleOrigin",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "NativeWheel",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "PlainText",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ProcessEnded",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ProcessFacts",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ProcessWaitExpired",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -277,7 +557,119 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "PythonProject",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ReachDestination",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ReachFailure",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ReadinessLog",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ReadinessWaitExpired",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RepoCheckout",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "Request",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "ResolveFailure",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RestartRefused",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RunContext",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "RuntimeEnv",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "SemaphoreSession",
+   "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ServiceFact",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ServiceFailed",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ServiceReadiness",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ServiceRestarted",
+   "group": "Allowed — effect answer type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "ServicesUnreachable",
    "group": "Allowed — effect answer type",
    "basis": "ADR-DOE-API-001 R2"
   },
@@ -321,6 +713,20 @@
    "module": "doeff_cluster",
    "name": "SimProcFlood",
    "group": "Allowed — handler setting type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "System",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "TaskLimit",
+   "group": "Allowed — effect value type",
    "basis": "ADR-DOE-API-001 R2"
   },
   {
@@ -382,6 +788,27 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "answer_body",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "canonical_argument",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "decode_outcome",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "dependency_key",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -389,9 +816,149 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
+   "name": "detached_path",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "holder_tokens_prefix",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
    "name": "hosted_socket_path",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R18"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "identity_of",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "job",
+   "group": "Allowed — program-shape builder and type",
+   "basis": "ADR-DOE-API-001 R37"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "job_named",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "lease_full_until",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "lease_holder",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "lease_op",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "live_holders",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "now_epoch_ms",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "outside_holders",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "program_sha",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "resolve_value",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "semaphore_key",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "service_account_text",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "service_answer",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "spec_hash",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "task_limits_json",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "update_body",
+   "group": "Allowed — program helper",
+   "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster",
+   "name": "warm_path",
+   "group": "Allowed — conversion function",
+   "basis": "ADR-DOE-API-001 R35"
   },
   {
    "package": "doeff-cluster",
@@ -501,13 +1068,6 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.program",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.core.program",
    "name": "run_coordinator",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -592,13 +1152,6 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.entry.main",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.entry.main",
    "name": "run_coordinator",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -633,13 +1186,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.protocol.kube",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.protocol.request_bodies",
    "name": "BodyInvalid",
    "group": "Allowed — exception type",
@@ -648,21 +1194,7 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.protocol.request_queue",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.protocol.request_queue",
    "name": "promise_or_timeout",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.coordinator.protocol.wal_files",
-   "name": "now_epoch_ms",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },
@@ -787,24 +1319,10 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.record_store.core.program",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.core.capabilities",
    "name": "BodyInvalid",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.clock",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
   },
   {
    "package": "doeff-cluster",
@@ -941,13 +1459,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.core.semaphore_handlers",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.core.service_back",
    "name": "promise_or_timeout",
    "group": "Allowed — program helper",
@@ -998,13 +1509,6 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.entry.client_foundation",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.entry.client_foundation",
    "name": "process_versions",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1013,13 +1517,6 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.entry.cluster_foundation",
    "name": "lease_holder_of",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.entry.cluster_foundation",
-   "name": "now_epoch_ms",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },
@@ -1207,24 +1704,10 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.coordinator_route",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.detached",
    "name": "DetachedRefused",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.detached",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
   },
   {
    "package": "doeff-cluster",
@@ -1355,13 +1838,6 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.supplied_values",
-   "name": "service_account_text",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.supplied_values",
    "name": "supplied_directory",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1405,13 +1881,6 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.supplied_values",
    "name": "worker_fact",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.shared.protocol.task_result",
-   "name": "now_epoch_ms",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },
@@ -1537,13 +2006,6 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.sim.local",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.sim.local",
    "name": "process_versions",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1648,13 +2110,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.core.pod_label_rules",
-   "name": "JobSpec",
-   "group": "Allowed — effect value type",
-   "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.core.policy",
    "name": "plan",
    "group": "Allowed — program helper",
@@ -1687,13 +2142,6 @@
    "name": "WorkerUnsettled",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.core.program",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
   },
   {
    "package": "doeff-cluster",
@@ -1746,13 +2194,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.entry.drain_main",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.entry.job_entry",
    "name": "RemoteJobFailed",
    "group": "Allowed — exception type",
@@ -1782,13 +2223,6 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.worker.entry.main",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.entry.main",
    "name": "shim_spans",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1802,13 +2236,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.code_store",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.protocol.coordinator_link",
    "name": "declared_job_specs",
    "group": "Allowed — program helper",
@@ -1818,13 +2245,6 @@
    "package": "doeff-cluster",
    "module": "doeff_cluster.worker.protocol.coordinator_link",
    "name": "declared_reply_of_json",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.coordinator_link",
-   "name": "now_epoch_ms",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },
@@ -1865,13 +2285,6 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.env_store",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.protocol.env_translation",
    "name": "file_sha256",
    "group": "Allowed — program helper",
@@ -1893,50 +2306,8 @@
   },
   {
    "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.memory_watch",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.probes",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.process_clock",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.process_host",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.protocol.status_file",
    "name": "status_rows_json",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.tick_pauses",
-   "name": "now_epoch_ms",
-   "group": "Allowed — program helper",
-   "basis": "ADR-DOE-API-001 R25"
-  },
-  {
-   "package": "doeff-cluster",
-   "module": "doeff_cluster.worker.protocol.warm_host",
-   "name": "now_epoch_ms",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
   },
