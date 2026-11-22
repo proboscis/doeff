@@ -26,7 +26,7 @@
 (import tests.fixtures.sim_programs [beacons quitters])
 (import tests.env_fixtures [LOCK env-of])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 
 (val TWO-WORKERS #((SimWorker :name "w1" :provides (frozenset ["cluster-net"]))
                    (SimWorker :name "w2" :provides (frozenset ["cluster-net"]))))

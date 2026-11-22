@@ -15,7 +15,7 @@
 (import doeff_cluster [now-epoch-ms])
 (import doeff_cluster [DetachedRefused])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [ReadWarmState WarmState WarmUnreachable])
 (import doeff_cluster [warm-key warm-runtime-env])
 (import tests.coordinator_contract_handlers [WarmsSeen WarmSeen SetReachable contract-env])

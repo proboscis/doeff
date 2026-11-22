@@ -18,7 +18,7 @@
 (import doeff_time [sync-time-handler])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster [RuntimeEnv])
-(import doeff_cluster [runtime-env->json])
+(import doeff_cluster._shared.core.runtime_env_rules [runtime-env->json])
 (import doeff_cluster [StartWarmChild StopWarmChild ForgetWarmChild StopStage StartJob SignalJob ProcessView]
         doeff_cluster._worker.intent.worker_model [WarmChildMark WarmMarkUnreadable WarmChildView WarmLaunch JobNotStarted])
 (import doeff_cluster [ObserveWarmChildren ObserveProcesses])
