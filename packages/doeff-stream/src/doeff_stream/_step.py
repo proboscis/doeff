@@ -195,6 +195,27 @@ RunEnd = Answered | Raised | Cancelled
 """The inputs the runtime makes of a run's end: exactly one per ``Run``."""
 
 
+@dataclass(frozen=True)
+class Clocked:
+    """One input of ``fold_clocked`` with the instant the fold took it: ``at`` = the clock read right before the step
+    was given ``input`` (timezone-aware, never earlier than the ``at`` of the input before), ``input`` = the input as
+    ``fold`` gives it — an event, the end of a run or a ``TimerFired``.
+
+    The step reads the time from ``at`` alone: it has no clock, and a time carried inside an event was read by whoever
+    made the event. Being part of the input, ``at`` is recorded with it, so the same inputs replay to the same states.
+    """
+
+    at: datetime
+    input: object
+
+    def __post_init__(self) -> None:
+        # Checked here, not where the step reads it: a naive instant would compare wrongly with Arm's aware ones.
+        if not isinstance(self.at, datetime):
+            raise TypeError(f"Clocked takes a datetime, got {type(self.at).__name__}")
+        if self.at.tzinfo is None or self.at.utcoffset() is None:
+            raise ValueError("Clocked takes a timezone-aware datetime")
+
+
 class StepYieldedEffectError(TypeError):
     """A step's Program performed an effect. A step decides from its state and its input alone: what it needs from
     the outside world comes as an input, and what it wants done goes out as a ``Run``.
