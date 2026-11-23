@@ -83,6 +83,8 @@ pub mod invariants;
 pub mod system_access;
 pub mod record_waits;
 pub mod timed_refetch;
+#[cfg(test)]
+pub(crate) mod perf_counters;
 pub mod program_sleep;
 pub mod test_sleep;
 pub mod system_decls;

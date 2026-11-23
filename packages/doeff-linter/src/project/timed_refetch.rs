@@ -447,6 +447,8 @@ struct Unit {
 
 impl Unit {
     fn read(rel: String, source: String) -> Unit {
+        #[cfg(test)]
+        super::perf_counters::record_parse("timed_refetch", &rel);
         let forms = Reader::new(&source, 0, source.len()).read_all();
         let mut definitions = Vec::new();
         let mut imports = HashMap::new();
@@ -1147,7 +1149,11 @@ pub fn find(root: &Path, decl: &BusinessFakes) -> (Vec<RefetchFinding>, Vec<Stri
         .collect();
     let read: Vec<Result<(String, String), String>> = files
         .into_par_iter()
-        .map(|(rel, path)| std::fs::read_to_string(&path).map(|source| (rel.clone(), source)).map_err(|error| format!("{}: cannot read: {}", rel, error)))
+        .map(|(rel, path)| {
+            #[cfg(test)]
+            super::perf_counters::record_read("timed_refetch", &rel);
+            std::fs::read_to_string(&path).map(|source| (rel.clone(), source)).map_err(|error| format!("{}: cannot read: {}", rel, error))
+        })
         .collect();
     let (sources, errors): (Vec<_>, Vec<_>) = read.into_iter().partition(Result::is_ok);
     (judge_sources(sources.into_iter().filter_map(Result::ok).collect()), errors.into_iter().filter_map(Result::err).collect())

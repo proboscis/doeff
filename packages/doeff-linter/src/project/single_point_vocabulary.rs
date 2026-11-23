@@ -152,7 +152,11 @@ pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) 
             .filter(|rel| !scope.except.iter().any(|p| glob_matches(p, rel)))
             .cloned();
         for rel in rels {
+            #[cfg(test)]
+            super::perf_counters::record_read("single_point_vocabulary", &rel);
             let Ok(source) = std::fs::read_to_string(root.join(&rel)) else { continue };
+            #[cfg(test)]
+            super::perf_counters::record_strip("single_point_vocabulary", &rel);
             let code = strip_comments(&source);
             let mut first: Option<u32> = None;
             let mut count = 0usize;

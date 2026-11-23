@@ -45,7 +45,9 @@ fn at_line(line: u32) -> Range {
 }
 
 /// Byte range of a top-level form whose head starts with def and whose second element is a name.
-fn definition_span(source: &str, name: &str) -> Option<(usize, usize)> {
+fn definition_span(rel: &str, source: &str, name: &str) -> Option<(usize, usize)> {
+    #[cfg(test)]
+    super::perf_counters::record_parse("counted_spellings", rel);
     let forms = Reader::new(source, 0, source.len()).read_all();
     top_level::definition(source, &forms, name).map(|form| (form.span.start, form.span.end))
 }
@@ -73,8 +75,12 @@ fn judge_one(root: &Path, declared: &CountedSpelling, declaration_rel: &str, err
     // Per file: (path, original text, text with comments dropped).
     let mut texts: Vec<(String, String, String)> = Vec::new();
     for rel in population {
+        #[cfg(test)]
+        super::perf_counters::record_read("counted_spellings", &rel);
         match std::fs::read_to_string(root.join(&rel)) {
             Ok(source) => {
+                #[cfg(test)]
+                super::perf_counters::record_strip("counted_spellings", &rel);
                 let code = code_text(&rel, &source);
                 texts.push((rel, source, code));
             }
@@ -103,7 +109,7 @@ fn judge_one(root: &Path, declared: &CountedSpelling, declaration_rel: &str, err
         let located = texts
             .iter()
             .filter(|(rel, _, _)| rel.ends_with(".hy"))
-            .find_map(|(rel, source, code)| definition_span(source, name).map(|span| (rel, code, span)));
+            .find_map(|(rel, source, code)| definition_span(rel, source, name).map(|span| (rel, code, span)));
         let Some((rel, code, (start, end))) = located else {
             out.push(finding(
                 declaration_rel.to_string(),

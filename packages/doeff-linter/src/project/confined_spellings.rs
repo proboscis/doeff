@@ -69,6 +69,8 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], declared_in: impl Fn(&Path
             .filter(|rel| !group.except.iter().any(|p| super::paths::glob_matches(p, rel)))
             .filter(|rel| focus.is_none_or(|only| only.iter().any(|p| root.join(rel.as_str()).starts_with(p))))
         {
+            #[cfg(test)]
+            super::perf_counters::record_read("confined_spellings", rel);
             let source = match std::fs::read_to_string(root.join(rel)) {
                 Ok(source) => source,
                 Err(error) => {
@@ -76,6 +78,8 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], declared_in: impl Fn(&Path
                     continue;
                 }
             };
+            #[cfg(test)]
+            super::perf_counters::record_strip("confined_spellings", rel);
             let code = code_text(rel, &source);
             let mut hits: Vec<(usize, &str)> = regexes.iter().flat_map(|re| re.find_iter(&code).map(|m| (m.start(), m.as_str()))).collect();
             if hits.is_empty() {

@@ -880,6 +880,57 @@ mod tests {
     /// - What the lookup procedure (this file) uses from store is only the entrances that store and read facts by key. If it had the entrances that list and delete facts (`list`, `remove`), lifetime decisions would be in two places.
     /// - What cleanup (sweep) uses from store is only the entrances that list and delete facts, and the store's names. If it had the entrances that store, read, or make keys for facts, knowledge of the facts' contents would leak.
     /// - store holds no lifetime rules (cap, seconds a root counts as in use, interval between turns).
+    /// Copying the exact same binary to another path with a different mtime must produce the same identity and hit the same objects/.
+    #[test]
+    fn copied_binary_with_different_mtime_shares_identity_and_hits_objects() {
+        const PRINT_ENV: &str = "DOEFF_LINTER_TEST_PRINT_IDENTITY";
+        if std::env::var_os(PRINT_ENV).is_some() {
+            println!("IDENTITY={}", identity("hy-index"));
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let current = std::env::current_exe().unwrap();
+        let bin_a = dir.path().join("venv_a").join("test_bin");
+        let bin_b = dir.path().join("venv_b").join("test_bin");
+        std::fs::create_dir_all(bin_a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(bin_b.parent().unwrap()).unwrap();
+        std::fs::copy(&current, &bin_a).unwrap();
+        std::fs::copy(&current, &bin_b).unwrap();
+        set_mtime(&bin_b, SystemTime::now() + std::time::Duration::from_secs(120));
+
+        let read_id = |bin: &Path| -> String {
+            let out = std::process::Command::new(bin)
+                .args(["--exact", "project::facts_cache::tests::copied_binary_with_different_mtime_shares_identity_and_hits_objects", "--nocapture"])
+                .env(PRINT_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "child failed: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|line| line.strip_prefix("IDENTITY=").map(str::to_string))
+                .expect("missing IDENTITY= line")
+        };
+        let id_a = read_id(&bin_a);
+        let id_b = read_id(&bin_b);
+        assert_eq!(id_a, id_b, "copied identical binary at another path/mtime produced a different identity");
+
+        // Verify that the shared objects/ cache hits when the second binary reads a second root with identical file content.
+        let cache_dir = dir.path().join("cache");
+        let tree_a = dir.path().join("tree_a/m.hy");
+        let tree_b = dir.path().join("tree_b/m.hy");
+        std::fs::create_dir_all(tree_a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(tree_b.parent().unwrap()).unwrap();
+        std::fs::write(&tree_a, "(defk m [] 1)").unwrap();
+        std::fs::write(&tree_b, "(defk m [] 1)").unwrap();
+        set_mtime(&tree_b, SystemTime::now() + std::time::Duration::from_secs(60));
+        let calls = AtomicUsize::new(0);
+        let ans_a = run(&place_of(&cache_dir, "root_a", Format::Compact), &id_a, &[("m.hy".to_string(), tree_a)], &calls, Format::Compact);
+        assert_eq!(calls.swap(0, Ordering::SeqCst), 1);
+        let ans_b = run(&place_of(&cache_dir, "root_b", Format::Compact), &id_b, &[("m.hy".to_string(), tree_b)], &calls, Format::Compact);
+        assert_eq!(ans_b, ans_a);
+        assert_eq!(calls.swap(0, Ordering::SeqCst), 0, "second binary missed objects/ written by first binary");
+    }
+
     #[test]
     fn each_file_uses_only_the_names_of_the_knowledge_it_owns() {
         let resolve = names_taken_from_store(&code_of(include_str!("facts_cache.rs")));

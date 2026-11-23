@@ -154,6 +154,8 @@ fn files_under(path: &Path) -> Vec<PathBuf> {
     if !path.is_dir() {
         return Vec::new();
     }
+    #[cfg(test)]
+    super::perf_counters::record_walk("retired", path);
     WalkDir::new(path)
         .follow_links(false)
         .into_iter()
@@ -279,9 +281,11 @@ fn hy_docstring<'f>(source: &str, items: &'f [Form]) -> Option<&'f Form> {
 }
 
 /// Uncounted ranges for Hy — `;` comments (from a `;` outside a string to end of line) and definition docstrings.
-fn hy_uncounted(source: &str) -> Vec<(usize, usize)> {
+fn hy_uncounted(rel: &str, source: &str) -> Vec<(usize, usize)> {
     let mut strings = Vec::new();
     let mut out = Vec::new();
+    #[cfg(test)]
+    super::perf_counters::record_parse("retired", rel);
     let mut reader = Reader::new(source, 0, source.len());
     for form in &reader.read_all() {
         hy_strings_and_docstrings(source, form, &mut strings, &mut out);
@@ -439,8 +443,10 @@ fn counted_text(rel: &str, source: &str) -> Option<String> {
     if rel.ends_with(".md") {
         return None;
     }
+    #[cfg(test)]
+    super::perf_counters::record_strip("retired", rel);
     let uncounted = if rel.ends_with(".hy") {
-        hy_uncounted(source)
+        hy_uncounted(rel, source)
     } else if is_python(rel) {
         python_uncounted(source)
     } else {
@@ -558,6 +564,8 @@ fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&st
     }
     let sites = if rel.ends_with(".hy") {
         let mut sites = Vec::new();
+        #[cfg(test)]
+        super::perf_counters::record_parse("retired", rel);
         let mut reader = Reader::new(source, 0, source.len());
         for form in &reader.read_all() {
             hy_contract_sites(source, form, &mut sites);
@@ -643,6 +651,8 @@ fn hy_definition_names(source: &str, form: &Form, out: &mut Vec<(usize, usize)>)
 fn definition_names(rel: &str, source: &str) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     if rel.ends_with(".hy") {
+        #[cfg(test)]
+        super::perf_counters::record_parse("retired", rel);
         let mut reader = Reader::new(source, 0, source.len());
         for form in &reader.read_all() {
             hy_definition_names(source, form, &mut out);
@@ -761,6 +771,8 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
     let mut call_hits = Vec::new();
     let call_groups: Vec<&RetiredCalls> = prepared.calls.iter().filter(|g| rel.ends_with(".hy") && selected(rel, &g.files, &g.except)).collect();
     if !call_groups.is_empty() {
+        #[cfg(test)]
+        super::perf_counters::record_parse("retired", rel);
         let mut reader = Reader::new(source, 0, source.len());
         let forms = reader.read_all();
         for group in call_groups {
@@ -804,9 +816,13 @@ pub(super) fn judge_files<'g, R: Send>(
     let wanted: Vec<(String, PathBuf)> = candidate_files(root, globs, focus).into_iter().filter(|(rel, path)| wants(rel, path)).collect();
     let judged: Vec<Result<Option<R>, String>> = wanted
         .into_par_iter()
-        .map(|(rel, path)| match std::fs::read_to_string(&path) {
-            Ok(source) => judge(rel, path, source),
-            Err(error) => Err(format!("{}: cannot read: {}", rel, error)),
+        .map(|(rel, path)| {
+            #[cfg(test)]
+            super::perf_counters::record_read("retired", &rel);
+            match std::fs::read_to_string(&path) {
+                Ok(source) => judge(rel, path, source),
+                Err(error) => Err(format!("{}: cannot read: {}", rel, error)),
+            }
         })
         .collect();
     let mut found = Vec::new();
