@@ -11,12 +11,15 @@
 //! Names derived from a group's `:names-bound-in` (bound_names.rs) are appended after the group's `:patterns` when architecture.hy is read, and here they are matched
 //! the same as written spellings.
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use doeff_indexer::hy_index::Range;
+use serde::{Deserialize, Serialize};
 
 use super::architecture::ConfinedSpelling;
-use super::spelling_scope::{code_text, line_of, selected_files};
+use super::facts_cache::{self, Reach};
+use super::spelling_scope::{code_text, line_of, walk_candidates, Extensions};
 
 /// Kind of match (a closed set of 2).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,17 +45,118 @@ pub struct ConfinedFinding {
     pub bound: Vec<String>,
 }
 
+/// Cached per-file hits across all matching groups (path-free so `objects/` is shared across worktrees).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedConfinedHit {
+    group_idx: usize,
+    line: u32,
+    count: usize,
+    first: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum CachedConfinedFile {
+    Hits { rel: String, hits: Vec<CachedConfinedHit> },
+    Error(String),
+}
+
 /// For each group, finds matches outside `:except` (in the order of group declarations, then path order). Files that could not be read are pushed to errors. If focus (a name given on the command line)
 /// is present, reads only the files under it — a match attaches to its file, one per file, so the answer is the same as reading everything and then filtering by the named paths
-/// (the population-0 notice is decided by the glob and is not read). A one-file commit hook used to read the whole population for every group.
+/// (the population-0 notice is decided by the glob and is not read).
+/// Walks the collapsed roots once, reads and strips comments at most once per file in parallel via `facts_cache` (keyed by the group definitions), and preserves `Missing` detection and output order.
 /// `declared_in` spells a declaration file from the root (paths::declared_rel) — a group whose :files match nothing is reported in the file the group is written in.
 pub fn find(root: &Path, groups: &[ConfinedSpelling], declared_in: impl Fn(&Path) -> String, focus: Option<&[PathBuf]>) -> (Vec<ConfinedFinding>, Vec<String>) {
-    let mut out = Vec::new();
+    if groups.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let all_candidates = walk_candidates(root, groups.iter().flat_map(|g| g.files.iter()), Extensions::Code);
+    let compiled_regexes: Vec<Vec<regex::Regex>> = groups
+        .iter()
+        .map(|g| g.patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect())
+        .collect();
+
+    let mut missing = vec![false; groups.len()];
+    // Sorted by `rel` so `wanted_files` is in deterministic path order.
+    let mut file_groups: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (gi, group) in groups.iter().enumerate() {
+        let mut any_in_population = false;
+        for rel in &all_candidates {
+            if !group.files.iter().any(|p| super::paths::glob_matches(p, rel)) {
+                continue;
+            }
+            any_in_population = true;
+            if group.except.iter().any(|p| super::paths::glob_matches(p, rel)) {
+                continue;
+            }
+            if focus.is_some_and(|only| !only.iter().any(|p| root.join(rel.as_str()).starts_with(p))) {
+                continue;
+            }
+            file_groups.entry(rel.clone()).or_default().push(gi);
+        }
+        if !any_in_population {
+            missing[gi] = true;
+        }
+    }
+
+    let wanted_files: Vec<(String, PathBuf)> = file_groups.keys().map(|rel| (rel.clone(), root.join(rel))).collect();
+    let group_lookup: HashMap<&str, &[usize]> = file_groups.iter().map(|(rel, gs)| (rel.as_str(), gs.as_slice())).collect();
+
+    let mut hits_by_group: Vec<Vec<ConfinedFinding>> = vec![Vec::new(); groups.len()];
     let mut errors = Vec::new();
-    for group in groups {
-        let regexes: Vec<regex::Regex> = group.patterns.iter().filter_map(|p| regex::Regex::new(p).ok()).collect();
-        let population = selected_files(root, &group.files, &[]);
-        if population.is_empty() {
+
+    if !wanted_files.is_empty() {
+        let key = facts_cache::hash_key(&groups);
+        let reach = if focus.is_some() { Reach::Named } else { Reach::Whole };
+        let cached: Vec<CachedConfinedFile> = facts_cache::per_file_compact_keyed_in(reach, root, "confined-spellings", &key, &wanted_files, |rel, path| {
+            #[cfg(test)]
+            super::perf_counters::record_read("confined_spellings", rel);
+            let source = match std::fs::read_to_string(path) {
+                Ok(source) => source,
+                Err(error) => return Some(CachedConfinedFile::Error(format!("{}: could not read: {}", rel, error))),
+            };
+            #[cfg(test)]
+            super::perf_counters::record_strip("confined_spellings", rel);
+            let code = code_text(rel, &source);
+            let mut file_hits = Vec::new();
+            for &gi in group_lookup.get(rel).copied().unwrap_or(&[]) {
+                let regexes = &compiled_regexes[gi];
+                let mut hits: Vec<(usize, &str)> = regexes.iter().flat_map(|re| re.find_iter(&code).map(|m| (m.start(), m.as_str()))).collect();
+                if hits.is_empty() {
+                    continue;
+                }
+                hits.sort_unstable();
+                hits.dedup_by_key(|(start, _)| *start);
+                let line = line_of(&code, hits[0].0);
+                file_hits.push(CachedConfinedHit { group_idx: gi, line, count: hits.len(), first: hits[0].1.to_string() });
+            }
+            Some(CachedConfinedFile::Hits { rel: rel.to_string(), hits: file_hits })
+        });
+
+        for entry in cached {
+            match entry {
+                CachedConfinedFile::Error(err) => errors.push(err),
+                CachedConfinedFile::Hits { rel, hits: file_hits } => {
+                    for hit in file_hits {
+                        let group = &groups[hit.group_idx];
+                        let at = doeff_indexer::hy_index::Position { line: hit.line, character: 0 };
+                        hits_by_group[hit.group_idx].push(ConfinedFinding {
+                            rel: rel.clone(),
+                            group: group.name.clone(),
+                            why: group.why.clone(),
+                            range: Range { start: at, end: at },
+                            problem: ConfinedProblem::Outside { count: hit.count },
+                            first: Some(hit.first),
+                            bound: group.bound_names.clone(),
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let mut out = Vec::new();
+    for (gi, group) in groups.iter().enumerate() {
+        if missing[gi] {
             out.push(ConfinedFinding {
                 rel: declared_in(&group.file),
                 group: group.name.clone(),
@@ -62,38 +166,8 @@ pub fn find(root: &Path, groups: &[ConfinedSpelling], declared_in: impl Fn(&Path
                 first: None,
                 bound: group.bound_names.clone(),
             });
-            continue;
-        }
-        for rel in population
-            .iter()
-            .filter(|rel| !group.except.iter().any(|p| super::paths::glob_matches(p, rel)))
-            .filter(|rel| focus.is_none_or(|only| only.iter().any(|p| root.join(rel.as_str()).starts_with(p))))
-        {
-            let source = match std::fs::read_to_string(root.join(rel)) {
-                Ok(source) => source,
-                Err(error) => {
-                    errors.push(format!("{}: could not read: {}", rel, error));
-                    continue;
-                }
-            };
-            let code = code_text(rel, &source);
-            let mut hits: Vec<(usize, &str)> = regexes.iter().flat_map(|re| re.find_iter(&code).map(|m| (m.start(), m.as_str()))).collect();
-            if hits.is_empty() {
-                continue;
-            }
-            hits.sort_unstable();
-            hits.dedup_by_key(|(start, _)| *start);
-            let line = line_of(&code, hits[0].0);
-            let at = doeff_indexer::hy_index::Position { line, character: 0 };
-            out.push(ConfinedFinding {
-                rel: rel.clone(),
-                group: group.name.clone(),
-                why: group.why.clone(),
-                range: Range { start: at, end: at },
-                problem: ConfinedProblem::Outside { count: hits.len() },
-                first: Some(hits[0].1.to_string()),
-                bound: group.bound_names.clone(),
-            });
+        } else {
+            out.extend(std::mem::take(&mut hits_by_group[gi]));
         }
     }
     (out, errors)
