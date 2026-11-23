@@ -89,7 +89,7 @@ class Check:
     def __init__(
         self,
         predicate: Callable[..., object],
-        *args: object,
+        *args: Perform | object,
         reason: object | None = None,
         expression: str | None = None,
     ) -> None:

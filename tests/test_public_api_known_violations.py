@@ -138,8 +138,8 @@ ALLOWED_SHAPES: dict[str, str] = {
     "write the answer type on the effect",
     EXCEPTION_GROUP: "Only classes that are children of BaseException defined by that package can be placed (exception types that effects and handlers throw — "
     "ADR-DOE-API-001 R2). A name that re-exports an exception of another package or the standard library cannot be placed",
-    VALUE_TYPE_GROUP: "Only classes and type aliases that appear in the annotations of the fields of effect classes shown by the same package (including type arguments, following the fields of value types the package defines)"
-    " can be placed (effect value types — ADR-DOE-API-001 R2)",
+    VALUE_TYPE_GROUP: "Only classes and type aliases that appear in the annotations of the fields of effect classes shown by the same package (including type arguments, following the fields of value types the package defines),"
+    " or in the parameters of a program helper the allowed table allows, can be placed (effect value types — ADR-DOE-API-001 R2, R19)",
     PLUGIN_GROUP: "Only pytest11 entry point rows and names shown by the module that entry point loads (the plugin module) can be placed"
     "(ADR-DOE-API-001 R10, R33)",
     STARTUP_GROUP: "Only names that a .pth shipped by the package calls at every startup of the venv's Python can be placed (ADR-DOE-API-001 R36)",
@@ -346,6 +346,8 @@ class GroupFacts:
     startup_calls: frozenset[Key] = frozenset()
     #: Classes returned by builders placed in the group "program-shape builder and type" in the allowed table (the shape of the inventory tool's built_class).
     built: frozenset[str] = frozenset()
+    #: (module, name) placed in the group "Allowed — program helper" in the allowed table (the helpers whose parameters reach effect value types — R19).
+    helpers: frozenset[Key] = frozenset()
 
 
 #: Group check with no facts outside the inventory rows (the default).
@@ -401,6 +403,10 @@ def fits_allowed_group(
         EXCEPTION_GROUP: lambda: row["form"] == tool.EXCEPTION_CLASS and defined_by(row, package),
         VALUE_TYPE_GROUP: lambda: any(
             (shown["module"], shown["name"]) == (row["module"], row["name"])
+            and (
+                not shown.get("helpers")
+                or any(tuple(helper) in facts.helpers for helper in shown["helpers"])
+            )
             for shown in package["value_types"]
         ),
         COMMAND_GROUP: lambda: (
@@ -588,6 +594,7 @@ def check_package(
     package_dir = repo / "packages" / directory
     facts = GroupFacts(
         writers=frozenset(key for key, group in groups.items() if group == ADR_WRITER_GROUP),
+        helpers=frozenset(key for key, group in groups.items() if group == HELPER_GROUP),
         commands=frozenset(commands.get(directory, {})),
         plugin_modules=tool.plugin_modules(tool.read_layout(package_dir)),
         startup_calls=tool.startup_calls(package_dir),
@@ -1805,6 +1812,77 @@ def test_only_an_effect_value_type_can_be_put_into_the_value_type_group(tmp_path
         check_package(package, *tables([*value_types, "Unrelated"], []))
     assert f"{FIXTURE_ROOT}.Unrelated(class・" in str(failure.value)
     assert ALLOWED_SHAPES[VALUE_TYPE_GROUP] in str(failure.value)
+
+
+#: A package whose program helper gather takes Item values (the shape of doeff-validation's validate and Check), and Item takes Mark values through the __init__ of a dataclass(init=False).
+HELPER_VALUE_TYPES = '''
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from doeff import EffectBase, Pass, do, handler
+
+
+@dataclass(frozen=True)
+class Mark:
+    """A value type reached through the __init__ parameters of Item."""
+
+    label: str
+
+
+@dataclass(frozen=True, init=False)
+class Item:
+    """A value type: gather's parameter is typed with it."""
+
+    parts: tuple[object, ...]
+
+    def __init__(self, *args: Mark | object) -> None:
+        object.__setattr__(self, "parts", args)
+
+
+@dataclass(frozen=True)
+class CountEffect(EffectBase):
+    """An effect whose fields reach neither Item nor Mark."""
+
+    size: int
+
+
+@do
+def gather(*items: Item):
+    return (yield CountEffect(len(items)))
+
+
+@handler
+def count_handler(effect: CountEffect, k):
+    yield Pass()
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_a_type_only_a_program_helper_reaches_is_a_value_type_while_the_helper_is_allowed(tmp_path: Path) -> None:
+    """A type the parameters of a program helper reach is an effect value type only while the allowed table allows that helper (ADR-DOE-API-001 R2, R19).
+
+    gather's parameter reaches Item, and the __init__ that the dataclass(init=False) Item writes reaches Mark. With gather in the group "Allowed — program helper",
+    Item and Mark are green in the group "Allowed — effect value type". With gather left in the known table, placing them is red (naming the group).
+    """
+    repo = _fixture_repo(tmp_path, HELPER_VALUE_TYPES)
+    package = _read_fixture(repo)
+    shown = {each["name"]: (each["fields"], each["helpers"]) for each in package["value_types"]}
+    assert shown == {
+        "Item": (["gather(items)"], [[FIXTURE_ROOT, "gather"]]),
+        "Mark": (["Item.args"], [[FIXTURE_ROOT, "gather"]]),
+    }
+
+    def tables(helper_allowed: bool) -> Tables:
+        groups = {(FIXTURE_ROOT, name): VALUE_TYPE_GROUP for name in ("Item", "Mark")}
+        if helper_allowed:
+            groups[(FIXTURE_ROOT, "gather")] = HELPER_GROUP
+        allowed = _fixture_grouped(groups, FIXTURE_DECISION)
+        return Tables(_fixture_table({} if helper_allowed else {FIXTURE_ROOT: ["gather"]}), allowed)
+
+    check_package(package, *tables(True))
+    with pytest.raises(AssertionError, match=re.escape(f'group "{VALUE_TYPE_GROUP}"')):
+        check_package(package, *tables(False))
 
 
 #: The names of a package with an effect whose answer is written in EffectBase[T], an effect whose answer is written only in a docstring, and a class that appears in no effect's answer.

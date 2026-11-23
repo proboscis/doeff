@@ -282,12 +282,16 @@ class ModuleRead(TypedDict):
 class ValueType(TypedDict):
     """One name a package shows that is the type of a field of an effect class it shows (an effect's value type).
 
-    ``fields`` is where the type is written: ``<effect class>.<field>`` (ADR-DOE-API-001 R2 — ``value_types``).
+    ``fields`` is where the type is written: ``<effect class>.<field>``, or ``<helper>(<parameter>)`` for a parameter of a
+    program helper (ADR-DOE-API-001 R2, R19 — ``value_types``). ``helpers`` is empty when an effect's fields reach the
+    type; otherwise it lists the program helpers ``[module, name]`` whose parameters reach it, and the type is an effect
+    value type only while one of them is allowed (the table's test reads the allowed table).
     """
 
     module: str
     name: str
     fields: list[str]
+    helpers: list[list[str]]
 
 
 class AnswerType(TypedDict):
@@ -2256,7 +2260,22 @@ def _class_fields(cls: type) -> list[tuple[str, object]]:
     ``ClassVar`` annotations (``__doeff_answer__`` — the effect's answer type) are not fields.
     """
     if dataclasses.is_dataclass(cls):
-        return [(field.name, field.type) for field in dataclasses.fields(cls)]
+        fields = [(field.name, field.type) for field in dataclasses.fields(cls)]
+        written_init = vars(cls).get("__init__")
+        if getattr(cls, "__dataclass_params__", None) is None or cls.__dataclass_params__.init:
+            return fields
+        # A dataclass(init=False) builds its fields from the parameters of the __init__ it writes (doeff-validation's
+        # Check takes Perform marks as arguments): those parameters are read too.
+        named = {name for name, _ in fields}
+        return fields + [
+            (name, annotation)
+            for name, annotation in (
+                _own_annotations(written_init).items()
+                if isinstance(written_init, types.FunctionType)
+                else ()
+            )
+            if name != "return" and name not in named
+        ]
     written = {
         name: annotation
         for base in reversed(cls.__mro__)
@@ -2378,12 +2397,33 @@ def _reached_field_types(
     return found + _reached_field_types(list(own.values()), roots, seen | own.keys())
 
 
+def _helper_parameter_types(helper: object, label: str) -> Iterator[_FieldType]:
+    """Each type a program helper's parameters are written with, at ``<helper>(<parameter>)`` (ADR-DOE-API-001 R19).
+
+    The function read is the one the helper wraps (``@do`` keeps it at ``__wrapped__`` or ``func``).
+    """
+    function = helper
+    while not isinstance(function, types.FunctionType):
+        inner = getattr(function, "__wrapped__", None) or getattr(function, "func", None)
+        if inner is None or inner is function:
+            return
+        function = inner
+    owner = sys.modules.get(function.__module__)
+    namespace = dict(owner.__dict__) if owner is not None else {}
+    for parameter, annotation in _function_annotations(function).items():
+        if parameter != "return":
+            for found in _annotation_types(annotation, namespace):
+                yield _FieldType(found, f"{label}({parameter})")
+
+
 def value_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[ValueType]:
     """The names a package shows that its effect classes' fields are typed with (ADR-DOE-API-001 R2 — effect value types).
 
     The types are read from the field annotations of every effect class the package shows, type arguments
     included (``list[Message]``, ``Mode | None``), and followed through the fields of the value types the
     package defines itself (an ``AgentConfig`` field typed ``AgentMode`` makes ``AgentMode`` a value type too).
+    The parameters of the package's program helpers are read the same way (R19 — doeff-validation's ``validate``
+    takes ``Check`` items): a type only they reach lists those helpers in ``helpers``.
     A name the package shows is a value type when its value is one of those types (the same object).
     Run in the child process, after the package's modules are imported.
     """
@@ -2401,6 +2441,22 @@ def value_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[Va
     reached = _reached_field_types(
         sorted(effects.values(), key=lambda pair: pair[1]), roots, frozenset(effects)
     )
+    by_effects = {id(each.found) for each in reached}
+    by_helper: dict[int, set[tuple[str, str]]] = collections.defaultdict(set)
+    for row in exports:
+        helper = values.get((row["module"], row["name"]), _MISSING)
+        if row["form"] != PROGRAM_HELPER or helper is _MISSING:
+            continue
+        taken = tuple(_helper_parameter_types(helper, row["name"]))
+        own = _own_classes(taken, roots)
+        found = taken + _reached_field_types(
+            sorted(((cls, cls.__name__) for cls in own.values()), key=lambda pair: pair[1]),
+            roots,
+            frozenset(own),
+        )
+        reached += found
+        for each in found:
+            by_helper[id(each.found)].add((row["module"], row["name"]))
     places = {
         key: sorted({each.place for each in group})
         for key, group in itertools.groupby(
@@ -2408,10 +2464,15 @@ def value_types(exports: Sequence[ExportRow], roots: tuple[str, ...]) -> list[Va
         )
     }
     return [
-        ValueType(module=row["module"], name=row["name"], fields=places[id(value)])
+        ValueType(
+            module=row["module"],
+            name=row["name"],
+            fields=places[key],
+            helpers=[] if key in by_effects else [list(pair) for pair in sorted(by_helper[key])],
+        )
         for row in exports
         if row["kind"] in ("other", "unclassified")
-        and id(value := values.get((row["module"], row["name"]), _MISSING)) in places
+        and (key := id(values.get((row["module"], row["name"]), _MISSING))) in places
     ]
 
 

@@ -583,18 +583,6 @@
  },
  "added_names": [
   {
-   "package": "doeff-validation",
-   "module": "doeff_validation",
-   "name": "Check",
-   "reason": "Value type of a validate item (an effect value type of R2 — ADR-DOE-API-001 R19). The function check was removed, the type CheckSpec became the name Check, and the predicate check and the construction of the expression text moved into the type's constructor"
-  },
-  {
-   "package": "doeff-validation",
-   "module": "doeff_validation",
-   "name": "Perform",
-   "reason": "Value type of the mark that runs a Check argument as an effect inside an item (an effect value type of R2 — ADR-DOE-API-001 R19). The function perform was removed, the type Performed became the name Perform, and the check of whether it is a program or an effect moved into the type's constructor"
-  },
-  {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.failover_policy",
    "name": "FailoverWorker",

@@ -9965,6 +9965,20 @@
   {
    "package": "doeff-validation",
    "module": "doeff_validation",
+   "name": "Check",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation",
+   "name": "Perform",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-validation",
+   "module": "doeff_validation",
    "name": "ValidationException",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
