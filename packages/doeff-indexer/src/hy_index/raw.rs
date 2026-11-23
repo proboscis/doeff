@@ -509,6 +509,46 @@ fn direct_in_parallel(files: &[HyFileIndex], compiled: &CompiledCatalog) -> Vec<
     })
 }
 
+/// Pre-compiled raw side-effect catalog for per-file direct evidence annotation (reused across files).
+pub struct CompiledRawCatalog(CompiledCatalog);
+
+impl CompiledRawCatalog {
+    /// Pre-compiles `catalog` once for repeated per-file `annotate_direct` calls.
+    pub fn new(catalog: &RawCatalog) -> Self {
+        Self(CompiledCatalog::new(catalog))
+    }
+
+    /// Populates `definition.raw.direct` for a single file (leaving `via` empty).
+    pub fn annotate_direct(&self, file: &mut HyFileIndex) {
+        let scan = scan_compiled(file, &self.0);
+        for definition in &mut file.definitions {
+            definition.raw = RawMark { direct: direct_evidence(&scan, &definition.full_range), via: Vec::new() };
+        }
+    }
+}
+
+/// Computes `via` raw side-effect evidence across `files` using each definition's already-populated `raw.direct`.
+pub fn annotate_via(files: &mut [HyFileIndex], stops: &BTreeSet<String>) {
+    let direct: Vec<Vec<Vec<RawEvidence>>> =
+        files.iter().map(|file| file.definitions.iter().map(|def| def.raw.direct.clone()).collect()).collect();
+    let mut world = ViaWorld::new(files, direct, stops);
+    let mut all = Vec::with_capacity(files.len());
+    for fi in 0..files.len() {
+        let mut per_file = Vec::with_capacity(files[fi].definitions.len());
+        for di in 0..files[fi].definitions.len() {
+            let mut out = Vec::new();
+            world.collect_via((fi, di), &mut Vec::new(), &mut vec![(fi, di)], &mut out, &mut HashSet::new());
+            per_file.push(out);
+        }
+        all.push(per_file);
+    }
+    for (file, via_per_def) in files.iter_mut().zip(all) {
+        for (definition, via) in file.definitions.iter_mut().zip(via_per_def) {
+            definition.raw.via = via;
+        }
+    }
+}
+
 /// Fills the definitions of all files in the index with direct evidence and (with `with_via`) via-evidence. Via crosses files, so
 /// only a full `--root` run computes it (a single-file or `--file` run leaves it empty with `ViaTrace::Skip`).
 pub fn annotate(files: &mut [HyFileIndex], catalog: &RawCatalog, trace: ViaTrace) {

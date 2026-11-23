@@ -47,7 +47,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
+use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use std::time::UNIX_EPOCH;
 
 mod store;
@@ -62,6 +64,9 @@ const NO_CACHE_ENV: &str = "DOEFF_LINTER_NO_CACHE";
 const DIR_ENV: &str = "DOEFF_LINTER_CACHE_DIR";
 /// Number of table chunks per kind (header comment): rewriting after one file's change touches about 1/SHARDS, and a read opens SHARDS per kind.
 const SHARDS: usize = 16;
+/// On-disk format version of the shared `objects/` store. If `objects/format-version` exists with a different value, the cache is bypassed with a stderr notice before reading.
+const CACHE_FORMAT_VERSION: &str = "1";
+const FORMAT_VERSION_FILE: &str = "format-version";
 
 /// The chunk that holds a file's path from the root (FNV-1a: the same answer across runs and builds).
 fn shard_of(rel: &str) -> usize {
@@ -114,11 +119,72 @@ struct IndexRef<'a> {
     rows: &'a [&'a Row],
 }
 
-/// The linter's own marker (binary size and mtime, version) and the kind of fact.
+/// Whether `commit` is a clean git commit (neither empty, `unknown`, nor `+dirty`).
+fn is_clean_commit(commit: &str) -> bool {
+    !commit.is_empty() && commit != "unknown" && !commit.contains("+dirty")
+}
+
+/// Computes the lowercase hex SHA-256 of a file by streaming in 64 KiB chunks.
+fn sha256_file_hex(path: &Path) -> std::io::Result<String> {
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buf = [0u8; 64 * 1024];
+    loop {
+        let n = file.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Binary key derived from `build_commit` (when clean) or the SHA-256 of the binary contents at `exe_path` (when `unknown` or `+dirty`).
+/// Independent of the binary's path and `mtime_ns`, so identical binaries placed in different venvs/worktrees share `objects/`.
+fn binary_key_for(build_commit: &str, exe_path: Option<&Path>) -> String {
+    if is_clean_commit(build_commit) {
+        return format!("commit-{build_commit}");
+    }
+    if let Some(path) = exe_path {
+        match sha256_file_hex(path) {
+            Ok(hex) => return format!("sha256-{hex}"),
+            Err(err) => {
+                warn_fallback_once(
+                    &format!("exe-hash:{}", path.display()),
+                    &format!("could not hash binary {} ({err}); using unknown identity", path.display()),
+                );
+            }
+        }
+    }
+    "unknown".to_string()
+}
+
+/// Process-wide cached binary key (computed at most once per process).
+fn binary_key() -> &'static str {
+    static KEY: OnceLock<String> = OnceLock::new();
+    KEY.get_or_init(|| binary_key_for(crate::build_info::BUILD_COMMIT, std::env::current_exe().ok().as_deref()))
+}
+
+/// The linter's own marker (format version, crate version, clean commit or binary content SHA-256) and the kind of fact.
 fn identity(kind: &str) -> String {
-    let exe = std::env::current_exe().ok().and_then(|p| stamp_of(&p));
-    let exe = exe.map(|s| format!("{}-{}", s.len, s.mtime_ns)).unwrap_or_else(|| "unknown".to_string());
-    format!("{kind}/{}/{exe}", env!("CARGO_PKG_VERSION"))
+    format!("{kind}/v{CACHE_FORMAT_VERSION}/{}/{}", env!("CARGO_PKG_VERSION"), binary_key())
+}
+
+/// Computes a deterministic SHA-256 hex digest of any serializable rule/group configuration for use as a `per_file_*_keyed` key.
+pub fn hash_key<T: Serialize>(value: &T) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_default();
+    let digest = Sha256::digest(&bytes);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Emits a single-line notice to stderr when falling back away from the cache (regardless of `DOEFF_LINTER_TIMING`), at most once per `dedup_key` per process.
+fn warn_fallback_once(dedup_key: &str, reason: &str) {
+    static WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let set = WARNED.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = set.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.insert(dedup_key.to_string()) {
+        eprintln!("doeff-linter: facts cache: {reason}");
+    }
 }
 
 /// The store of one kind: the per-root table (the one-file path of the previous form; chunks are `shard_path`) and the dir of facts shared across roots.
@@ -129,6 +195,10 @@ struct Place {
     guard: LeakGuard,
 }
 
+fn non_empty_env(name: &str) -> Option<PathBuf> {
+    std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
+}
+
 /// The store's root (header comment: `$DOEFF_LINTER_CACHE_DIR`, `$XDG_CACHE_HOME/doeff-linter`, `~/.cache/doeff-linter`, in that order).
 /// None if `DOEFF_LINTER_NO_CACHE` is set. Every dir directly under the root is subject to the cap cleanup (sweep_over_cap); a store outside the root's dirs
 /// (the commit hook's result for the HEAD tree) also falls under the same cap if it places a dir directly under the root and sets the `used` marker (mark_used).
@@ -137,37 +207,151 @@ pub fn cache_base() -> Option<PathBuf> {
     if std::env::var_os(NO_CACHE_ENV).is_some() {
         return None;
     }
-    std::env::var_os(DIR_ENV)
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(|d| PathBuf::from(d).join("doeff-linter")))
-        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache").join("doeff-linter")))
+    non_empty_env(DIR_ENV)
+        .or_else(|| non_empty_env("XDG_CACHE_HOME").map(|d| d.join("doeff-linter")))
+        .or_else(|| non_empty_env("HOME").map(|h| h.join(".cache").join("doeff-linter")))
+}
+
+/// Resolves the cache base directory, emitting a 1-line stderr notice if caching was not explicitly disabled (`DOEFF_LINTER_NO_CACHE`) but no cache directory is available.
+fn cache_base_or_warn() -> Option<PathBuf> {
+    if std::env::var_os(NO_CACHE_ENV).is_some() {
+        return None;
+    }
+    if let Some(raw) = std::env::var_os(DIR_ENV) {
+        if raw.is_empty() {
+            warn_fallback_once("empty-cache-dir", "DOEFF_LINTER_CACHE_DIR is empty; reading all files without cache");
+            return None;
+        }
+        return Some(PathBuf::from(raw));
+    }
+    if let Some(xdg) = non_empty_env("XDG_CACHE_HOME") {
+        return Some(xdg.join("doeff-linter"));
+    }
+    if let Some(home) = non_empty_env("HOME") {
+        return Some(home.join(".cache").join("doeff-linter"));
+    }
+    warn_fallback_once(
+        "unset-cache-dir",
+        "no cache directory configured (DOEFF_LINTER_CACHE_DIR, XDG_CACHE_HOME, and HOME are unset); reading all files without cache",
+    );
+    None
+}
+
+/// Ensures `base/objects` and `root_dir` exist and are writable, and checks `objects/format-version` before reading any files.
+/// Returns `Err(reason)` if the cache cannot be used (unwritable or incompatible format version).
+fn prepare_cache_dirs(base: &Path, root_dir: &Path) -> Result<(), String> {
+    static PREPARE_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    static PROBE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let _guard = PREPARE_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner());
+    let seq = PROBE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let objects_root = base.join(OBJECTS_DIR);
+    std::fs::create_dir_all(&objects_root).map_err(|e| format!("cache dir {} is not writable ({e})", base.display()))?;
+    std::fs::create_dir_all(root_dir).map_err(|e| format!("cache root dir {} is not writable ({e})", root_dir.display()))?;
+    // Verify writability via a short-lived probe file with a unique name (removed immediately so it leaves no file behind).
+    let probe = objects_root.join(format!(".write-probe.{}.{seq}", std::process::id()));
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&probe)
+        .map_err(|e| format!("cache dir {} is not writable ({e})", base.display()))?;
+    let _ = std::fs::remove_file(&probe);
+    // Verify or initialize the format-version marker directly under `objects/` (ignored by sweep's min_depth(2) listing).
+    let version_file = objects_root.join(FORMAT_VERSION_FILE);
+    if version_file.exists() {
+        let found = std::fs::read_to_string(&version_file)
+            .map_err(|e| format!("cannot read cache format version {} ({e})", version_file.display()))?;
+        if found.trim() != CACHE_FORMAT_VERSION {
+            return Err(format!(
+                "objects format version mismatch in {} (found {:?}, expected {:?})",
+                version_file.display(),
+                found.trim(),
+                CACHE_FORMAT_VERSION
+            ));
+        }
+    } else {
+        let tmp = objects_root.join(format!(".{FORMAT_VERSION_FILE}.{}.{seq}.tmp", std::process::id()));
+        std::fs::write(&tmp, format!("{CACHE_FORMAT_VERSION}\n"))
+            .and_then(|()| std::fs::rename(&tmp, &version_file))
+            .map_err(|e| {
+                let _ = std::fs::remove_file(&tmp);
+                format!("cannot write cache format version {} ({e})", version_file.display())
+            })?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_CACHE_DIR: std::cell::RefCell<Option<Option<PathBuf>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `f` with an explicit cache directory in unit tests (bypassing `cfg!(test)`'s default disabling without mutating global env vars).
+#[cfg(test)]
+pub(crate) fn with_cache_dir_for_test<R>(dir: Option<&Path>, f: impl FnOnce() -> R) -> R {
+    let prev = TEST_CACHE_DIR.with(|cell| cell.replace(Some(dir.map(Path::to_path_buf))));
+    struct Reset(Option<Option<PathBuf>>);
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_CACHE_DIR.with(|cell| {
+                cell.replace(self.0.take());
+            });
+        }
+    }
+    let _reset = Reset(prev);
+    f()
 }
 
 fn place(root: &Path, kind: &str, format: Format) -> Option<Place> {
-    if cfg!(test) {
-        return None;
-    }
-    let base = cache_base()?;
+    #[cfg(test)]
+    let base = {
+        let override_dir = TEST_CACHE_DIR.with(|cell| cell.borrow().clone());
+        match override_dir {
+            None => return None,
+            Some(None) => {
+                warn_fallback_once(
+                    "test-unset-cache-dir",
+                    "no cache directory configured (DOEFF_LINTER_CACHE_DIR is absent); reading all files without cache",
+                );
+                return None;
+            }
+            Some(Some(path)) => path,
+        }
+    };
+    #[cfg(not(test))]
+    let base = cache_base_or_warn()?;
+
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     root.hash(&mut hasher);
     let root_dir = base.join(format!("{:016x}", hasher.finish()));
+    if let Err(reason) = prepare_cache_dirs(&base, &root_dir) {
+        warn_fallback_once(&format!("prepare:{}", base.display()), &format!("{reason}; reading all files without cache"));
+        return None;
+    }
     crate::timing::timed("facts-cache.roots", || tend_roots(&base, &root_dir, root));
     let name = format!("{kind}.{}", format.extension());
     Some(Place { index: root_dir.join(&name), objects: base.join(OBJECTS_DIR).join(name), guard: LeakGuard::of(root) })
 }
 
-fn read_index_shard(file: &Path, identity: &str) -> Vec<Row> {
-    let Ok(bytes) = std::fs::read(file) else { return Vec::new() };
+fn read_index_shard(file: &Path, identity: &str) -> (Vec<Row>, bool) {
+    let Ok(bytes) = std::fs::read(file) else { return (Vec::new(), false) };
     match bincode::deserialize::<Index>(&bytes) {
-        Ok(index) if index.identity == identity => index.rows,
-        _ => Vec::new(),
+        Ok(index) if index.identity == identity => (index.rows, false),
+        Ok(_) => (Vec::new(), false),
+        Err(_) => (Vec::new(), true),
     }
 }
 
 /// Reads all chunks together into one table (unreadable chunks and chunks with a different marker are treated as absent: that chunk's files are looked up again).
 fn load_index(file: &Path, identity: &str) -> HashMap<String, Row> {
-    let shards: Vec<Vec<Row>> = (0..SHARDS).into_par_iter().map(|n| read_index_shard(&shard_path(file, n), identity)).collect();
-    shards.into_iter().flatten().map(|row| (row.rel.clone(), row)).collect()
+    let shards: Vec<(Vec<Row>, bool)> = (0..SHARDS).into_par_iter().map(|n| read_index_shard(&shard_path(file, n), identity)).collect();
+    if shards.iter().any(|(_, corrupt)| *corrupt) {
+        warn_fallback_once(
+            &format!("corrupt-index:{}", file.display()),
+            &format!("corrupt index shard under {}; rebuilding affected entries", file.display()),
+        );
+    }
+    shards.into_iter().flat_map(|(rows, _)| rows).map(|row| (row.rel.clone(), row)).collect()
 }
 
 /// Writes one table chunk. If there are no rows, deletes the chunk's file (so no chunk of the previous form remains).
@@ -206,6 +390,36 @@ where
     per_file_at(place(root, kind, Format::Json).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, kept, Format::Json)
 }
 
+/// Same as `per_file_compact`, but for when the fact depends on `key` as well as the file's contents (e.g., hash of group definitions).
+pub fn per_file_compact_keyed<T, F>(root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+{
+    per_file_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, kept, Format::Compact)
+}
+
+/// Binary form of `per_file_named` with a caller-supplied `key` (e.g., hash of group definitions).
+pub fn per_file_compact_named_keyed<T, F>(root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+{
+    per_file_named_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, no_bind, Format::Compact)
+}
+
+/// Depending on `reach`, look up compact keyed facts with `per_file_compact_keyed` (whole) or `per_file_compact_named_keyed` (named).
+pub fn per_file_compact_keyed_in<T, F>(reach: Reach, root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+{
+    match reach {
+        Reach::Whole => per_file_compact_keyed(root, kind, key, files, compute),
+        Reach::Named => per_file_compact_named_keyed(root, kind, key, files, compute),
+    }
+}
+
 /// Same as `per_file`, but the cache is placed in binary form without field names (header comment; for large kinds).
 pub fn per_file_compact<T, F>(root: &Path, kind: &str, files: &[(String, PathBuf)], compute: F) -> Vec<T>
 where
@@ -240,6 +454,17 @@ where
     G: Fn(T, &str, &Path) -> U + Sync,
 {
     per_file_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/", identity(kind)), files, compute, finish, Format::Compact)
+}
+
+/// Same as `per_file_compact_finished`, keyed by a caller-supplied `key` (e.g. hash of raw catalog).
+pub fn per_file_compact_keyed_finished<T, U, F, G>(root: &Path, kind: &str, key: &str, files: &[(String, PathBuf)], compute: F, finish: G) -> Vec<U>
+where
+    T: Clone + Send + Sync + Serialize + DeserializeOwned,
+    U: Send,
+    F: Fn(&str, &Path) -> Option<T> + Sync,
+    G: Fn(T, &str, &Path) -> U + Sync,
+{
+    per_file_at(place(root, kind, Format::Compact).as_ref(), &format!("{}/{key}", identity(kind)), files, compute, finish, Format::Compact)
 }
 
 fn no_bind<T>(_value: &mut T, _rel: &str, _path: &Path) {}
@@ -292,25 +517,25 @@ where
 
 /// Looks up one file's fact by the hash of its contents (the half of `resolve` that does not use table rows). If the store has it, reads it; otherwise builds it with `compute` and stores it.
 /// If the file changed between reading the contents and building, the key and the fact would disagree, so it is not stored (the answer is the file as of that time).
-fn resolve_by_content<T, F>(place: &Place, identity: &str, rel: &str, path: &Path, compute: &F, format: Format) -> (Option<T>, u64)
+fn resolve_by_content<T, F>(place: &Place, identity: &str, rel: &str, path: &Path, compute: &F, format: Format) -> (Option<T>, u64, bool)
 where
     T: Serialize + DeserializeOwned,
     F: Fn(&str, &Path) -> Option<T>,
 {
-    let Some(stamp) = stamp_of(path) else { return (None, 0) };
-    let Ok(bytes) = std::fs::read(path) else { return (compute(rel, path), 0) };
+    let Some(stamp) = stamp_of(path) else { return (None, 0, false) };
+    let Ok(bytes) = std::fs::read(path) else { return (compute(rel, path), 0, false) };
     let digest = Sha256::digest(&bytes);
     drop(bytes);
     let key = object_key(&[identity.as_bytes(), rel.as_bytes(), digest.as_slice()]);
     if let Some(value) = read_object::<T>(&place.objects, &key, format) {
-        return (Some(value), 0);
+        return (Some(value), 0, true);
     }
     let value = compute(rel, path);
     if stamp_of(path) != Some(stamp) {
-        return (value, 0);
+        return (value, 0, false);
     }
     let written = value.as_ref().map_or(0, |value| write_object(&place.objects, &key, value, format, &place.guard));
-    (value, written)
+    (value, written, false)
 }
 
 /// The body of `per_file_named`: takes the cache's store, marker, and form (store None = do not use the cache).
@@ -326,13 +551,19 @@ where
             value
         })
     };
+    let kind = identity.split('/').next().unwrap_or("facts");
     let Some(place) = place else {
+        crate::timing::count(&format!("facts-cache.{kind}"), "hits", 0);
+        crate::timing::count(&format!("facts-cache.{kind}"), "misses", files.len());
         return files.par_iter().filter_map(|(rel, path)| bound(rel, path, compute(rel, path))).collect();
     };
-    let resolved: Vec<(Option<T>, u64)> =
+    let resolved: Vec<(Option<T>, u64, bool)> =
         crate::timing::timed("facts-cache.named", || files.par_iter().map(|(rel, path)| resolve_by_content(place, identity, rel, path, &compute, format)).collect());
-    note_object_bytes(resolved.iter().map(|(_, written)| *written).sum());
-    files.iter().zip(resolved).filter_map(|((rel, path), (value, _))| bound(rel, path, value)).collect()
+    let hits = resolved.iter().filter(|(_, _, hit)| *hit).count();
+    crate::timing::count(&format!("facts-cache.{kind}"), "hits", hits);
+    crate::timing::count(&format!("facts-cache.{kind}"), "misses", resolved.len() - hits);
+    note_object_bytes(resolved.iter().map(|(_, written, _)| *written).sum());
+    files.iter().zip(resolved).filter_map(|((rel, path), (value, _, _))| bound(rel, path, value)).collect()
 }
 
 /// The form of `per_file_named` for **files whose contents have already been read**: it looks up the contents that a one-file run read while walking the repo's Hy, without re-reading from disk
@@ -429,13 +660,14 @@ where
     value
 }
 
-/// The result of looking up one file: the fact, the table row, whether to rewrite the table chunk, and the bytes of any newly stored fact.
+/// The result of looking up one file: the fact, the table row, whether to rewrite the table chunk, the bytes of any newly stored fact, and whether it was served from cache.
 struct Resolved<T> {
     value: Option<T>,
     /// None = not remembered (an unreadable file, or a file that changed while being read).
     row: Option<Row>,
     changed: bool,
     written: u64,
+    hit: bool,
 }
 
 /// Looks up one file's fact. If the table row's size and mtime equal the current ones, reads the fact by the row's key without reading the contents. Otherwise builds a key from the hash of the contents,
@@ -445,14 +677,14 @@ where
     T: Serialize + DeserializeOwned,
     F: Fn(&str, &Path) -> Option<T>,
 {
-    let skipped = || Resolved { value: None, row: None, changed: cached.is_some(), written: 0 };
+    let skipped = || Resolved { value: None, row: None, changed: cached.is_some(), written: 0, hit: false };
     let Some(stamp) = stamp_of(path) else { return skipped() };
     if let Some(row) = cached.filter(|row| row.stamp == stamp) {
         match &row.object {
-            None => return Resolved { value: None, row: Some(row.clone()), changed: false, written: 0 },
+            None => return Resolved { value: None, row: Some(row.clone()), changed: false, written: 0, hit: true },
             Some(key) => {
                 if let Some(value) = read_object::<T>(&place.objects, key, format) {
-                    return Resolved { value: Some(value), row: Some(row.clone()), changed: false, written: 0 };
+                    return Resolved { value: Some(value), row: Some(row.clone()), changed: false, written: 0, hit: true };
                 }
                 // The fact is absent or broken (deleted by the cap cleanup): look it up again from the contents
             }
@@ -460,26 +692,26 @@ where
     }
     let Ok(bytes) = std::fs::read(path) else {
         // An unreadable file is not remembered; only `compute`'s answer is returned (`compute` decides the answer for an unreadable file)
-        return Resolved { value: compute(rel, path), row: None, changed: cached.is_some(), written: 0 };
+        return Resolved { value: compute(rel, path), row: None, changed: cached.is_some(), written: 0, hit: false };
     };
     let digest = Sha256::digest(&bytes);
     drop(bytes);
     let key = object_key(&[identity.as_bytes(), rel.as_bytes(), digest.as_slice()]);
-    let (value, written) = match read_object::<T>(&place.objects, &key, format) {
-        Some(value) => (Some(value), 0),
+    let (value, written, hit) = match read_object::<T>(&place.objects, &key, format) {
+        Some(value) => (Some(value), 0, true),
         None => {
             let value = compute(rel, path);
             // If the file changed between reading the contents and building, the key and the fact would disagree, so it is not remembered (the answer is the file as of that time).
             if stamp_of(path) != Some(stamp) {
-                return Resolved { value, row: None, changed: cached.is_some(), written: 0 };
+                return Resolved { value, row: None, changed: cached.is_some(), written: 0, hit: false };
             }
             let written = value.as_ref().map_or(0, |value| write_object(&place.objects, &key, value, format, &place.guard));
-            (value, written)
+            (value, written, false)
         }
     };
     let row = Row { rel: rel.to_string(), stamp, object: value.is_some().then_some(key) };
     let changed = cached != Some(&row);
-    Resolved { value, row: Some(row), changed, written }
+    Resolved { value, row: Some(row), changed, written, hit }
 }
 
 /// The body of `per_file`: takes the cache's store, marker, and form (store None = do not use the cache). Each fact is handed to `finish(fact, rel, absolute path)`
@@ -492,7 +724,10 @@ where
     F: Fn(&str, &Path) -> Option<T> + Sync,
     G: Fn(T, &str, &Path) -> U + Sync,
 {
+    let kind = identity.split('/').next().unwrap_or("facts");
     let Some(place) = place else {
+        crate::timing::count(&format!("facts-cache.{kind}"), "hits", 0);
+        crate::timing::count(&format!("facts-cache.{kind}"), "misses", files.len());
         return files.par_iter().filter_map(|(rel, path)| compute(rel, path).map(|value| finish(value, rel, path))).collect();
     };
     let known: HashMap<String, Row> = crate::timing::timed("facts-cache.load", || load_index(&place.index, identity));
@@ -500,11 +735,14 @@ where
         files
             .par_iter()
             .map(|(rel, path)| {
-                let Resolved { value, row, changed, written } = resolve(place, identity, rel, path, known.get(rel), &compute, format);
-                Resolved { value: value.map(|value| finish(value, rel, path)), row, changed, written }
+                let Resolved { value, row, changed, written, hit } = resolve(place, identity, rel, path, known.get(rel), &compute, format);
+                Resolved { value: value.map(|value| finish(value, rel, path)), row, changed, written, hit }
             })
             .collect()
     });
+    let hits = resolved.iter().filter(|r| r.hit).count();
+    crate::timing::count(&format!("facts-cache.{kind}"), "hits", hits);
+    crate::timing::count(&format!("facts-cache.{kind}"), "misses", resolved.len() - hits);
     note_object_bytes(resolved.iter().map(|r| r.written).sum());
     // Chunks to rewrite = the chunks of files whose rows changed, plus the chunks of files that were in the table but are now absent (vanished or unreadable).
     let mut dirty = [false; SHARDS];
@@ -880,6 +1118,110 @@ mod tests {
     /// - What the lookup procedure (this file) uses from store is only the entrances that store and read facts by key. If it had the entrances that list and delete facts (`list`, `remove`), lifetime decisions would be in two places.
     /// - What cleanup (sweep) uses from store is only the entrances that list and delete facts, and the store's names. If it had the entrances that store, read, or make keys for facts, knowledge of the facts' contents would leak.
     /// - store holds no lifetime rules (cap, seconds a root counts as in use, interval between turns).
+    /// Copying the exact same binary to another path with a different mtime must produce the same identity and hit the same objects/.
+    #[test]
+    fn copied_binary_with_different_mtime_shares_identity_and_hits_objects() {
+        const PRINT_ENV: &str = "DOEFF_LINTER_TEST_PRINT_IDENTITY";
+        if std::env::var_os(PRINT_ENV).is_some() {
+            println!("IDENTITY={}", identity("hy-index"));
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let current = std::env::current_exe().unwrap();
+        let bin_a = dir.path().join("venv_a").join("test_bin");
+        let bin_b = dir.path().join("venv_b").join("test_bin");
+        std::fs::create_dir_all(bin_a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(bin_b.parent().unwrap()).unwrap();
+        std::fs::copy(&current, &bin_a).unwrap();
+        std::fs::copy(&current, &bin_b).unwrap();
+        set_mtime(&bin_b, SystemTime::now() + std::time::Duration::from_secs(120));
+
+        let read_id = |bin: &Path| -> String {
+            let out = std::process::Command::new(bin)
+                .args(["--exact", "project::facts_cache::tests::copied_binary_with_different_mtime_shares_identity_and_hits_objects", "--nocapture"])
+                .env(PRINT_ENV, "1")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "child failed: {}", String::from_utf8_lossy(&out.stderr));
+            String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .find_map(|line| line.strip_prefix("IDENTITY=").map(str::to_string))
+                .expect("missing IDENTITY= line")
+        };
+        let id_a = read_id(&bin_a);
+        let id_b = read_id(&bin_b);
+        assert_eq!(id_a, id_b, "copied identical binary at another path/mtime produced a different identity");
+
+        // Verify that the shared objects/ cache hits when the second binary reads a second root with identical file content.
+        let cache_dir = dir.path().join("cache");
+        let tree_a = dir.path().join("tree_a/m.hy");
+        let tree_b = dir.path().join("tree_b/m.hy");
+        std::fs::create_dir_all(tree_a.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(tree_b.parent().unwrap()).unwrap();
+        std::fs::write(&tree_a, "(defk m [] 1)").unwrap();
+        std::fs::write(&tree_b, "(defk m [] 1)").unwrap();
+        set_mtime(&tree_b, SystemTime::now() + std::time::Duration::from_secs(60));
+        let calls = AtomicUsize::new(0);
+        let ans_a = run(&place_of(&cache_dir, "root_a", Format::Compact), &id_a, &[("m.hy".to_string(), tree_a)], &calls, Format::Compact);
+        assert_eq!(calls.swap(0, Ordering::SeqCst), 1);
+        let ans_b = run(&place_of(&cache_dir, "root_b", Format::Compact), &id_b, &[("m.hy".to_string(), tree_b)], &calls, Format::Compact);
+        assert_eq!(ans_b, ans_a);
+        assert_eq!(calls.swap(0, Ordering::SeqCst), 0, "second binary missed objects/ written by first binary");
+    }
+
+    /// Clean BUILD_COMMIT uses commit hash directly; `unknown` and `+dirty` hash binary contents (SHA-256) independently of path/mtime.
+    #[test]
+    fn binary_key_uses_clean_commit_or_sha256_when_unknown_or_dirty() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a/bin");
+        let b = dir.path().join("b/bin");
+        let c = dir.path().join("c/bin");
+        for p in [&a, &b, &c] {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        }
+        std::fs::write(&a, b"binary-payload-1").unwrap();
+        std::fs::write(&b, b"binary-payload-1").unwrap();
+        std::fs::write(&c, b"binary-payload-2").unwrap();
+        set_mtime(&b, SystemTime::now() + std::time::Duration::from_secs(300));
+
+        // Clean commit: uses commit directly, independent of exe path/mtime/contents.
+        assert_eq!(binary_key_for("25c58d658adf", Some(&a)), "commit-25c58d658adf");
+        assert_eq!(binary_key_for("25c58d658adf", Some(&b)), "commit-25c58d658adf");
+        assert_eq!(binary_key_for("25c58d658adf", None), "commit-25c58d658adf");
+
+        // unknown / +dirty: hashes binary contents with SHA-256, independent of path/mtime, sensitive to content.
+        for commit in ["unknown", "25c58d658adf+dirty"] {
+            let ka = binary_key_for(commit, Some(&a));
+            let kb = binary_key_for(commit, Some(&b));
+            let kc = binary_key_for(commit, Some(&c));
+            assert!(ka.starts_with("sha256-"), "expected sha256 key for {commit}, got {ka}");
+            assert_eq!(ka, kb, "identical binary at another path/mtime must share sha256 key for {commit}");
+            assert_ne!(ka, kc, "different binary contents must produce different sha256 key for {commit}");
+        }
+    }
+
+    /// Unwritable cache directories and mismatched objects/format-version are rejected before reading any source files.
+    #[test]
+    fn prepare_cache_dirs_detects_unwritable_and_format_version_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("cache");
+        let root_dir = cache.join("root");
+        // Fresh cache initializes format-version cleanly.
+        assert!(prepare_cache_dirs(&cache, &root_dir).is_ok());
+        assert_eq!(std::fs::read_to_string(cache.join(OBJECTS_DIR).join(FORMAT_VERSION_FILE)).unwrap().trim(), CACHE_FORMAT_VERSION);
+
+        // Wrong format version is rejected with a clear reason.
+        std::fs::write(cache.join(OBJECTS_DIR).join(FORMAT_VERSION_FILE), "999\n").unwrap();
+        let err = prepare_cache_dirs(&cache, &root_dir).unwrap_err();
+        assert!(err.contains("format version mismatch"), "unexpected error: {err}");
+
+        // Regular file in place of cache dir (unwritable) is rejected.
+        let file_as_dir = dir.path().join("not-a-dir");
+        std::fs::write(&file_as_dir, b"x").unwrap();
+        let err = prepare_cache_dirs(&file_as_dir, &file_as_dir.join("root")).unwrap_err();
+        assert!(err.contains("not writable"), "unexpected error: {err}");
+    }
+
     #[test]
     fn each_file_uses_only_the_names_of_the_knowledge_it_owns() {
         let resolve = names_taken_from_store(&code_of(include_str!("facts_cache.rs")));
