@@ -29,7 +29,8 @@
   "The 45 names of doeff-cluster defined in the sections _coordinator, _foundation, _sim, _worker that the inventory reads as fitting an allowed shape (132 rows) were moved to the allowed table at the entry point doeff_cluster, without changing code: 12 conversion function, 3 effect answer type, 16 effect value type, 7 handler setting type, 5 program helper, 2 program-shape builder and type. Allowed rows of the same names at old submodule paths, which the entry rows replace, were removed. cut_lines stays in the group \"Violation — move to an inner module\": the class CutLines it returns is not shown by the package, so it does not fit the builder group.",
   "The 17 names of doeff-cluster that its effects answer (56 rows) were moved to the allowed table at the entry point doeff_cluster as effect answer types, after the effects of _shared/intent/detached_model.hy and warm_model.hy declared their answer types (EffectBase[T]). Allowed rows of the same names at old submodule paths were removed.",
   "The 16 names of doeff-cluster that no other repo imports (57 rows) left the entry point doeff_cluster: its tests and ADRs read them from the modules that define them (R1, R5, R15).",
-  "Two of those 16 names, runtime-env->json and env-marker->json, are imported from the entry point by another repo (the count of callers had not read names spelled with '>'): they are shown at doeff_cluster again and listed in the allowed table as program helpers (R25), so 14 names left the entry point."
+  "Two of those 16 names, runtime-env->json and env-marker->json, are imported from the entry point by another repo (the count of callers had not read names spelled with '>'): they are shown at doeff_cluster again and listed in the allowed table as program helpers (R25), so 14 names left the entry point.",
+  "Handles of doeff-domain left the added names: the field Domain.handlers is typed tuple[Handles | Any, ...] (Handles moved from _introspect to _registry, where Domain is defined), so the inventory reads Handles as an effect value type (R2) and it is listed in the allowed table."
  ],
  "packages": {
   "doeff-adr": {
@@ -789,12 +790,6 @@
    "module": "doeff_core_effects.os_warm_process",
    "name": "input_written",
    "reason": "Name inside the waiting-child handler (the write end of the child's input pipe held by the requester, and its write). Commit 4510d5f40 added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule os_warm_process is still public; it disappears from the inventory when batch 4/6 (process) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-domain",
-   "module": "doeff_domain",
-   "name": "Handles",
-   "reason": "Type of the declaration of the effect that a raw-Python handler placed in the domain's handlers answers (the value of the field Domain of the effect RegisterDomain — an effect value type of R2). The former function handles() is a declaration made at import time that is neither an R3 factory nor an R18 helper, so ADR-DOE-API-001 R29 made it a type, as with R19. It is placed here until the inventory counts R2 types as allowed (R12)"
   },
   {
    "package": "doeff-cluster",

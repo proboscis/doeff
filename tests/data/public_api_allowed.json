@@ -5807,6 +5807,13 @@
   {
    "package": "doeff-domain",
    "module": "doeff_domain",
+   "name": "Handles",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-domain",
+   "module": "doeff_domain",
    "name": "OrphanEffectError",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"

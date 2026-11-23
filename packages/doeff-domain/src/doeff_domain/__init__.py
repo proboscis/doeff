@@ -39,9 +39,6 @@ from doeff_domain._effects import (
 from doeff_domain._effects import (
     domain_registry as domain_registry,
 )
-from doeff_domain._introspect import (
-    Handles as Handles,
-)
 from doeff_domain._registry import (
     Domain as Domain,
 )
@@ -71,6 +68,9 @@ from doeff_domain._registry import (
 )
 from doeff_domain._registry import (
     DuplicateEffectIntroductionError as DuplicateEffectIntroductionError,
+)
+from doeff_domain._registry import (
+    Handles as Handles,
 )
 from doeff_domain._registry import (
     OrphanEffectError as OrphanEffectError,

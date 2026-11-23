@@ -26,12 +26,10 @@ raises — a clause that cannot be resolved must never be silently dropped.
 
 import sys
 from collections.abc import Iterable
-from dataclasses import dataclass
 
 import hy
 
-from doeff import EffectBase
-from doeff_domain._registry import DomainCheckError, DomainDefinitionError
+from doeff_domain._registry import DomainCheckError, Handles
 
 HANDLES_ATTRIBUTE = "__doeff_handles__"
 BODY_ATTRIBUTE = "__doeff_body__"
@@ -40,32 +38,6 @@ BODY_ATTRIBUTE = "__doeff_body__"
 # (ADR-DOE-HY-006); lazy / lazy-val / lazy-var = the older forms (_is-lazy-clause).
 # A quoted body keeps Symbols as written, but mangled spellings are included too, to be safe.
 _LAZY_CLAUSE_HEADS = frozenset({"session", "lazy", "lazy-val", "lazy-var", "lazy_val", "lazy_var"})
-
-
-@dataclass(frozen=True, init=False)
-class Handles:
-    """A domain's handler entry that declares the effect classes the handler answers (D5).
-
-    For raw Python handlers and factories, whose clauses cannot be read: the
-    domain lists ``Handles(lazy_ask, Ask, Local)`` in its ``handlers``. The
-    declaration lives in the domain, so a handler owned by another package is
-    declared without setting anything on it. A participation declaration, not
-    a totality guarantee.
-    """
-
-    handler: object
-    effects: tuple[type, ...]
-
-    def __init__(self, handler: object, *effects: type) -> None:
-        if not effects:
-            raise DomainDefinitionError("Handles(handler, …) requires at least one effect class")
-        for effect in effects:
-            if not isinstance(effect, type) or not issubclass(effect, EffectBase):
-                raise DomainDefinitionError(
-                    f"Handles(handler, …) effects must be EffectBase subclasses, got {effect!r}"
-                )
-        object.__setattr__(self, "handler", handler)
-        object.__setattr__(self, "effects", tuple(effects))
 
 
 def handled_effects(handler, *, vocabulary: Iterable[type] = ()) -> frozenset[type]:

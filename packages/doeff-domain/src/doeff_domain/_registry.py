@@ -97,6 +97,32 @@ class DomainLaw:
                 )
 
 
+@dataclass(frozen=True, init=False)
+class Handles:
+    """A domain's handler entry that declares the effect classes the handler answers (D5).
+
+    For raw Python handlers and factories, whose clauses cannot be read: the
+    domain lists ``Handles(lazy_ask, Ask, Local)`` in its ``handlers``. The
+    declaration lives in the domain, so a handler owned by another package is
+    declared without setting anything on it. A participation declaration, not
+    a totality guarantee.
+    """
+
+    handler: object
+    effects: tuple[type, ...]
+
+    def __init__(self, handler: object, *effects: type) -> None:
+        if not effects:
+            raise DomainDefinitionError("Handles(handler, …) requires at least one effect class")
+        for effect in effects:
+            if not isinstance(effect, type) or not issubclass(effect, EffectBase):
+                raise DomainDefinitionError(
+                    f"Handles(handler, …) effects must be EffectBase subclasses, got {effect!r}"
+                )
+        object.__setattr__(self, "handler", handler)
+        object.__setattr__(self, "effects", tuple(effects))
+
+
 @dataclass(frozen=True)
 class Domain:
     """A vocabulary cohesion unit as pure data (D2)."""
@@ -106,7 +132,9 @@ class Domain:
     effects: tuple[type, ...] = ()
     includes: tuple["Domain", ...] = ()
     terms: tuple[DomainTerm, ...] = ()
-    handlers: tuple[Any, ...] = ()
+    # A raw Python handler or factory is listed as Handles(handler, effect …); a handler that carries a
+    # __doeff_handles__ mark or defhandler clauses is listed as itself (doeff_domain._introspect).
+    handlers: tuple[Handles | Any, ...] = ()
     laws: tuple[DomainLaw, ...] = ()
     adrs: tuple[str, ...] = ()
     docs: str = ""
