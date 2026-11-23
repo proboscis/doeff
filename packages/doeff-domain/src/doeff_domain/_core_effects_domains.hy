@@ -49,7 +49,7 @@
 ;; so the derivation lists the real defhandler-made objects that carry __doeff_body__ (same as _http-production-handler).
 (import doeff_core_effects [aiohttp-ws-link-handler])
 (import doeff_core_effects [scripted-ws-link-handler])
-(import doeff_core_effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice SqlTransaction SqlBatch SetSqlOutage ReadSqlPermitLoad])
+(import doeff_core_effects [SqlQuery SqlInsertRows SqlEnsureTables SqlNotify SqlHangNotice SqlDropNotice SqlTransaction SqlReadTransaction SqlBatch SetSqlOutage ReadSqlPermitLoad])
 (import doeff_core_effects [postgres-sql-handler])
 (import doeff_core_effects [pooled-postgres-sql-handler])
 (import doeff_core_effects [clickhouse-http-sql-handler])
@@ -260,10 +260,10 @@
 
 (defdomain doeff-sql
   :title "SQL vocabulary - generic SQL queries, inserts, and transactions"
-  :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SqlBatch SqlNotify SqlHangNotice SqlDropNotice SetSqlOutage ReadSqlPermitLoad]
+  :effects [SqlQuery SqlInsertRows SqlEnsureTables SqlTransaction SqlReadTransaction SqlBatch SqlNotify SqlHangNotice SqlDropNotice SetSqlOutage ReadSqlPermitLoad]
   :handlers [postgres-sql-handler pooled-postgres-sql-handler clickhouse-http-sql-handler sqlite-sql-handler]
   :adrs ["ADR-DOE-DOMAIN-001"]
-  :docs "postgres-sql-handler (does not block the scheduler - one thread per call) / pooled-postgres-sql-handler (likewise non-blocking - the caller's pool and the scheduler's semaphore) / clickhouse-http-sql-handler (real - likewise non-blocking, one thread per call) and sqlite-sql-handler (no I/O) answer. The responders share the SqlTransaction procedure, run-in-transaction of sql_transaction (it is not a handler itself). Only a transaction that chose the SqlTransaction field batched (default False) batches round trips (the procedure is run-in-batched-transaction). SqlBatch is a bundle that groups the round trips inside it, and it is answered by the scope that run-in-batched-transaction wraps - a bundle emitted inside a non-batched transaction or outside a transaction is refused by name (the ClickHouse responder does not answer it). SetSqlOutage is an effect that switches a simulated outage, and only sqlite-sql-handler answers it. SqlNotify, SqlHangNotice, and SqlDropNotice are LISTEN / NOTIFY doorbells, and only the two PostgreSQL responders answer them. ReadSqlPermitLoad reads the connection-permit load of one database (answer SqlPermitLoad), and only pooled-postgres-sql-handler answers it.")
+  :docs "postgres-sql-handler (does not block the scheduler - one thread per call) / pooled-postgres-sql-handler (likewise non-blocking - the caller's pool and the scheduler's semaphore) / clickhouse-http-sql-handler (real - likewise non-blocking, one thread per call) and sqlite-sql-handler (no I/O) answer. The responders share the SqlTransaction procedure, run-in-transaction of sql_transaction (it is not a handler itself). Only a transaction that chose the SqlTransaction field batched (default False) batches round trips (the procedure is run-in-batched-transaction). SqlBatch is a bundle that groups the round trips inside it, and it is answered by the scope that run-in-batched-transaction wraps - a bundle emitted inside a non-batched transaction or outside a transaction is refused by name (the ClickHouse responder does not answer it). SetSqlOutage is an effect that switches a simulated outage, and only sqlite-sql-handler answers it. SqlNotify, SqlHangNotice, and SqlDropNotice are LISTEN / NOTIFY doorbells, and only the two PostgreSQL responders answer them. ReadSqlPermitLoad reads the connection-permit load of one database (answer SqlPermitLoad), and only pooled-postgres-sql-handler answers it. SqlReadTransaction runs a program of reads in one read-only transaction (BEGIN DEFERRED under query_only), and of the handlers of this domain only sqlite-sql-handler answers it.")
 
 
 (defdomain doeff-process
