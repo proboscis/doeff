@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 
 use doeff_indexer::hy_index::reader::{Delim, Form, Node, ReadIssue, Reader, StrKind};
 use doeff_indexer::hy_index::LineIndex;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use super::names::hy_mangle;
 use super::rule::ProjectRule;
@@ -462,7 +462,7 @@ pub struct TestForms {
 }
 
 /// Where to search for spellings decided not to be used (`:in` — a closed set of 3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum WordPlace {
     /// All lines of the file (including comments, strings, and documents — the default).
