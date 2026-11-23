@@ -83,6 +83,8 @@ pub mod invariants;
 pub mod system_access;
 pub mod record_waits;
 pub mod timed_refetch;
+#[cfg(test)]
+pub(crate) mod perf_counters;
 pub mod program_sleep;
 pub mod test_sleep;
 pub mod system_decls;
@@ -1350,13 +1352,16 @@ fn whole_hy_index(
         Some(_) => crate::timing::timed("hy-index.read-scoped", || {
             paths.iter().filter(|path| in_scope(path, scope)).map(|path| hy_index::index_file(root, path)).collect()
         }),
-        None => crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths)),
+        None => crate::timing::timed("hy-index.read", || cached_hy_files(root, &paths, &raw.catalog)),
     };
     // The walk through calls does not enter definitions declared to bear real I/O (:world-handlers) — the raw side effects beyond them are that definition's responsibility, and
     // there is no point counting that callers reach them (all 39 cases of DOEFF107 were this shape).
     let stops: BTreeSet<String> = settings.architecture.as_ref().map(|a| a.world_definition_targets().into_keys().collect()).unwrap_or_default();
-    let trace = if via && scope.is_none() { hy_index::ViaTrace::Through { stops: &stops } } else { hy_index::ViaTrace::Skip };
-    crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, trace));
+    if scope.is_some() {
+        crate::timing::timed("hy-index.annotate", || hy_index::annotate_raw(&mut files, &raw.catalog, hy_index::ViaTrace::Skip));
+    } else if via {
+        crate::timing::timed("hy-index.annotate", || hy_index::annotate_via(&mut files, &stops));
+    }
     if crate::timing::enabled() {
         hy_index_census(&files);
     }
@@ -1427,21 +1432,50 @@ fn hy_index_census(files: &[HyFileIndex]) {
 /// and after reading, the current root's file path is attached — so that worktrees share the index of a file with the same contents.
 /// Each file's cache shape is turned into the index as soon as it is read (`per_file_compact_finished`): the separately carried fields of every reference and call of
 /// the repo (about 5 million references in agora-controllers) used to stay alive next to the whole index until the last file was read.
-fn cached_hy_files(root: &Path, paths: &[PathBuf]) -> Vec<HyFileIndex> {
+fn cached_hy_files(root: &Path, paths: &[PathBuf], catalog: &hy_index::RawCatalog) -> Vec<HyFileIndex> {
+    let compiled = hy_index::CompiledRawCatalog::new(catalog);
+    let catalog_key = facts_cache::hash_key(catalog);
     let keyed: Vec<(String, PathBuf)> =
         paths.iter().map(|path| (relative_path(root, path).unwrap_or_else(|| path.to_string_lossy().into_owned()), path.clone())).collect();
-    facts_cache::per_file_compact_finished(
+    facts_cache::per_file_compact_keyed_finished(
         root,
         "hy-index",
+        &catalog_key,
         &keyed,
         |_key, path| {
-            let mut cached = hy_index::CachedHyFile::of(hy_index::index_file(root, path));
+            let mut file = hy_index::index_file(root, path);
+            compiled.annotate_direct(&mut file);
+            // After per-file direct raw evidence is populated, every remaining doeff-linter consumer
+            // reads only references/calls with `target.is_some()` and never reads `Call::arguments`.
+            // Pruning unresolved references/calls cuts cached `hy-index.bin` size and warm CPU drastically.
+            file.references.retain(|r| r.target.is_some());
+            file.calls.retain(|c| c.target.is_some());
+            for call in &mut file.calls {
+                call.arguments.clear();
+            }
+            for def in &mut file.definitions {
+                for ev in &mut def.raw.direct {
+                    ev.path.clear();
+                }
+            }
+            let mut cached = hy_index::CachedHyFile::of(file);
             cached.set_path("");
             Some(cached)
         },
         |mut cached, _key, path| {
-            cached.set_path(&path.to_string_lossy());
-            cached.into_file().unwrap_or_else(|broken| hy_index::index_file(root, Path::new(&broken.path)))
+            let path_str = path.to_string_lossy();
+            cached.set_path(&path_str);
+            let mut file = cached.into_file().unwrap_or_else(|broken| {
+                let mut f = hy_index::index_file(root, Path::new(&broken.path));
+                compiled.annotate_direct(&mut f);
+                f
+            });
+            for def in &mut file.definitions {
+                for ev in &mut def.raw.direct {
+                    ev.path = path_str.to_string();
+                }
+            }
+            file
         },
     )
 }

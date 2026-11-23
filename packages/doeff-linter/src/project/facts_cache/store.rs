@@ -16,9 +16,11 @@ use rayon::prelude::*;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
+use std::collections::HashSet;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// The shape of a fact (the header comment).
@@ -123,6 +125,20 @@ impl LeakGuard {
     }
 }
 
+/// Tracks which `objects/<kind>` dirs have already emitted a corrupt-object warning in this process (at most 1 line per dir).
+fn warn_corrupt_object_once(objects: &Path, path: &Path) {
+    static WARNED: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+    let set = WARNED.get_or_init(|| Mutex::new(HashSet::new()));
+    let mut guard = set.lock().unwrap_or_else(|e| e.into_inner());
+    if guard.insert(objects.to_path_buf()) {
+        eprintln!(
+            "doeff-linter: facts cache: corrupt or incompatible object in {} ({}); rebuilding without cached entry",
+            objects.display(),
+            path.display()
+        );
+    }
+}
+
 /// Reads a fact (a missing, broken, or wrongly shaped fact is None — the caller rebuilds it). If the last-used time is older than OBJECT_TOUCH_SECONDS, sets it to now.
 pub(super) fn read_object<T: DeserializeOwned>(objects: &Path, key: &ObjectKey, format: Format) -> Option<T> {
     let path = object_path(objects, key);
@@ -130,7 +146,10 @@ pub(super) fn read_object<T: DeserializeOwned>(objects: &Path, key: &ObjectKey, 
     let meta = file.metadata().ok()?;
     let mut bytes = Vec::with_capacity(usize::try_from(meta.len()).unwrap_or(0));
     file.read_to_end(&mut bytes).ok()?;
-    let value = decode_value(&bytes, format)?;
+    let Some(value) = decode_value(&bytes, format) else {
+        warn_corrupt_object_once(objects, &path);
+        return None;
+    };
     let stale = meta
         .modified()
         .ok()

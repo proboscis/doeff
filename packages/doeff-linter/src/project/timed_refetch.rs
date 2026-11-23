@@ -46,9 +46,11 @@ use std::path::Path;
 
 use doeff_indexer::hy_index::reader::{Form, Node, Prefix, Reader};
 use rayon::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use super::architecture::BusinessFakes;
 use super::business_fakes::production_code;
+use super::facts_cache;
 use super::hy_files;
 use super::paths::relative_path;
 use crate::position::{LineIndex, Range};
@@ -178,7 +180,7 @@ pub fn parse_reason(text: &str) -> Result<Reason, ReasonRefusal> {
 }
 
 /// Judgment of the reason written at the hit's place (none, passed, or the reason for not passing).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ReasonRead {
     Absent,
     Accepted,
@@ -336,48 +338,6 @@ fn children(form: &Form) -> Vec<&Form> {
     }
 }
 
-/// Whether the head segment of any symbol in the form is in names.
-fn mentions(source: &str, form: &Form, names: &BTreeSet<String>) -> bool {
-    match form.node {
-        Node::Symbol => names.contains(&root_name(spelled(source, form))),
-        _ => children(form).into_iter().any(|c| mentions(source, c, names)),
-    }
-}
-
-/// Among the arguments of `(+ a …)`, the symbols that are in names (the whole form tree).
-fn plus_operands(source: &str, form: &Form, names: &BTreeSet<String>, found: &mut BTreeSet<String>) {
-    if let Some(items) = form.paren_items().map(visible) {
-        if head_symbol(source, &items) == Some("+") {
-            for item in &items[1..] {
-                if matches!(item.node, Node::Symbol) {
-                    let name = root_name(spelled(source, item));
-                    if names.contains(&name) {
-                        found.insert(name);
-                    }
-                }
-            }
-        }
-    }
-    for child in children(form) {
-        plus_operands(source, child, names, found);
-    }
-}
-
-fn has_now_plus(source: &str, form: &Form, clocks: &BTreeSet<String>) -> bool {
-    let mut found = BTreeSet::new();
-    plus_operands(source, form, clocks, &mut found);
-    !found.is_empty()
-}
-
-/// Whether it contains the form `(- deadline … now)` (a deadline wait).
-fn deadline_difference(source: &str, form: &Form, clocks: &BTreeSet<String>) -> bool {
-    let own = form.paren_items().map(visible).is_some_and(|items| {
-        head_symbol(source, &items) == Some("-")
-            && items.iter().skip(2).any(|i| matches!(i.node, Node::Symbol) && clocks.contains(&root_name(spelled(source, i))))
-    });
-    own || children(form).into_iter().any(|c| deadline_difference(source, c, clocks))
-}
-
 /// `(match subject pattern body pattern :if condition body …)` as (index of pattern, index of body).
 fn match_clauses(source: &str, items: &[&Form]) -> Vec<(usize, usize)> {
     let mut clauses = Vec::new();
@@ -426,42 +386,454 @@ fn definition_name(source: &str, form: &Form) -> String {
         .unwrap_or_else(|| head.to_string())
 }
 
-/// One top-level definition.
-struct Definition {
+/// Collects the unique `root_name` of all symbols anywhere in `form` (outside quote).
+fn collect_mentioned_roots(source: &str, form: &Form, out: &mut BTreeSet<String>) {
+    if matches!(form.node, Node::Symbol) {
+        out.insert(root_name(spelled(source, form)));
+        return;
+    }
+    for child in children(form) {
+        collect_mentioned_roots(source, child, out);
+    }
+}
+
+/// Collects the unique `root_name` of all symbol operands directly inside any `(+ ...)` in `form`.
+fn collect_plus_syms(source: &str, form: &Form, out: &mut BTreeSet<String>) {
+    if let Some(items) = form.paren_items().map(visible) {
+        if head_symbol(source, &items) == Some("+") {
+            for item in &items[1..] {
+                if matches!(item.node, Node::Symbol) {
+                    out.insert(root_name(spelled(source, item)));
+                }
+            }
+        }
+    }
+    for child in children(form) {
+        collect_plus_syms(source, child, out);
+    }
+}
+
+/// Collects the unique `root_name` of all symbol operands in `items[2..]` of any `(- ...)` in `form` (for `deadline_difference`).
+fn collect_minus_syms(source: &str, form: &Form, out: &mut BTreeSet<String>) {
+    if let Some(items) = form.paren_items().map(visible) {
+        if head_symbol(source, &items) == Some("-") {
+            for item in items.iter().skip(2) {
+                if matches!(item.node, Node::Symbol) {
+                    out.insert(root_name(spelled(source, item)));
+                }
+            }
+        }
+    }
+    for child in children(form) {
+        collect_minus_syms(source, child, out);
+    }
+}
+
+/// Collects the unique `norm(last_segment(head))` of all paren calls inside `form` (for `Index.clock_heads`).
+fn collect_called_last_segments(source: &str, form: &Form, out: &mut BTreeSet<String>) {
+    if let Some(items) = form.paren_items().map(visible) {
+        if let Some(h) = head_symbol(source, &items) {
+            out.insert(norm(last_segment(h)));
+        }
+    }
+    for child in children(form) {
+        collect_called_last_segments(source, child, out);
+    }
+}
+
+/// Compact per-expression summary cached per file so cross-file fixed-point analysis does not need the source or AST.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct ExprSummary {
+    plus_syms: Vec<String>,
+    mentioned_roots: Vec<String>,
+    symbol_root: Option<String>,
+}
+
+impl ExprSummary {
+    fn from_form(source: &str, form: &Form) -> Self {
+        let mut plus = BTreeSet::new();
+        collect_plus_syms(source, form, &mut plus);
+        let mut mentioned = BTreeSet::new();
+        collect_mentioned_roots(source, form, &mut mentioned);
+        let symbol_root = matches!(form.node, Node::Symbol).then(|| root_name(spelled(source, form)));
+        Self {
+            plus_syms: plus.into_iter().collect(),
+            mentioned_roots: mentioned.into_iter().collect(),
+            symbol_root,
+        }
+    }
+
+    fn from_form_nonempty(source: &str, form: &Form) -> Option<Self> {
+        let summary = Self::from_form(source, form);
+        if summary.plus_syms.is_empty() && summary.mentioned_roots.is_empty() && summary.symbol_root.is_none() {
+            None
+        } else {
+            Some(summary)
+        }
+    }
+
+    fn has_now_plus(&self, clocks: &BTreeSet<String>) -> bool {
+        self.plus_syms.iter().any(|s| clocks.contains(s))
+    }
+
+    fn mentions(&self, names: &BTreeSet<String>) -> bool {
+        self.mentioned_roots.iter().any(|s| names.contains(s))
+    }
+}
+
+/// One extracted binding inside a definition (cached per file).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BindingFact {
+    name: String,
+    in_loop: bool,
+    call_head_last_norm: Option<String>,
+    single_arg_root: Option<String>,
+    plus_syms: Vec<String>,
+    mentioned_roots: Vec<String>,
+    has_retry: bool,
+}
+
+/// Hy core special forms & operators that cannot be a callable helper (`defk`/`defn`/...) or handler effect; skipped from `CallAction::Call` when they lack `:poll-seconds`.
+const SYNTAX_HEADS: &[&str] = &[
+    "<-", ":=", "=", "!=", "<", ">", "<=", ">=", "+", "-", "*", "/", "//", "%", "if", "when", "unless", "cond", "match", "while", "loop", "for", "lfor", "dfor", "sfor", "gfor",
+    "do", "fn", "fnk", "let", "with", "with/a", "try", "except", "finally", "and", "or", "not", "is", "is-not", "in", "not-in", "setv", "val", "var", "setx", "import", "require",
+    "return", "raise", "assert", "yield", "yield-from", "await", "quote", "quasiquote", "unquote", "unquote-splice", "get", "cut", "del", "global", "nonlocal", "break", "continue",
+    "pass", "comment", "chainc", "unpack-iterable", "unpack-mapping", "unpack-generalized", "#_", "defk", "defn", "deff", "defp", "defn/a", "defclass", "defrecord", "defwire",
+    "defhandler", "defeffect", "defsystem", "defmacro", "deftest", "defenum", "deftype", "defpipeline", "defworkflow", "defphase", "defadr", "defsemgrep", "defmain", "defmcp-tool",
+    "law",
+];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum CallAction {
+    Sleep {
+        minus_syms: Vec<String>,
+        line_text: String,
+    },
+    Timer {
+        tag_norm: Option<String>,
+        at: Option<ExprSummary>,
+        line_text: String,
+    },
+    Call {
+        positional: Vec<Option<ExprSummary>>,
+        /// First occurrence of each normed keyword (`:foo` -> `"foo"`) and its non-empty value summary (`None` if literal/trailing).
+        keywords: Vec<(String, Option<ExprSummary>)>,
+    },
+    PollOnly,
+}
+
+impl CallAction {
+    fn call_argument<'a>(positional: &'a [Option<ExprSummary>], keywords: &'a [(String, Option<ExprSummary>)], position: usize, param: &str) -> Option<&'a ExprSummary> {
+        let kw = norm(param);
+        if let Some((_, val)) = keywords.iter().find(|(k, _)| *k == kw) {
+            return val.as_ref();
+        }
+        positional.get(position).and_then(Option::as_ref)
+    }
+
+    fn line_text(&self) -> &str {
+        match self {
+            CallAction::Sleep { line_text, .. } | CallAction::Timer { line_text, .. } => line_text.as_str(),
+            CallAction::Call { .. } | CallAction::PollOnly => "",
+        }
+    }
+}
+
+/// One extracted call site inside a definition (cached per file).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CallFact {
+    start: usize,
+    range: Range,
+    head: String,
+    in_loop: bool,
+    retry_hint: bool,
+    form_has_retry: bool,
+    has_nonzero_poll_seconds: bool,
+    reason_periodic: ReasonRead,
+    reason_retry: ReasonRead,
+    action: CallAction,
+}
+
+/// One extracted top-level definition (cached per file).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DefFact {
     name: String,
     key: String,
     params: Vec<String>,
     callable: bool,
-    form: usize,
+    recursive: bool,
+    called_last_segments: Vec<String>,
+    bindings: Vec<BindingFact>,
+    calls: Vec<CallFact>,
+    /// For `defhandler`: `(norm_effect_last_segment, unconditional_head_starts)`.
+    handler_clauses: Vec<(String, Vec<usize>)>,
 }
 
-/// One file of the population (the forms read, the definitions, and import name -> module).
-struct Unit {
+/// Per-file extracted facts cached in `facts_cache` (path-free so `objects/` is shared across worktrees).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedUnit {
     rel: String,
-    source: String,
-    forms: Vec<Form>,
-    definitions: Vec<Definition>,
     by_key: HashMap<String, usize>,
     imports: HashMap<String, String>,
+    top_constants: Vec<String>,
+    tag_branches: Vec<(Vec<String>, bool)>,
+    definitions: Vec<DefFact>,
 }
 
-impl Unit {
-    fn read(rel: String, source: String) -> Unit {
-        let forms = Reader::new(&source, 0, source.len()).read_all();
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum CachedTimedFile {
+    Unit(CachedUnit),
+    Error(String),
+}
+
+fn extract_calls(
+    source: &str,
+    source_lines: &[&str],
+    line_index: &LineIndex,
+    has_reason_marker: bool,
+    recursive: bool,
+    form: &Form,
+    in_loop: bool,
+    retry_hint: bool,
+    out: &mut Vec<CallFact>,
+) {
+    let Some(items) = form.paren_items().map(visible) else {
+        for child in children(form) {
+            extract_calls(source, source_lines, line_index, has_reason_marker, recursive, child, in_loop, retry_hint, out);
+        }
+        return;
+    };
+    let head = head_symbol(source, &items);
+    if head.is_some_and(spawns) {
+        return;
+    }
+    if let Some(head) = head {
+        let args = &items[1..];
+        if !args.first().is_some_and(|f| f.bracket_items().is_some()) {
+            let name = last_segment(head);
+            let has_nonzero_poll_seconds = args
+                .iter()
+                .position(|f| is_keyword(source, f, POLL_KEY))
+                .is_some_and(|at| args.get(at + 1).is_some_and(|v| !literal_zero(source, v)) && !head.starts_with("def"));
+
+            let sleep_position = SLEEPS
+                .iter()
+                .find(|(sleep, _)| *sleep == name)
+                .map(|(_, at)| *at)
+                .or_else(|| (name == "sleep" && head.contains('.')).then_some(0));
+
+            let repeated = in_loop || recursive;
+            let range = line_index.range(items[0].span.start, items[0].span.end);
+            let make_line_text = || {
+                if !repeated {
+                    source_lines
+                        .get(range.start.line as usize)
+                        .copied()
+                        .unwrap_or("")
+                        .trim()
+                        .chars()
+                        .take(80)
+                        .collect()
+                } else {
+                    String::new()
+                }
+            };
+            let action = if let Some(position) = sleep_position {
+                let seconds = argument(source, args, position, None);
+                if let Some(s) = seconds.filter(|s| !literal_zero(source, s)) {
+                    let mut minus = BTreeSet::new();
+                    collect_minus_syms(source, s, &mut minus);
+                    Some(CallAction::Sleep { minus_syms: minus.into_iter().collect(), line_text: make_line_text() })
+                } else if has_nonzero_poll_seconds {
+                    Some(CallAction::PollOnly)
+                } else {
+                    None
+                }
+            } else if TIMER_SINKS.contains(&name) {
+                let tag_norm = argument(source, args, 0, Some(":tag"))
+                    .filter(|t| matches!(t.node, Node::Symbol))
+                    .map(|t| norm(last_segment(spelled(source, t))));
+                let at = argument(source, args, TIMER_AT_POSITION, Some(":at")).map(|f| ExprSummary::from_form(source, f));
+                if at.is_some() || has_nonzero_poll_seconds {
+                    Some(CallAction::Timer { tag_norm, at, line_text: make_line_text() })
+                } else {
+                    None
+                }
+            } else if SYNTAX_HEADS.contains(&head) {
+                has_nonzero_poll_seconds.then_some(CallAction::PollOnly)
+            } else {
+                let mut positional: Vec<Option<ExprSummary>> = Vec::new();
+                let mut keywords: Vec<(String, Option<ExprSummary>)> = Vec::new();
+                let mut i = 0;
+                while i < args.len() {
+                    if matches!(args[i].node, Node::Keyword) {
+                        let kw = norm(spelled(source, args[i]).trim_start_matches(':'));
+                        if !keywords.iter().any(|(k, _)| k == &kw) {
+                            let val = args.get(i + 1).and_then(|v| ExprSummary::from_form_nonempty(source, v));
+                            keywords.push((kw, val));
+                        }
+                        i += 2;
+                    } else {
+                        positional.push(ExprSummary::from_form_nonempty(source, args[i]));
+                        i += 1;
+                    }
+                }
+                while positional.last().is_some_and(Option::is_none) {
+                    positional.pop();
+                }
+                Some(CallAction::Call { positional, keywords })
+            };
+
+            if let Some(action) = action {
+                let (reason_periodic, reason_retry) = if has_reason_marker && (repeated || has_nonzero_poll_seconds) {
+                    (
+                        reason_at(source, range.start.line as usize, Refetch::Periodic),
+                        reason_at(source, range.start.line as usize, Refetch::Retry),
+                    )
+                } else {
+                    (ReasonRead::Absent, ReasonRead::Absent)
+                };
+                out.push(CallFact {
+                    start: items[0].span.start,
+                    range,
+                    head: head.to_string(),
+                    in_loop,
+                    retry_hint,
+                    form_has_retry: has_retry_word(spelled(source, form)),
+                    has_nonzero_poll_seconds,
+                    reason_periodic,
+                    reason_retry,
+                    action,
+                });
+            }
+        }
+    }
+    let start = head.and_then(|h| REPEATING.iter().find(|(name, _)| *name == h)).map(|(_, from)| *from);
+    let clauses = if head == Some("match") { match_clauses(source, &items) } else { Vec::new() };
+    for (at, item) in items.iter().enumerate() {
+        if clauses.iter().any(|(pattern, _)| *pattern == at) {
+            continue;
+        }
+        let pattern_hint = clauses.iter().find(|(_, body)| *body == at).is_some_and(|(pattern, _)| has_retry_word(spelled(source, items[*pattern])));
+        let inside = in_loop || start.is_some_and(|from| at >= from);
+        extract_calls(source, source_lines, line_index, has_reason_marker, recursive, item, inside, retry_hint || pattern_hint, out);
+    }
+}
+
+impl CachedUnit {
+    fn extract(rel: String, source: &str) -> CachedUnit {
+        #[cfg(test)]
+        super::perf_counters::record_parse("timed_refetch", &rel);
+        let forms = Reader::new(source, 0, source.len()).read_all();
+        let line_index = LineIndex::new(source);
+        let source_lines: Vec<&str> = source.lines().collect();
+        let has_reason_marker = source.contains(REASON_MARKER);
+
         let mut definitions = Vec::new();
         let mut imports = HashMap::new();
-        for (at, form) in forms.iter().enumerate() {
+        let mut top_constants = Vec::new();
+        let mut tag_branches_out = Vec::new();
+
+        for form in &forms {
+            tag_branches(source, form, &mut |tested, body| {
+                let exits = body.paren_items().map(visible).is_some_and(|items| head_symbol(source, &items) == Some("stop"));
+                tag_branches_out.push((tested, exits));
+            });
             let items = form.paren_items().map(visible).unwrap_or_default();
-            let head = head_symbol(&source, &items).unwrap_or("");
+            let head = head_symbol(source, &items).unwrap_or("");
             if head == "import" {
-                read_imports(&source, &items[1..], &mut imports);
+                read_imports(source, &items[1..], &mut imports);
             }
-            let name = definition_name(&source, form);
+            if matches!(head, "val" | "setv") {
+                if let Some(sym) = items.get(1).filter(|f| matches!(f.node, Node::Symbol)) {
+                    top_constants.push(norm(spelled(source, sym)));
+                }
+            }
+            let name = definition_name(source, form);
+            let key = norm(&name);
             let callable = CALLABLE_HEADS.contains(&head);
-            definitions.push(Definition { key: norm(&name), params: if callable { parameters(&source, &items) } else { Vec::new() }, name, callable, form: at });
+            let params = if callable { parameters(source, &items) } else { Vec::new() };
+            let recursive = callable && calls_itself(source, form, &key, true);
+
+            let called_last_segments = if callable && params.is_empty() {
+                let mut called = BTreeSet::new();
+                collect_called_last_segments(source, form, &mut called);
+                called.into_iter().collect()
+            } else {
+                Vec::new()
+            };
+
+            let mut raw_binds = Vec::new();
+            bindings(source, form, false, &mut raw_binds);
+            let binding_facts: Vec<BindingFact> = raw_binds
+                .into_iter()
+                .map(|b| {
+                    let (call_head_last_norm, single_arg_root) = match b.expr.paren_items().map(visible) {
+                        Some(b_items) => match head_symbol(source, &b_items) {
+                            Some(h) => {
+                                let non_kw: Vec<&&Form> = b_items[1..].iter().filter(|f| !matches!(f.node, Node::Keyword)).collect();
+                                let single = (non_kw.len() == 1 && matches!(non_kw[0].node, Node::Symbol)).then(|| root_name(spelled(source, non_kw[0])));
+                                (Some(norm(last_segment(h))), single)
+                            }
+                            None => (None, None),
+                        },
+                        None => (None, None),
+                    };
+                    let mut plus = BTreeSet::new();
+                    collect_plus_syms(source, b.expr, &mut plus);
+                    let mut mentioned = BTreeSet::new();
+                    collect_mentioned_roots(source, b.expr, &mut mentioned);
+                    BindingFact {
+                        name: b.name,
+                        in_loop: b.in_loop,
+                        call_head_last_norm,
+                        single_arg_root,
+                        plus_syms: plus.into_iter().collect(),
+                        mentioned_roots: mentioned.into_iter().collect(),
+                        has_retry: has_retry_word(spelled(source, b.expr)),
+                    }
+                })
+                .collect();
+
+            let mut calls = Vec::new();
+            extract_calls(source, &source_lines, &line_index, has_reason_marker, recursive, form, false, false, &mut calls);
+
+            let handler_clauses = if head == "defhandler" {
+                items
+                    .iter()
+                    .skip(2)
+                    .filter_map(|clause| {
+                        let parts = clause.paren_items().map(visible)?;
+                        let effect = head_symbol(source, &parts)?;
+                        parts.get(1).and_then(|f| f.bracket_items())?;
+                        if RECORD_WAITS.contains(&last_segment(effect)) {
+                            return None;
+                        }
+                        let mut plain = BTreeSet::new();
+                        for statement in &parts[2..] {
+                            unconditional_heads(source, statement, &mut plain);
+                        }
+                        (!plain.is_empty()).then(|| (norm(last_segment(effect)), plain.into_iter().collect()))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+
+            definitions.push(DefFact {
+                name,
+                key,
+                params,
+                callable,
+                recursive,
+                called_last_segments,
+                bindings: binding_facts,
+                calls,
+                handler_clauses,
+            });
         }
         let by_key = definitions.iter().enumerate().filter(|(_, d)| d.callable).map(|(at, d)| (d.key.clone(), at)).collect();
-        Unit { rel, source, forms, definitions, by_key, imports }
+        CachedUnit { rel, by_key, imports, top_constants, tag_branches: tag_branches_out, definitions }
     }
 }
 
@@ -519,7 +891,7 @@ struct Index {
 }
 
 impl Index {
-    fn new(units: &[Unit]) -> Index {
+    fn new(units: &[CachedUnit]) -> Index {
         let mut modules: HashMap<String, Vec<usize>> = HashMap::new();
         let mut unique: HashMap<String, Vec<DefId>> = HashMap::new();
         for (file, unit) in units.iter().enumerate() {
@@ -540,7 +912,7 @@ impl Index {
                     unit.definitions
                         .iter()
                         .filter(|d| d.callable && d.params.is_empty() && !clock_heads.contains(&d.key))
-                        .filter(|d| calls_any(&unit.source, &unit.forms[d.form], &clock_heads))
+                        .filter(|d| d.called_last_segments.iter().any(|h| clock_heads.contains(h)))
                         .map(|d| d.key.clone())
                 })
                 .collect();
@@ -553,7 +925,7 @@ impl Index {
     }
 
     /// The definition that the call head's spelling in file `file` points to.
-    fn resolve(&self, units: &[Unit], file: usize, head: &str) -> Option<DefId> {
+    fn resolve(&self, units: &[CachedUnit], file: usize, head: &str) -> Option<DefId> {
         let key = norm(last_segment(head));
         let unit = &units[file];
         if !head.contains('.') {
@@ -573,32 +945,17 @@ impl Index {
 /// `(if (= tag name) body …)`) exists in the population and whose bodies are all a `(stop …)` that exits the repetition. A deadline for the upper-bound seconds of waiting for a stop signal
 /// only cuts the wait short and exits when it arrives, and is not a repetition that fetches the same thing. A tag that has even one body that
 /// repeats the same read after it arrives is not excluded.
-fn stopping_tags(units: &[Unit]) -> BTreeSet<String> {
+fn stopping_tags(units: &[CachedUnit]) -> BTreeSet<String> {
     let mut seen: HashMap<String, bool> = HashMap::new();
     for unit in units {
-        let source = unit.source.as_str();
-        for form in &unit.forms {
-            tag_branches(source, form, &mut |tested, body| {
-                let exits = body.paren_items().map(visible).is_some_and(|items| head_symbol(source, &items) == Some("stop"));
-                for name in tested {
-                    *seen.entry(name).or_insert(true) &= exits;
-                }
-            });
+        for (tested, exits) in &unit.tag_branches {
+            for name in tested {
+                *seen.entry(name.clone()).or_insert(true) &= *exits;
+            }
         }
     }
-    let constants: BTreeSet<String> = units
-        .iter()
-        .flat_map(|unit| {
-            let source = unit.source.as_str();
-            unit.forms.iter().filter_map(move |form| {
-                let items = form.paren_items().map(visible)?;
-                let head = head_symbol(source, &items)?;
-                let name = items.get(1).filter(|f| matches!(f.node, Node::Symbol) && matches!(head, "val" | "setv"))?;
-                Some(norm(spelled(source, name)))
-            })
-        })
-        .collect();
-    seen.into_iter().filter(|(name, exits)| *exits && constants.contains(name)).map(|(name, _)| name).collect()
+    let constants: BTreeSet<&str> = units.iter().flat_map(|unit| unit.top_constants.iter().map(String::as_str)).collect();
+    seen.into_iter().filter(|(name, exits)| *exits && constants.contains(name.as_str())).map(|(name, _)| name).collect()
 }
 
 /// Passes to visit, from a form tree, the (name of the compared symbol [comparison form, last segment], body) of branches compared with `(= a b)` (the pairs of `cond` and the then of `if`).
@@ -624,8 +981,8 @@ fn tag_branches<'f>(source: &str, form: &'f Form, visit: &mut impl FnMut(Vec<Str
 /// The wait spellings inside one definition.
 #[derive(Debug, Clone)]
 struct Site {
+    call_idx: usize,
     start: usize,
-    end: usize,
     head: String,
     kind: SiteKind,
     refetch: Refetch,
@@ -633,192 +990,241 @@ struct Site {
 }
 
 /// The result of reading one definition.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Facts {
     sites: Vec<Site>,
     passthrough: BTreeSet<(usize, String)>,
     now_param: BTreeSet<(usize, String, Refetch)>,
 }
 
-/// The tool that walks one definition.
-struct Walk<'a> {
-    units: &'a [Unit],
-    index: &'a Index,
-    helpers: &'a Helpers,
-    file: usize,
-    me: DefId,
-    params: &'a [String],
-    /// Names of now read from all the bindings in the definition (used for wait spellings outside a repetition).
+/// Per-definition invariants computed once from `CachedUnit` + `Index` (invariant across all rounds of `settle`).
+struct PreparedDef {
+    id: DefId,
     anywhere: Moments,
-    /// Names of now read from only the bindings inside a repetition (used for wait spellings inside a repetition — a time computed from a now read once before the repetition is
-    /// the same time every iteration and is not a form that refetches on time).
     in_loop: Moments,
-    recursive: bool,
     derived: Vec<BTreeSet<String>>,
-    /// Per parameter, a name bound from `(+ parameter …)` (the `at` of `(<- at (time-of-epoch-ms (+ now retry-ms)))` — the time of a helper that takes a now).
     plus_derived: Vec<BTreeSet<String>>,
-    facts: Facts,
+    /// Direct facts (PollSeconds, Sleep, Timer, plus direct passthrough/now_param) that do not depend on `Helpers`.
+    direct: Facts,
+    /// Indices into `def.calls` for `CallAction::Call`, paired with resolved target (`Some(DefId)`) or unresolved effect name (`None`, `norm(last_segment)`).
+    resolved_calls: Vec<(usize, Option<DefId>, Option<String>)>,
 }
 
-impl<'a> Walk<'a> {
-    fn source(&self) -> &'a str {
-        &self.units[self.file].source
-    }
-
+impl PreparedDef {
     fn moments(&self, in_loop: bool) -> &Moments {
         if in_loop { &self.in_loop } else { &self.anywhere }
     }
 
-    /// Judges a time expression `at` (Some if now + seconds — the content is whether the bound expression claims refetching after being unreachable). Collects the parameters that take a now or a time.
-    fn time_argument(&mut self, at: &Form, kind: Refetch, in_loop: bool) -> Option<bool> {
-        let source = self.source();
+    fn time_argument(&self, params: &[String], at: &ExprSummary, kind: Refetch, in_loop: bool, facts: &mut Facts) -> Option<bool> {
         let moments = self.moments(in_loop);
-        if has_now_plus(source, at, &moments.clocks) || mentions(source, at, &moments.relative) {
-            return Some(mentions(source, at, &moments.retry_named));
+        if at.has_now_plus(&moments.clocks) || at.mentions(&moments.relative) {
+            return Some(at.mentions(&moments.retry_named));
         }
-        let params: BTreeSet<String> = self.params.iter().filter(|p| !self.anywhere.clocks.contains(*p)).cloned().collect();
-        let mut plus = BTreeSet::new();
-        plus_operands(source, at, &params, &mut plus);
-        for (index, name) in self.params.iter().enumerate() {
-            if params.contains(name) && mentions(source, at, &self.plus_derived[index]) {
-                plus.insert(name.clone());
+        let non_clock_params: BTreeSet<&str> = params.iter().filter(|p| !self.anywhere.clocks.contains(*p)).map(String::as_str).collect();
+        let mut plus: BTreeSet<&str> = at.plus_syms.iter().map(String::as_str).filter(|s| non_clock_params.contains(s)).collect();
+        for (index, name) in params.iter().enumerate() {
+            if non_clock_params.contains(name.as_str()) && at.mentions(&self.plus_derived[index]) {
+                plus.insert(name.as_str());
             }
         }
         if !plus.is_empty() {
-            for (index, name) in self.params.iter().enumerate().filter(|(_, n)| plus.contains(*n)) {
-                self.facts.now_param.insert((index, name.clone(), kind));
+            for (index, name) in params.iter().enumerate().filter(|(_, n)| plus.contains(n.as_str())) {
+                facts.now_param.insert((index, name.clone(), kind));
             }
             return None;
         }
-        for (index, name) in self.params.iter().enumerate() {
-            if mentions(source, at, &self.derived[index]) {
-                self.facts.passthrough.insert((index, name.clone()));
+        for (index, name) in params.iter().enumerate() {
+            if at.mentions(&self.derived[index]) {
+                facts.passthrough.insert((index, name.clone()));
             }
         }
         None
     }
 
-    fn walk(&mut self, form: &Form, in_loop: bool, retry_hint: bool) {
-        let source = self.source();
-        let Some(items) = form.paren_items().map(visible) else {
-            for child in children(form) {
-                self.walk(child, in_loop, retry_hint);
-            }
-            return;
+    fn build(units: &[CachedUnit], index: &Index, id: DefId) -> Self {
+        let def = &units[id.0].definitions[id.1];
+        let anywhere = Moments::read(&index.clock_heads, def.bindings.iter());
+        let in_loop = Moments::read(&index.clock_heads, def.bindings.iter().filter(|b| b.in_loop));
+        let plus_derived = def
+            .params
+            .iter()
+            .map(|param| {
+                let mut names = BTreeSet::new();
+                for bind in &def.bindings {
+                    if bind.plus_syms.iter().any(|s| s == param) || bind.mentioned_roots.iter().any(|s| names.contains(s)) {
+                        names.insert(bind.name.clone());
+                    }
+                }
+                names
+            })
+            .collect();
+        let derived = def
+            .params
+            .iter()
+            .map(|param| {
+                let mut names: BTreeSet<String> = [param.clone()].into();
+                for bind in &def.bindings {
+                    if bind.mentioned_roots.iter().any(|s| names.contains(s)) {
+                        names.insert(bind.name.clone());
+                    }
+                }
+                names
+            })
+            .collect();
+
+        let mut prep = PreparedDef {
+            id,
+            anywhere,
+            in_loop,
+            derived,
+            plus_derived,
+            direct: Facts::default(),
+            resolved_calls: Vec::new(),
         };
-        let head = head_symbol(source, &items).map(str::to_string);
-        if head.as_deref().is_some_and(spawns) {
-            // A wait inside a Program handed to another task is that task's single wait — it is neither the passing side's repetition nor the passing side's wait (if the handed-over
-            // Program repeats by itself, it is matched inside that definition).
-            return;
-        }
-        if let Some(head) = head.as_deref() {
-            self.site_of(form, &items, head, in_loop, retry_hint);
-        }
-        let start = head.as_deref().and_then(|h| REPEATING.iter().find(|(name, _)| *name == h)).map(|(_, from)| *from);
-        let clauses = if head.as_deref() == Some("match") { match_clauses(source, &items) } else { Vec::new() };
-        for (at, item) in items.iter().enumerate() {
-            if clauses.iter().any(|(pattern, _)| *pattern == at) {
-                continue;
-            }
-            let pattern_hint =
-                clauses.iter().find(|(_, body)| *body == at).is_some_and(|(pattern, _)| has_retry_word(spelled(source, items[*pattern])));
-            let inside = in_loop || start.is_some_and(|from| at >= from);
-            self.walk(item, inside, retry_hint || pattern_hint);
-        }
-    }
 
-    fn push(&mut self, at: &Form, head: &str, kind: SiteKind, refetch: Refetch, repeated: bool) {
-        self.facts.sites.push(Site { start: at.span.start, end: at.span.end, head: last_segment(head).to_string(), kind, refetch, repeated });
-    }
-
-    /// Whether a call is a wait spelling.
-    fn site_of(&mut self, form: &Form, items: &[&Form], head: &str, in_loop: bool, retry_hint: bool) {
-        let source = self.source();
-        let repeated = in_loop || self.recursive;
-        let name = last_segment(head);
-        let args = &items[1..];
-        if args.first().is_some_and(|f| f.bracket_items().is_some()) {
-            // The head of a handler clause (`(Delay [seconds] …)`) and the parameter list of `fn` / `let` — not calls.
-            return;
-        }
-        let named_retry = retry_hint || has_retry_word(spelled(source, form));
+        let mut direct = Facts::default();
         let kind_of = |retry: bool| if retry { Refetch::Retry } else { Refetch::Periodic };
-        if let Some(at) = args.iter().position(|f| is_keyword(source, f, POLL_KEY)) {
-            if args.get(at + 1).is_some_and(|v| !literal_zero(source, v)) && !head.starts_with("def") {
-                self.push(items[0], head, SiteKind::PollSeconds, Refetch::Periodic, repeated);
+        for (ci, call) in def.calls.iter().enumerate() {
+            let repeated = call.in_loop || def.recursive;
+            let named_retry = call.retry_hint || call.form_has_retry;
+            if call.has_nonzero_poll_seconds {
+                direct.sites.push(Site {
+                    call_idx: ci,
+                    start: call.start,
+                    head: last_segment(&call.head).to_string(),
+                    kind: SiteKind::PollSeconds,
+                    refetch: Refetch::Periodic,
+                    repeated,
+                });
+            }
+            match &call.action {
+                CallAction::Sleep { minus_syms, .. } => {
+                    if !minus_syms.iter().any(|s| prep.anywhere.clocks.contains(s)) {
+                        direct.sites.push(Site {
+                            call_idx: ci,
+                            start: call.start,
+                            head: last_segment(&call.head).to_string(),
+                            kind: SiteKind::Sleep,
+                            refetch: kind_of(named_retry),
+                            repeated,
+                        });
+                    }
+                }
+                CallAction::Timer { tag_norm, at, .. } => {
+                    if tag_norm.as_deref().is_some_and(|t| index.stopping_tags.contains(t)) {
+                        continue;
+                    }
+                    if let Some(at_expr) = at {
+                        if let Some(bound_retry) = prep.time_argument(&def.params, at_expr, kind_of(named_retry), call.in_loop, &mut direct) {
+                            direct.sites.push(Site {
+                                call_idx: ci,
+                                start: call.start,
+                                head: last_segment(&call.head).to_string(),
+                                kind: SiteKind::Timer,
+                                refetch: kind_of(named_retry || bound_retry),
+                                repeated,
+                            });
+                        }
+                    }
+                }
+                CallAction::Call { .. } => {
+                    let target = index.resolve(units, id.0, &call.head);
+                    if target == Some(id) {
+                        continue;
+                    }
+                    let effect_key = target.is_none().then(|| norm(last_segment(&call.head)));
+                    prep.resolved_calls.push((ci, target, effect_key));
+                }
+                CallAction::PollOnly => {}
             }
         }
-        let sleep_position =
-            SLEEPS.iter().find(|(sleep, _)| *sleep == name).map(|(_, at)| *at).or_else(|| (name == "sleep" && head.contains('.')).then_some(0));
-        if let Some(position) = sleep_position {
-            let seconds = argument(source, args, position, None);
-            if seconds.is_some_and(|s| !literal_zero(source, s) && !deadline_difference(source, s, &self.anywhere.clocks)) {
-                self.push(items[0], head, SiteKind::Sleep, kind_of(named_retry), repeated);
-            }
-            return;
-        }
-        if TIMER_SINKS.contains(&name) {
-            let tag = argument(source, args, 0, Some(":tag")).filter(|t| matches!(t.node, Node::Symbol));
-            if tag.is_some_and(|t| self.index.stopping_tags.contains(&norm(last_segment(spelled(source, t))))) {
-                // A timeout deadline (it only exits the repetition when it arrives) — not a repetition that fetches the same thing.
-                return;
+        prep.direct = direct;
+        prep
+    }
+
+    /// Whether any call in this definition touches a helper or effect currently in `helpers`.
+    fn touches_helpers(&self, helpers: &Helpers) -> bool {
+        self.resolved_calls.iter().any(|(_, target, effect_key)| match target {
+            Some(t) => helpers.passthrough.contains_key(t) || helpers.now_param.contains_key(t) || helpers.waits.contains_key(t),
+            None => effect_key.as_ref().is_some_and(|e| helpers.effects.contains_key(e)),
+        })
+    }
+
+    /// Evaluates helper/effect calls on top of `self.direct`.
+    fn evaluate(&self, def: &DefFact, helpers: &Helpers) -> Facts {
+        let mut facts = self.direct.clone();
+        let kind_of = |retry: bool| if retry { Refetch::Retry } else { Refetch::Periodic };
+        for &(ci, target, ref effect_key) in &self.resolved_calls {
+            let call = &def.calls[ci];
+            let repeated = call.in_loop || def.recursive;
+            let name = last_segment(&call.head);
+            let Some(target) = target else {
+                if let Some(origins) = effect_key.as_ref().and_then(|e| helpers.effects.get(e)) {
+                    let all_retry = origins.iter().all(|o| o.kind == Refetch::Retry);
+                    let refetch = kind_of(call.retry_hint || all_retry || has_retry_word(name));
+                    facts.sites.push(Site {
+                        call_idx: ci,
+                        start: call.start,
+                        head: name.to_string(),
+                        kind: SiteKind::Helper(origins.iter().cloned().collect()),
+                        refetch,
+                        repeated,
+                    });
+                }
+                continue;
+            };
+            let CallAction::Call { positional, keywords } = &call.action else { continue };
+            let mut named_retry = call.retry_hint || call.form_has_retry;
+            let mut timer = false;
+            if let Some(passthrough) = helpers.passthrough.get(&target) {
+                for (index, param) in passthrough {
+                    if let Some(at) = CallAction::call_argument(positional, keywords, *index, param) {
+                        if let Some(bound_retry) = self.time_argument(&def.params, at, kind_of(named_retry), call.in_loop, &mut facts) {
+                            timer = true;
+                            named_retry |= bound_retry;
+                        }
+                    }
+                }
             }
             let refetch = kind_of(named_retry);
-            if let Some(at) = argument(source, args, TIMER_AT_POSITION, Some(":at")) {
-                if let Some(bound_retry) = self.time_argument(at, refetch, in_loop) {
-                    self.push(items[0], head, SiteKind::Timer, kind_of(named_retry || bound_retry), repeated);
+            if let Some(now_params) = helpers.now_param.get(&target) {
+                for (index, param, kind) in now_params {
+                    let Some(at) = CallAction::call_argument(positional, keywords, *index, param) else { continue };
+                    let Some(passed) = at.symbol_root.as_deref() else { continue };
+                    if self.moments(call.in_loop).clocks.contains(passed) {
+                        timer = true;
+                    } else if let Some(mine) = def.params.iter().position(|p| p == passed) {
+                        facts.now_param.insert((mine, passed.to_string(), *kind));
+                    }
                 }
             }
-            return;
-        }
-        let target = self.index.resolve(self.units, self.file, head);
-        if target == Some(self.me) {
-            return;
-        }
-        let Some(target) = target else {
-            // A head that is not a definition — if it is an effect that a production handler's clause answers with a time wait, the place that emits that effect is the same as a call to a helper that returns a wait.
-            if let Some(origins) = self.helpers.effects.get(&norm(name)).cloned() {
-                let all_retry = origins.iter().all(|o| o.kind == Refetch::Retry);
-                let refetch = kind_of(retry_hint || all_retry || has_retry_word(name));
-                self.push(items[0], head, SiteKind::Helper(origins.into_iter().collect()), refetch, repeated);
-            }
-            return;
-        };
-        let mut named_retry = named_retry;
-        let mut timer = false;
-        for (index, param) in self.helpers.passthrough.get(&target).cloned().unwrap_or_default() {
-            if let Some(at) = argument(source, args, index, Some(&format!(":{}", param))) {
-                if let Some(bound_retry) = self.time_argument(at, kind_of(named_retry), in_loop) {
-                    timer = true;
-                    named_retry |= bound_retry;
-                }
-            }
-        }
-        let refetch = kind_of(named_retry);
-        for (index, param, kind) in self.helpers.now_param.get(&target).cloned().unwrap_or_default() {
-            let Some(at) = argument(source, args, index, Some(&format!(":{}", param))) else { continue };
-            if !matches!(at.node, Node::Symbol) {
+            if timer {
+                let kinds: BTreeSet<Refetch> = helpers.now_param.get(&target).map(|s| s.iter().map(|(_, _, k)| *k).collect()).unwrap_or_default();
+                let refetch = if named_retry || (!kinds.is_empty() && kinds.iter().all(|k| *k == Refetch::Retry)) { Refetch::Retry } else { refetch };
+                facts.sites.push(Site {
+                    call_idx: ci,
+                    start: call.start,
+                    head: name.to_string(),
+                    kind: SiteKind::Timer,
+                    refetch,
+                    repeated,
+                });
                 continue;
             }
-            let passed = root_name(spelled(source, at));
-            if self.moments(in_loop).clocks.contains(&passed) {
-                timer = true;
-            } else if let Some(mine) = self.params.iter().position(|p| *p == passed) {
-                self.facts.now_param.insert((mine, passed, kind));
+            if let Some(origins) = helpers.waits.get(&target) {
+                let all_retry = origins.iter().all(|o| o.kind == Refetch::Retry);
+                let refetch = kind_of(call.retry_hint || all_retry || has_retry_word(name));
+                facts.sites.push(Site {
+                    call_idx: ci,
+                    start: call.start,
+                    head: name.to_string(),
+                    kind: SiteKind::Helper(origins.iter().cloned().collect()),
+                    refetch,
+                    repeated,
+                });
             }
         }
-        if timer {
-            let kinds: BTreeSet<Refetch> = self.helpers.now_param.get(&target).map(|s| s.iter().map(|(_, _, k)| *k).collect()).unwrap_or_default();
-            let refetch = if named_retry || (!kinds.is_empty() && kinds.iter().all(|k| *k == Refetch::Retry)) { Refetch::Retry } else { refetch };
-            self.push(items[0], head, SiteKind::Timer, refetch, repeated);
-            return;
-        }
-        if let Some(origins) = self.helpers.waits.get(&target) {
-            let all_retry = origins.iter().all(|o| o.kind == Refetch::Retry);
-            let refetch = kind_of(retry_hint || all_retry || has_retry_word(name));
-            self.push(items[0], head, SiteKind::Helper(origins.iter().cloned().collect()), refetch, repeated);
-        }
+        facts
     }
 }
 
@@ -865,14 +1271,14 @@ struct Moments {
 }
 
 impl Moments {
-    fn read<'f>(source: &str, clock_heads: &BTreeSet<String>, binds: impl Iterator<Item = &'f Binding<'f>> + Clone) -> Moments {
-        let clocks = clock_names(source, clock_heads, binds.clone());
+    fn read<'b>(clock_heads: &BTreeSet<String>, binds: impl Iterator<Item = &'b BindingFact> + Clone) -> Moments {
+        let clocks = clock_names(clock_heads, binds.clone());
         let mut relative = BTreeSet::new();
         let mut retry_named = BTreeSet::new();
         for bind in binds {
-            if has_now_plus(source, bind.expr, &clocks) || mentions(source, bind.expr, &relative) {
+            if bind.plus_syms.iter().any(|s| clocks.contains(s)) || bind.mentioned_roots.iter().any(|s| relative.contains(s)) {
                 relative.insert(bind.name.clone());
-                if has_retry_word(spelled(source, bind.expr)) || mentions(source, bind.expr, &retry_named) {
+                if bind.has_retry || bind.mentioned_roots.iter().any(|s| retry_named.contains(s)) {
                     retry_named.insert(bind.name.clone());
                 }
             }
@@ -882,70 +1288,16 @@ impl Moments {
 }
 
 /// The now names (names bound by a call that returns now, or by a conversion call that takes exactly one now name).
-fn clock_names<'f>(source: &str, clock_heads: &BTreeSet<String>, binds: impl Iterator<Item = &'f Binding<'f>>) -> BTreeSet<String> {
+fn clock_names<'b>(clock_heads: &BTreeSet<String>, binds: impl Iterator<Item = &'b BindingFact>) -> BTreeSet<String> {
     let mut clocks = BTreeSet::new();
     for bind in binds {
-        let Some(items) = bind.expr.paren_items().map(visible) else { continue };
-        let Some(head) = head_symbol(source, &items) else { continue };
-        let args: Vec<&&Form> = items[1..].iter().filter(|f| !matches!(f.node, Node::Keyword)).collect();
-        let clock = clock_heads.contains(&norm(last_segment(head)))
-            || (args.len() == 1 && matches!(args[0].node, Node::Symbol) && clocks.contains(&root_name(spelled(source, args[0]))));
+        let clock = bind.call_head_last_norm.as_deref().is_some_and(|h| clock_heads.contains(h))
+            || bind.single_arg_root.as_deref().is_some_and(|r| clocks.contains(r));
         if clock {
             clocks.insert(bind.name.clone());
         }
     }
     clocks
-}
-
-/// Reads one definition with the now helper table.
-fn read_definition(units: &[Unit], index: &Index, helpers: &Helpers, me: DefId) -> Facts {
-    let unit = &units[me.0];
-    let definition = &unit.definitions[me.1];
-    let form = &unit.forms[definition.form];
-    let source = unit.source.as_str();
-    let mut binds = Vec::new();
-    bindings(source, form, false, &mut binds);
-    let anywhere = Moments::read(source, &index.clock_heads, binds.iter());
-    let in_loop = Moments::read(source, &index.clock_heads, binds.iter().filter(|b| b.in_loop));
-    let plus_derived = definition
-        .params
-        .iter()
-        .map(|param| {
-            let own: BTreeSet<String> = [param.clone()].into();
-            let mut names = BTreeSet::new();
-            for bind in &binds {
-                let mut found = BTreeSet::new();
-                plus_operands(source, bind.expr, &own, &mut found);
-                if !found.is_empty() || mentions(source, bind.expr, &names) {
-                    names.insert(bind.name.clone());
-                }
-            }
-            names
-        })
-        .collect();
-    let derived = definition
-        .params
-        .iter()
-        .map(|param| {
-            let mut names: BTreeSet<String> = [param.clone()].into();
-            for bind in &binds {
-                if mentions(source, bind.expr, &names) {
-                    names.insert(bind.name.clone());
-                }
-            }
-            names
-        })
-        .collect();
-    let recursive = definition.callable && calls_itself(source, form, &definition.key, true);
-    let mut walk = Walk { units, index, helpers, file: me.0, me, params: &definition.params, anywhere, in_loop, recursive, derived, plus_derived, facts: Facts::default() };
-    walk.walk(form, false, false);
-    walk.facts
-}
-
-/// Whether the form tree has a call whose head's last segment is in heads.
-fn calls_any(source: &str, form: &Form, heads: &BTreeSet<String>) -> bool {
-    let own = form.paren_items().map(visible).is_some_and(|items| head_symbol(source, &items).is_some_and(|h| heads.contains(&norm(last_segment(h)))));
-    own || children(form).into_iter().any(|c| calls_any(source, c, heads))
 }
 
 /// Whether a definition's body calls itself (the head form itself is not counted).
@@ -954,82 +1306,114 @@ fn calls_itself(source: &str, form: &Form, key: &str, top: bool) -> bool {
     own || children(form).into_iter().any(|c| calls_itself(source, c, key, false))
 }
 
-/// Builds the helper table by re-reading until nothing changes.
-fn settle(units: &[Unit], index: &Index) -> (Helpers, Vec<(DefId, Facts)>) {
-    let ids: Vec<DefId> = units.iter().enumerate().flat_map(|(file, unit)| (0..unit.definitions.len()).map(move |def| (file, def))).collect();
-    let mut helpers = Helpers::default();
-    for _ in 0..MAX_ROUNDS {
-        let read: Vec<(DefId, Facts)> = ids.par_iter().map(|&id| (id, read_definition(units, index, &helpers, id))).collect();
-        let mut next = Helpers::default();
-        for (id, facts) in &read {
-            for (effect, origins) in clause_waits(&units[id.0], &units[id.0].definitions[id.1], facts) {
-                next.effects.entry(effect).or_default().extend(origins);
-            }
-            if !units[id.0].definitions[id.1].callable {
-                continue;
-            }
-            if !facts.passthrough.is_empty() {
-                next.passthrough.insert(*id, facts.passthrough.clone());
-            }
-            if !facts.now_param.is_empty() {
-                next.now_param.insert(*id, facts.now_param.clone());
-            }
-            let once: BTreeSet<Origin> = facts
-                .sites
-                .iter()
-                .filter(|s| !s.repeated && s.kind != SiteKind::PollSeconds)
-                .flat_map(|s| match &s.kind {
-                    SiteKind::Helper(origins) => origins.clone(),
-                    _ => vec![site_origin(&units[id.0], s)],
-                })
-                .collect();
-            if !once.is_empty() {
-                next.waits.insert(*id, once);
-            }
-        }
-        if next == helpers {
-            return (helpers, read);
-        }
-        helpers = next;
-    }
-    let read = ids.par_iter().map(|&id| (id, read_definition(units, index, &helpers, id))).collect();
-    (helpers, read)
-}
-
-/// Per defhandler clause, the origins of wait spellings outside a repetition (effect names in comparison form). Clauses that answer waits on record changes (WatchChanges, WatchEvents) are
-/// not counted — the upper-bound seconds when waiting for changes are DOEFF208's side.
-fn clause_waits(unit: &Unit, definition: &Definition, facts: &Facts) -> Vec<(String, BTreeSet<Origin>)> {
-    let source = unit.source.as_str();
-    let items = unit.forms[definition.form].paren_items().map(visible).unwrap_or_default();
-    if head_symbol(source, &items) != Some("defhandler") {
-        return Vec::new();
-    }
-    items
-        .iter()
-        .skip(2)
-        .filter_map(|clause| {
-            let parts = clause.paren_items().map(visible)?;
-            let effect = head_symbol(source, &parts)?;
-            parts.get(1).and_then(|f| f.bracket_items())?;
-            if RECORD_WAITS.contains(&last_segment(effect)) {
-                return None;
-            }
-            let mut plain = BTreeSet::new();
-            for statement in &parts[2..] {
-                unconditional_heads(source, statement, &mut plain);
-            }
+fn accumulate_helper(unit: &CachedUnit, def: &DefFact, id: DefId, facts: &Facts, next: &mut Helpers) {
+    if !def.handler_clauses.is_empty() && !facts.sites.is_empty() {
+        for (effect, plain) in &def.handler_clauses {
             let origins: BTreeSet<Origin> = facts
                 .sites
                 .iter()
-                .filter(|s| !s.repeated && s.kind != SiteKind::PollSeconds && plain.contains(&s.start))
+                .filter(|s| !s.repeated && s.kind != SiteKind::PollSeconds && plain.binary_search(&s.start).is_ok())
                 .flat_map(|s| match &s.kind {
                     SiteKind::Helper(origins) => origins.clone(),
-                    _ => vec![site_origin(unit, s)],
+                    _ => vec![site_origin(unit, def, s)],
                 })
                 .collect();
-            (!origins.is_empty()).then(|| (norm(last_segment(effect)), origins))
+            if !origins.is_empty() {
+                next.effects.entry(effect.clone()).or_default().extend(origins);
+            }
+        }
+    }
+    if !def.callable {
+        return;
+    }
+    if !facts.passthrough.is_empty() {
+        next.passthrough.insert(id, facts.passthrough.clone());
+    }
+    if !facts.now_param.is_empty() {
+        next.now_param.insert(id, facts.now_param.clone());
+    }
+    let once: BTreeSet<Origin> = facts
+        .sites
+        .iter()
+        .filter(|s| !s.repeated && s.kind != SiteKind::PollSeconds)
+        .flat_map(|s| match &s.kind {
+            SiteKind::Helper(origins) => origins.clone(),
+            _ => vec![site_origin(unit, def, s)],
         })
-        .collect()
+        .collect();
+    if !once.is_empty() {
+        next.waits.insert(id, once);
+    }
+}
+
+/// Builds the helper table by re-reading only definitions that touch helpers until nothing changes.
+fn settle(units: &[CachedUnit], index: &Index) -> (Helpers, Vec<(DefId, Facts)>) {
+    let ids: Vec<DefId> = units.iter().enumerate().flat_map(|(file, unit)| (0..unit.definitions.len()).map(move |def| (file, def))).collect();
+    let prepared: Vec<PreparedDef> = ids.par_iter().map(|&id| PreparedDef::build(units, index, id)).collect();
+    // Indices of definitions whose direct facts already contribute to helpers (constant across rounds).
+    let direct_contributors: Vec<usize> = prepared
+        .iter()
+        .enumerate()
+        .filter(|(_, p)| !p.direct.sites.is_empty() || !p.direct.passthrough.is_empty() || !p.direct.now_param.is_empty())
+        .map(|(i, _)| i)
+        .collect();
+
+    let mut helpers = Helpers::default();
+    for _ in 0..MAX_ROUNDS {
+        let mut next = Helpers::default();
+        // Direct-only contributors that do not touch helpers this round still feed into `next`.
+        let active: Vec<usize> = prepared.iter().enumerate().filter(|(_, p)| p.touches_helpers(&helpers)).map(|(i, _)| i).collect();
+        let active_facts: Vec<(usize, Facts)> = active
+            .par_iter()
+            .map(|&idx| {
+                let p = &prepared[idx];
+                let def = &units[p.id.0].definitions[p.id.1];
+                (idx, p.evaluate(def, &helpers))
+            })
+            .collect();
+        let active_set: std::collections::HashSet<usize> = active.iter().copied().collect();
+        for &idx in &direct_contributors {
+            if !active_set.contains(&idx) {
+                let p = &prepared[idx];
+                accumulate_helper(&units[p.id.0], &units[p.id.0].definitions[p.id.1], p.id, &p.direct, &mut next);
+            }
+        }
+        for (idx, facts) in &active_facts {
+            let p = &prepared[*idx];
+            accumulate_helper(&units[p.id.0], &units[p.id.0].definitions[p.id.1], p.id, facts, &mut next);
+        }
+        if next == helpers {
+            let mut out = Vec::with_capacity(direct_contributors.len() + active_facts.len());
+            for &idx in &direct_contributors {
+                if !active_set.contains(&idx) {
+                    let p = &prepared[idx];
+                    if !p.direct.sites.is_empty() {
+                        out.push((p.id, p.direct.clone()));
+                    }
+                }
+            }
+            for (idx, facts) in active_facts {
+                if !facts.sites.is_empty() {
+                    out.push((prepared[idx].id, facts));
+                }
+            }
+            return (helpers, out);
+        }
+        helpers = next;
+    }
+
+    let read: Vec<(DefId, Facts)> = prepared
+        .par_iter()
+        .filter_map(|p| {
+            let facts = if p.touches_helpers(&helpers) {
+                p.evaluate(&units[p.id.0].definitions[p.id.1], &helpers)
+            } else {
+                p.direct.clone()
+            };
+            (!facts.sites.is_empty()).then_some((p.id, facts))
+        })
+        .collect();
+    (helpers, read)
 }
 
 /// The positions of call heads reachable without going through a branch form (`if`, `when`, `unless`, `cond`, `match`, `try`, `and`, `or`) (where a clause surely waits — a clause that
@@ -1048,10 +1432,10 @@ fn unconditional_heads(source: &str, form: &Form, into: &mut BTreeSet<usize>) {
     }
 }
 
-fn site_origin(unit: &Unit, site: &Site) -> Origin {
-    let line = unit.source[..site.start.min(unit.source.len())].matches('\n').count() + 1;
-    let line_text = unit.source.lines().nth(line - 1).unwrap_or("").trim();
-    Origin { rel: unit.rel.clone(), line, text: line_text.chars().take(80).collect(), kind: site.refetch }
+fn site_origin(unit: &CachedUnit, def: &DefFact, site: &Site) -> Origin {
+    let call = &def.calls[site.call_idx];
+    let line = call.range.start.line as usize + 1;
+    Origin { rel: unit.rel.clone(), line, text: call.action.line_text().to_string(), kind: site.refetch }
 }
 
 /// Reads the reason comment on the hit's line, or on a comment-only line just before it.
@@ -1086,31 +1470,33 @@ pub fn reason_at(source: &str, line: usize, refetch: Refetch) -> ReasonRead {
     }
 }
 
-/// Produces hits from the files read (the entry point for tests — passes file contents directly).
-pub fn judge_sources(files: Vec<(String, String)>) -> Vec<RefetchFinding> {
-    let units: Vec<Unit> = files.into_par_iter().map(|(rel, source)| Unit::read(rel, source)).collect();
+fn judge_units(units: Vec<CachedUnit>) -> Vec<RefetchFinding> {
     let index = Index::new(&units);
     let (_, read) = settle(&units, &index);
     let mut found: Vec<RefetchFinding> = read
         .into_iter()
         .flat_map(|(id, facts)| {
             let unit = &units[id.0];
-            let lines = LineIndex::new(&unit.source);
-            let definition = unit.definitions[id.1].name.clone();
+            let def = &unit.definitions[id.1];
+            let definition = def.name.clone();
             facts
                 .sites
                 .into_iter()
                 .filter(|s| s.repeated || s.kind == SiteKind::PollSeconds)
                 .filter_map(|s| {
-                    let range = lines.range(s.start, s.end);
-                    let rejected_reason = match reason_at(&unit.source, range.start.line as usize, s.refetch) {
+                    let call = &def.calls[s.call_idx];
+                    let reason = match s.refetch {
+                        Refetch::Periodic => &call.reason_periodic,
+                        Refetch::Retry => &call.reason_retry,
+                    };
+                    let rejected_reason = match reason {
                         ReasonRead::Accepted => return None,
                         ReasonRead::Absent => None,
-                        ReasonRead::Rejected(why) => Some(why),
+                        ReasonRead::Rejected(why) => Some(why.clone()),
                     };
                     Some(RefetchFinding {
                         rel: unit.rel.clone(),
-                        range,
+                        range: call.range,
                         definition: definition.clone(),
                         head: s.head,
                         kind: s.kind,
@@ -1138,19 +1524,39 @@ pub fn judge_sources(files: Vec<(String, String)>) -> Vec<RefetchFinding> {
     merged
 }
 
-/// Judges all Hy files of the repo's production code (hits, and reasons for unreadable files).
+/// Produces hits from the files read (the entry point for tests — passes file contents directly).
+pub fn judge_sources(files: Vec<(String, String)>) -> Vec<RefetchFinding> {
+    let units: Vec<CachedUnit> = files.into_par_iter().map(|(rel, source)| CachedUnit::extract(rel, &source)).collect();
+    judge_units(units)
+}
+
+/// Judges all Hy files of the repo's production code (hits, and reasons for unreadable files), backed by `facts_cache` per file.
 pub fn find(root: &Path, decl: &BusinessFakes) -> (Vec<RefetchFinding>, Vec<String>) {
     let files: Vec<(String, std::path::PathBuf)> = hy_files::collect(root)
         .into_iter()
         .filter_map(|path| relative_path(root, &path).map(|rel| (rel, path)))
         .filter(|(rel, _)| production_code(rel, decl))
         .collect();
-    let read: Vec<Result<(String, String), String>> = files
-        .into_par_iter()
-        .map(|(rel, path)| std::fs::read_to_string(&path).map(|source| (rel.clone(), source)).map_err(|error| format!("{}: cannot read: {}", rel, error)))
-        .collect();
-    let (sources, errors): (Vec<_>, Vec<_>) = read.into_iter().partition(Result::is_ok);
-    (judge_sources(sources.into_iter().filter_map(Result::ok).collect()), errors.into_iter().filter_map(Result::err).collect())
+    if files.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let cached: Vec<CachedTimedFile> = facts_cache::per_file_compact(root, "timed-refetch", &files, |rel, path| {
+        #[cfg(test)]
+        super::perf_counters::record_read("timed_refetch", rel);
+        match std::fs::read_to_string(path) {
+            Ok(source) => Some(CachedTimedFile::Unit(CachedUnit::extract(rel.to_string(), &source))),
+            Err(error) => Some(CachedTimedFile::Error(format!("{}: cannot read: {}", rel, error))),
+        }
+    });
+    let mut units = Vec::with_capacity(cached.len());
+    let mut errors = Vec::new();
+    for item in cached {
+        match item {
+            CachedTimedFile::Unit(unit) => units.push(unit),
+            CachedTimedFile::Error(err) => errors.push(err),
+        }
+    }
+    (judge_units(units), errors)
 }
 
 #[cfg(test)]
