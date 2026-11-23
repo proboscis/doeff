@@ -30,7 +30,8 @@
   "The 17 names of doeff-cluster that its effects answer (56 rows) were moved to the allowed table at the entry point doeff_cluster as effect answer types, after the effects of _shared/intent/detached_model.hy and warm_model.hy declared their answer types (EffectBase[T]). Allowed rows of the same names at old submodule paths were removed.",
   "The 16 names of doeff-cluster that no other repo imports (57 rows) left the entry point doeff_cluster: its tests and ADRs read them from the modules that define them (R1, R5, R15).",
   "Two of those 16 names, runtime-env->json and env-marker->json, are imported from the entry point by another repo (the count of callers had not read names spelled with '>'): they are shown at doeff_cluster again and listed in the allowed table as program helpers (R25), so 14 names left the entry point.",
-  "Handles of doeff-domain left the added names: the field Domain.handlers is typed tuple[Handles | Any, ...] (Handles moved from _introspect to _registry, where Domain is defined), so the inventory reads Handles as an effect value type (R2) and it is listed in the allowed table."
+  "Handles of doeff-domain left the added names: the field Domain.handlers is typed tuple[Handles | Any, ...] (Handles moved from _introspect to _registry, where Domain is defined), so the inventory reads Handles as an effect value type (R2) and it is listed in the allowed table.",
+  "Five names of doeff-core-effects that nothing outside their modules reads (ScriptSend, script_sent, HeldInput, input_written and ws_shortcut_for) left the entry point doeff_core_effects, and their 7 added rows were removed. WsShortcutAnswered, WsShortcutFailed and ws_shortcut_outcome stay shown (9 rows): tests of another repo import them from the entry point."
  ],
  "packages": {
   "doeff-adr": {
@@ -716,12 +717,6 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.http_server_effects",
-   "name": "ws_shortcut_for",
-   "reason": "Function that decides the match and answer of the ws interface, read by both the real and the scripted handlers, and its answer type (a name inside the handler). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule http_server_effects is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.http_server_effects",
    "name": "ws_shortcut_outcome",
    "reason": "Function that decides the match and answer of the ws interface, read by both the real and the scripted handlers, and its answer type (a name inside the handler). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule http_server_effects is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
   },
@@ -740,12 +735,6 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.aiohttp_http_server",
-   "name": "ws_shortcut_for",
-   "reason": "Name inside the ws-interface handler that the real handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule aiohttp_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.aiohttp_http_server",
    "name": "ws_shortcut_outcome",
    "reason": "Name inside the ws-interface handler that the real handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule aiohttp_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
   },
@@ -758,38 +747,8 @@
   {
    "package": "doeff-core-effects",
    "module": "doeff_core_effects.scripted_http_server",
-   "name": "ws_shortcut_for",
-   "reason": "Type and name inside the ws-interface handler that the scripted handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule scripted_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_http_server",
    "name": "ws_shortcut_outcome",
    "reason": "Type and name inside the ws-interface handler that the scripted handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule scripted_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_http_server",
-   "name": "ScriptSend",
-   "reason": "Session value after one text message is sent to the ticket, and its function, inside the scripted handler. Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule scripted_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_http_server",
-   "name": "script_sent",
-   "reason": "Session value after one text message is sent to the ticket, and its function, inside the scripted handler. Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule scripted_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.os_warm_process",
-   "name": "HeldInput",
-   "reason": "Name inside the waiting-child handler (the write end of the child's input pipe held by the requester, and its write). Commit 4510d5f40 added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule os_warm_process is still public; it disappears from the inventory when batch 4/6 (process) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.os_warm_process",
-   "name": "input_written",
-   "reason": "Name inside the waiting-child handler (the write end of the child's input pipe held by the requester, and its write). Commit 4510d5f40 added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule os_warm_process is still public; it disappears from the inventory when batch 4/6 (process) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
   },
   {
    "package": "doeff-cluster",

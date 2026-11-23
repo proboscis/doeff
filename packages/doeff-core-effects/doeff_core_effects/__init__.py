@@ -261,7 +261,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._http_server_effects import WsShortcutFailed as WsShortcutFailed
     from doeff_core_effects._http_server_effects import WsTextArrived as WsTextArrived
     from doeff_core_effects._http_server_effects import WsTextSent as WsTextSent
-    from doeff_core_effects._http_server_effects import ws_shortcut_for as ws_shortcut_for
     from doeff_core_effects._http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
     from doeff_core_effects._inline_compute import computed as computed
     from doeff_core_effects._inline_compute import inline_compute_handler as inline_compute_handler
@@ -323,9 +322,7 @@ if TYPE_CHECKING:
     from doeff_core_effects._os_process import os_process_alive as os_process_alive
     from doeff_core_effects._os_process import subprocess_handler as subprocess_handler
     from doeff_core_effects._os_random import os_random_handler as os_random_handler
-    from doeff_core_effects._os_warm_process import HeldInput as HeldInput
     from doeff_core_effects._os_warm_process import WarmProcUnavailable as WarmProcUnavailable
-    from doeff_core_effects._os_warm_process import input_written as input_written
     from doeff_core_effects._os_warm_process import (
         os_warm_process_handler as os_warm_process_handler,
     )
@@ -420,8 +417,6 @@ if TYPE_CHECKING:
     from doeff_core_effects._scripted_freeze import (
         scripted_freeze_handler as scripted_freeze_handler,
     )
-    from doeff_core_effects._scripted_http_server import ScriptSend as ScriptSend
-    from doeff_core_effects._scripted_http_server import script_sent as script_sent
     from doeff_core_effects._scripted_http_server import (
         scripted_http_server as scripted_http_server,
     )
@@ -757,11 +752,8 @@ _LAZY_EXPORTS = {
     "WsShortcutFailed": "doeff_core_effects._http_server_effects",
     "WsTextArrived": "doeff_core_effects._http_server_effects",
     "WsTextSent": "doeff_core_effects._http_server_effects",
-    "ws_shortcut_for": "doeff_core_effects._http_server_effects",
     "ws_shortcut_outcome": "doeff_core_effects._http_server_effects",
     "aiohttp_http_server": "doeff_core_effects._aiohttp_http_server",
-    "ScriptSend": "doeff_core_effects._scripted_http_server",
-    "script_sent": "doeff_core_effects._scripted_http_server",
     "scripted_http_server": "doeff_core_effects._scripted_http_server",
     "AwaitProcessExit": "doeff_core_effects._process_effects",
     "ChildLifetime": "doeff_core_effects._process_effects",
@@ -834,9 +826,7 @@ _LAZY_EXPORTS = {
     "WarmRunning": "doeff_core_effects._warm_effects",
     "WarmSignaled": "doeff_core_effects._warm_effects",
     "WriteWarmChildInput": "doeff_core_effects._warm_effects",
-    "HeldInput": "doeff_core_effects._os_warm_process",
     "WarmProcUnavailable": "doeff_core_effects._os_warm_process",
-    "input_written": "doeff_core_effects._os_warm_process",
     "os_warm_process_handler": "doeff_core_effects._os_warm_process",
     "own_oom_score_adj": "doeff_core_effects._os_warm_process",
     "own_thread_count": "doeff_core_effects._os_warm_process",
