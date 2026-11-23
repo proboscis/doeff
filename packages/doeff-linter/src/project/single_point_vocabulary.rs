@@ -12,12 +12,15 @@
 //! (decision Q2 of #1762). A line that carries a value as is holds no judgment, and counting it would make even lines that just pass a field outside the
 //! single point of the judgment a "second judgment".
 
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 
 use super::architecture::VocabularyScope;
+use super::facts_cache::{self, Reach};
 use super::paths::{glob_matches, relative_path};
 
 /// Forms of decision/branch (applied to lines with comments and strings removed) — a line containing one is not a copy-only line.
@@ -135,29 +138,72 @@ fn walked_hy_files(root: &Path, focus: Option<&[PathBuf]>) -> Vec<String> {
     rels
 }
 
+/// Cached per-file hits across all matching scopes (path-free so `objects/` is shared across worktrees).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedVocabHit {
+    scope_idx: usize,
+    line: u32,
+    count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedVocabFile {
+    rel: String,
+    hits: Vec<CachedVocabHit>,
+}
+
 /// For each group of `:single-point-vocabulary`, searches for hits outside `:except` (in group declaration order, path order). The repo is walked only once (not re-walked per group),
+/// each file is read and comment-stripped at most once in parallel via `facts_cache` (keyed by the scope definitions),
 /// and if focus exists, only files under it are read — since a hit is attached to its file, the answer is the same as reading everything and then narrowing
-/// by the named path (a one-file commit hook was reading all of the repo's Hy).
+/// by the named path.
 pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) -> Vec<VocabularyHit> {
-    let mut out = Vec::new();
+    if scopes.is_empty() {
+        return Vec::new();
+    }
     let walked = walked_hy_files(root, focus);
-    for scope in scopes {
-        let regexes: Vec<Regex> = scope.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect();
-        if regexes.is_empty() {
+    let compiled_regexes: Vec<Vec<Regex>> = scopes
+        .iter()
+        .map(|s| s.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect())
+        .collect();
+
+    let mut file_scopes: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+    for (si, scope) in scopes.iter().enumerate() {
+        if compiled_regexes[si].is_empty() {
             continue;
         }
-        let rels = walked
-            .iter()
-            .filter(|rel| scope.files.iter().any(|p| glob_matches(p, rel)))
-            .filter(|rel| !scope.except.iter().any(|p| glob_matches(p, rel)))
-            .cloned();
-        for rel in rels {
-            let Ok(source) = std::fs::read_to_string(root.join(&rel)) else { continue };
-            let code = strip_comments(&source);
+        for rel in &walked {
+            if scope.files.iter().any(|p| glob_matches(p, rel)) && !scope.except.iter().any(|p| glob_matches(p, rel)) {
+                file_scopes.entry(rel.clone()).or_default().push(si);
+            }
+        }
+    }
+    if file_scopes.is_empty() {
+        return Vec::new();
+    }
+
+    let wanted_files: Vec<(String, PathBuf)> = file_scopes.keys().map(|rel| (rel.clone(), root.join(rel))).collect();
+    let scope_lookup: HashMap<&str, &[usize]> = file_scopes.iter().map(|(rel, ss)| (rel.as_str(), ss.as_slice())).collect();
+    let key = facts_cache::hash_key(&scopes);
+    let reach = if focus.is_some() { Reach::Named } else { Reach::Whole };
+
+    let cached: Vec<CachedVocabFile> = facts_cache::per_file_compact_keyed_in(reach, root, "single-point-vocabulary", &key, &wanted_files, |rel, path| {
+        #[cfg(test)]
+        super::perf_counters::record_read("single_point_vocabulary", rel);
+        let Ok(source) = std::fs::read_to_string(path) else {
+            return Some(CachedVocabFile { rel: rel.to_string(), hits: Vec::new() });
+        };
+        #[cfg(test)]
+        super::perf_counters::record_strip("single_point_vocabulary", rel);
+        let code = strip_comments(&source);
+        let code_lines: Vec<&str> = code.lines().collect();
+        let source_lines: Vec<&str> = source.lines().collect();
+        let mut hits = Vec::new();
+        for &si in scope_lookup.get(rel).copied().unwrap_or(&[]) {
+            let regexes = &compiled_regexes[si];
             let mut first: Option<u32> = None;
             let mut count = 0usize;
-            for (idx, (line, written)) in code.lines().zip(source.lines()).enumerate() {
-                if regexes.iter().any(|re| re.is_match(line)) && !copies_only(line, written, &regexes) {
+            for (idx, (&line, &written)) in code_lines.iter().zip(source_lines.iter()).enumerate() {
+                if regexes.iter().any(|re| re.is_match(line)) && !copies_only(line, written, regexes) {
                     count += 1;
                     if first.is_none() {
                         first = Some(idx as u32);
@@ -165,11 +211,26 @@ pub fn find(root: &Path, scopes: &[VocabularyScope], focus: Option<&[PathBuf]>) 
                 }
             }
             if let Some(line) = first {
-                out.push(VocabularyHit { rel: rel.clone(), group: scope.name.clone(), line, count, instead: scope.instead.clone() });
+                hits.push(CachedVocabHit { scope_idx: si, line, count });
             }
         }
+        Some(CachedVocabFile { rel: rel.to_string(), hits })
+    });
+
+    let mut by_scope: Vec<Vec<VocabularyHit>> = vec![Vec::new(); scopes.len()];
+    for file in cached {
+        for hit in file.hits {
+            let scope = &scopes[hit.scope_idx];
+            by_scope[hit.scope_idx].push(VocabularyHit {
+                rel: file.rel.clone(),
+                group: scope.name.clone(),
+                line: hit.line,
+                count: hit.count,
+                instead: scope.instead.clone(),
+            });
+        }
     }
-    out
+    by_scope.into_iter().flatten().collect()
 }
 
 #[cfg(test)]
