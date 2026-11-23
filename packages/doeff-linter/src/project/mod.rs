@@ -1283,7 +1283,20 @@ fn raw_settings(root: &Path, settings: &ProjectSettings, errors: &mut Vec<String
 /// and the output is narrowed by the named path, so the answer is the same without reading outside the named ones. None (read everything) if even one rule needs the whole repo.
 /// Previously DOEFF106, 131 and 108 built the Hy index of the whole repo even in a named run, using 20-60 seconds of CPU and 0.8-1 GB for one file of agora-controllers.
 fn file_local_scope<'a>(focus: Option<&'a [PathBuf]>, enabled: &BTreeSet<ProjectRule>) -> Option<&'a [PathBuf]> {
-    focus.filter(|_| enabled.iter().all(|rule| !rule.needs_whole_repo() && !rule.is_semantic()))
+    focus.filter(|_| enabled.iter().all(|rule| reads_one_file(*rule)))
+}
+
+/// Whether a hit of the rule is decided by one file's contents and the settings alone — the rules a named run judges without reading the whole repo
+/// (file_local_scope). The semantic rules build their questions from the named files only; DOEFF204 alone reads the raw side effects a class reaches through
+/// calls into other files (the whole Hy index with the walk through calls, as DOEFF119).
+fn reads_one_file(rule: ProjectRule) -> bool {
+    !rule.needs_whole_repo() && rule != ProjectRule::SemanticClassRole
+}
+
+/// Pure: splits the enabled rules into those decided by the named files alone (a named run reads only those files) and those that need the whole repo or ask Jev
+/// (one of them makes a named run build the Hy index of the whole repo — 2.35-2.69 GiB in agora-controllers, 2026-11).
+pub fn split_for_named_run(enabled: &BTreeSet<ProjectRule>) -> (BTreeSet<ProjectRule>, BTreeSet<ProjectRule>) {
+    enabled.iter().copied().partition(|rule| reads_one_file(*rule))
 }
 
 /// Whether the path is inside the range to read (file_local_scope — None = everything).

@@ -133,3 +133,43 @@ fn a_focused_run_keeps_the_whole_index_cache() {
     hit_keys(dir.path(), cache.path(), &["app/foundation/sockets.hy"]);
     assert_eq!(indexed_files(cache.path()), FILES.to_vec());
 }
+
+/// Runs the binary at root naming one path, with the rules from the config (no `--enable`) plus a rule that needs the whole repo (DOEFF101), and returns stderr.
+fn configured_run(root: &Path, cache: &Path, extra: &[&str]) -> String {
+    let config = std::fs::read_to_string(root.join("pyproject.toml")).unwrap().replace("enable = [", "enable = [\"DOEFF101\", ");
+    std::fs::write(root.join("pyproject.toml"), config).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_doeff-linter"))
+        .args(["--output-format", "editor-json", "--no-log"])
+        .args(extra)
+        .args(["--", "app/billing/entry/main.hy"])
+        .current_dir(root)
+        .env_remove("DOEFF_LINTER_NO_CACHE")
+        .env("DOEFF_LINTER_CACHE_DIR", cache).env("DOEFF_LINTER_SWEEP_INLINE", "1")
+        .output()
+        .unwrap();
+    serde_json::from_slice::<Value>(&output.stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}", e, String::from_utf8_lossy(&output.stderr)));
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// Failure case (2026-11, agora-controllers): a run naming two files with the config's rules built the Hy index of the whole repo because one configured rule
+/// needs the whole repo; those runs hit the 2 GiB memory limit of the caller and were killed with nothing printed. A named run now judges only the
+/// rules decided by the named files, reads only those, and names the rules it left in one line.
+#[test]
+fn a_named_run_of_configured_rules_leaves_whole_repo_rules_and_reads_only_the_named_file() {
+    let dir = repo();
+    let cache = tempfile::TempDir::new().unwrap();
+    let stderr = configured_run(dir.path(), cache.path(), &[]);
+    assert!(stderr.contains("are not judged here (DOEFF101)"), "{}", stderr);
+    let others: Vec<&str> = indexed_files(cache.path()).into_iter().filter(|rel| *rel != "app/billing/entry/main.hy").collect();
+    assert!(others.is_empty(), "files outside the named ones were read into the index: {:?}", others);
+}
+
+/// Asking for the rules that need the whole repo reads it, and one line says so before the run.
+#[test]
+fn a_named_run_that_asks_for_whole_repo_rules_says_it_reads_the_whole_repo() {
+    let dir = repo();
+    let cache = tempfile::TempDir::new().unwrap();
+    let stderr = configured_run(dir.path(), cache.path(), &["--whole-repo-rules"]);
+    assert!(stderr.contains("named run reads the whole repo: --whole-repo-rules asks for 1 rule(s) that need it (DOEFF101)"), "{}", stderr);
+    assert_eq!(indexed_files(cache.path()), FILES.to_vec());
+}

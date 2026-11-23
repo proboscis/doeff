@@ -230,6 +230,11 @@ struct Args {
     /// (this is also the default with no flag -- the whole run also receives the proxy's memory on top of that)
     #[arg(long)]
     semantic_changed: bool,
+
+    /// In a run that names paths, also judge the configured rules that need the whole repo or ask Jev (builds the Hy index of the whole repo -- about
+    /// 2.4 GiB in agora-controllers). Without it a named run judges only the rules decided by the named files and names the others in one line
+    #[arg(long)]
+    whole_repo_rules: bool,
 }
 
 /// Cursor hook input structure
@@ -553,6 +558,39 @@ fn prepare(args: &Args) -> Result<Setup, String> {
 
 /// The list of paths when narrowing the files that emit violations by the path arguments (None for the default "." = all). Includes the same-name .pyi next to a named .hy
 /// (DOEFF145 hits a .pyi that falsifies the .hy's runtime shape -- naming only the .hy still judges and keeps it).
+/// The layer rules a run judges. A run that names paths (focus) with the rules taken from the config judges only the rules decided by the named files and names the
+/// rest in one line — one rule that needs the whole repo made a two-file run build the Hy index of the whole repo, and in agora-controllers those runs hit the
+/// conversation's 2 GiB memory limit and were killed with nothing printed (2026-11). The rules stay when the caller asks for them (`--enable` naming them — the merge
+/// gate, `--whole-repo-rules`, `--semantic`, `--semantic-all`, `--semantic-changed`); the whole repo is then read, and one line says so before the run starts.
+fn rules_for_run(args: &Args, rules: BTreeSet<ProjectRule>, focus: Option<&[PathBuf]>) -> BTreeSet<ProjectRule> {
+    if focus.is_none() {
+        return rules;
+    }
+    let (local, whole) = project::split_for_named_run(&rules);
+    if whole.is_empty() {
+        return rules;
+    }
+    let ids = whole.iter().map(|r| r.id()).collect::<Vec<_>>().join(",");
+    let asked = [
+        (!args.enable.is_empty(), "--enable"),
+        (args.whole_repo_rules, "--whole-repo-rules"),
+        (args.semantic, "--semantic"),
+        (args.semantic_all, "--semantic-all"),
+        (args.semantic_changed, "--semantic-changed"),
+    ];
+    let asked: Vec<&str> = asked.iter().filter(|(on, _)| *on).map(|(_, flag)| *flag).collect();
+    if asked.is_empty() {
+        eprintln!(
+            "doeff-linter: notice -- named run: {} rule(s) that need the whole repo are not judged here ({}) -- the merge gate judges them; --whole-repo-rules judges them here (reads the whole repo)",
+            whole.len(),
+            ids
+        );
+        return local;
+    }
+    eprintln!("doeff-linter: notice -- named run reads the whole repo: {} asks for {} rule(s) that need it ({})", asked.join(" "), whole.len(), ids);
+    rules
+}
+
 fn only_paths(paths: &[String]) -> Option<Vec<PathBuf>> {
     if paths.iter().all(|p| p == ".") {
         return None;
@@ -1011,8 +1049,9 @@ fn run_editor(args: &Args) -> ExitCode {
         };
         let only = only_paths(&args.paths);
         let project_report = if setup.has_project_rules() {
+            let rules = rules_for_run(args, project_rules.clone(), only.as_deref());
             doeff_linter::timing::timed("project", || {
-                project::run_with(&setup.root, &setup.settings, &project_rules, Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None))
+                project::run_with(&setup.root, &setup.settings, &rules, Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None))
             })
         } else {
             ProjectReport::default()
@@ -1367,8 +1406,8 @@ fn run_normal(args: &Args) -> ExitCode {
                 eprintln!("{}", outside_line(path, &setup.root));
             }
         }
-        let mut report =
-            project::run_with(&setup.root, &setup.settings, &setup.project_rules(), Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None));
+        let rules = rules_for_run(args, setup.project_rules(), only.as_deref());
+        let mut report = project::run_with(&setup.root, &setup.settings, &rules, Target::Whole { focus: only.as_deref() }, &semantic_mode(args, &setup.root, None));
         report.findings.extend(setup.notice_findings());
         for error in &report.errors {
             eprintln!("doeff-linter: {}", error);

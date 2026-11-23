@@ -685,6 +685,8 @@ pub const PATH_RECORD: &str = "repo.path";
 pub const ANSWERS_DIR: &str = "answers";
 /// How many whole-repo answers are kept per repo (the oldest are removed when one is stored).
 pub const ANSWERS_KEPT: usize = 32;
+/// The dir, inside the repo's dir, of the staged run's answers (quick_keys -- apart from the whole-repo answers, so that the many small ones do not push those out).
+pub const QUICK_ANSWERS_DIR: &str = "quick-answers";
 /// The upper limit of waiting when another run at the same time is using the tree.
 pub const LOCK_WAIT: Duration = Duration::from_secs(30);
 /// If more paths than this need rewriting, write everything out instead of advancing by diff (just before git's argument length limit).
@@ -1389,6 +1391,73 @@ fn clean_stage_tree(root: &Path) -> Option<String> {
     git(root, &["write-tree"]).ok().map(|out| String::from_utf8_lossy(&out).trim().to_string())
 }
 
+/// The keys of the two kept answers of the staged run (the HEAD version and the staged files with the rules decided by one file).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct QuickKeys {
+    pub head: String,
+    pub tip: String,
+}
+
+/// The keys of the staged run's answers: the HEAD tree and the stage's tree (git tree ids), the linter's build, the rules, the paths each child lints, and what the
+/// runs read besides the tree. The tip child reads the working tree, so the key is the stage only while the staged files and the declarations (config, architecture
+/// fragments, registry) in the working tree are what is staged -- otherwise Err names why (the run measures and keeps nothing).
+fn quick_keys(options: &CommitHookOptions, staged: &[String], rules: &[String], head_paths: &[String], paths: &[String]) -> Result<QuickKeys, String> {
+    let root = &options.root;
+    let identity = linter_identity(&options.linter).ok_or("cannot tell the linter's build")?;
+    let unstaged = git(root, &["diff", "--name-only", "--relative", "-z"])?;
+    let untracked = git(root, &["ls-files", "-z", "--others", "--exclude-standard"])?;
+    let dirty: Vec<String> = split_nul(&unstaged).into_iter().chain(split_nul(&untracked)).collect();
+    let config = options.config.as_ref().and_then(|c| c.strip_prefix(root).ok()).map(|r| r.to_string_lossy().into_owned());
+    if let Some(path) = dirty.iter().find(|p| paths.contains(p) || config.as_ref() == Some(*p) || touches_declaration(std::slice::from_ref(*p), &options.declarations)) {
+        return Err(format!("{} in the working tree differs from the stage", path));
+    }
+    let tree_of = |what: &[&str]| git(root, what).map(|out| String::from_utf8_lossy(&out).trim().to_string());
+    let head_tree = tree_of(&["rev-parse", "HEAD^{tree}"])?;
+    let stage_tree = tree_of(&["write-tree"])?;
+    let outside = outside_of(options);
+    let overlay: Vec<(String, String)> = options.overlay.iter().map(|rel| (rel.clone(), file_digest(&root.join(rel)))).collect();
+    let listed = |side: &str, list: &[String]| list.iter().map(|p| format!("{} path {}", side, p)).collect::<Vec<_>>();
+    let head_outside: Vec<String> = outside.iter().cloned().chain(listed("head", head_paths)).collect();
+    let tip_root = root.canonicalize().unwrap_or_else(|_| root.clone());
+    let tip_outside: Vec<String> = outside
+        .iter()
+        .cloned()
+        .chain(std::iter::once(format!("root {}", tip_root.display())))
+        .chain(listed("head", head_paths))
+        .chain(listed("stage", paths))
+        .chain(staged.iter().map(|p| format!("staged {}", p)))
+        .collect();
+    Ok(QuickKeys {
+        head: answer_key(&format!("quick head {}", head_tree), &identity, rules, &overlay, &head_outside),
+        tip: answer_key(&format!("quick stage {} on {}", stage_tree, head_tree), &identity, rules, &overlay, &tip_outside),
+    })
+}
+
+/// The SHA-256 of a file's bytes (empty if it cannot be read).
+fn file_digest(path: &Path) -> String {
+    use sha2::{Digest, Sha256};
+    std::fs::read(path).map(|b| Sha256::digest(&b).iter().map(|x| format!("{:02x}", x)).collect::<String>()).unwrap_or_default()
+}
+
+/// The NUL-separated paths git printed.
+fn split_nul(out: &[u8]) -> Vec<String> {
+    out.split(|b| *b == 0).filter(|p| !p.is_empty()).map(|p| String::from_utf8_lossy(p).into_owned()).collect()
+}
+
+/// The report kept under key (one line in notes: the answer was reused and no file linted), else measured and kept. The report is kept as the child printed it
+/// (its paths are under the HEAD tree's fixed place or the working tree's root, both stable for the same key). No answers dir or key = measured, nothing kept.
+fn kept_or_measured(answers: Option<&Path>, key: Option<&str>, notes: &mut Vec<String>, what: &str, files: usize, measure: impl FnOnce() -> Result<Value, Stop>) -> Result<Value, Stop> {
+    if let Some(report) = answers.zip(key).and_then(|(answers, key)| read_answer(answers, key)) {
+        notes.push(format!("reused the kept answer of {} ({} file(s), 0 linted again)", what, files));
+        return Ok(report);
+    }
+    let report = measure()?;
+    if let (Some(answers), Some(key)) = (answers, key) {
+        keep_answer(answers, key, &report);
+    }
+    Ok(report)
+}
+
 /// The whole-repo comparison of a declaration change: the promoted rules on the HEAD tree (without the newly enabled ones) and on the tip, each from a kept answer when
 /// there is one. Both reports come back with paths under the tip's root.
 struct Whole {
@@ -1563,10 +1632,26 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
                     .collect()
             })
             .unwrap_or_default();
+        // A second run of the same stage (the same HEAD, staged contents, linter build, rules and declarations) reads both answers kept by the first instead of linting
+        // the staged files again (quick_keys -- None = this run measures and keeps nothing; quick_answers_of names why in one line).
+        let answers = held.as_ref().and_then(|h| h.answers.as_ref()).map(|a| a.with_file_name(QUICK_ANSWERS_DIR));
+        let keys = answers.as_ref().map(|_| quick_keys(options, &staged, &quick, &head_paths, &paths));
+        let keys = match keys {
+            Some(Ok(keys)) => Some(keys),
+            Some(Err(reason)) => {
+                blocking.notes.push(format!("not reusing a kept answer of the staged files: {} — linting the staged files only", reason));
+                None
+            }
+            None => None,
+        };
+        let tip_text = tip_root.to_string_lossy().into_owned();
         let base = match tree {
             Some(t) if !head_paths.is_empty() => {
-                let mut report = measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), timeout), "the HEAD version")?;
-                rebase_paths(&mut report, &t.to_string_lossy(), &tip_root.to_string_lossy());
+                let tree_text = t.to_string_lossy().into_owned();
+                let mut report = kept_or_measured(answers.as_deref(), keys.as_ref().map(|k| k.head.as_str()), &mut blocking.notes, "the HEAD version", head_paths.len(), || {
+                    measured(run_linter(&options.linter, t, &lint_args(options, Some(t), &quick, &[], &head_paths), timeout), "the HEAD version")
+                })?;
+                rebase_paths(&mut report, &tree_text, &tip_text);
                 report
             }
             _ => empty_report(),
@@ -1574,7 +1659,9 @@ fn judge(options: &CommitHookOptions) -> Result<Judged, Stop> {
         let baseline = scratch.path.join("baseline.json");
         std::fs::write(&baseline, base.to_string()).map_err(|e| Stop::Failed(format!("cannot write {}: {}", baseline.display(), e)))?;
         let extra = vec!["--baseline-report".to_string(), baseline.to_string_lossy().into_owned()];
-        let tip = measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), timeout), "the staged files")?;
+        let tip = kept_or_measured(answers.as_deref(), keys.as_ref().map(|k| k.tip.as_str()), &mut blocking.notes, "the staged files", paths.len(), || {
+            measured(run_linter(&options.linter, root, &lint_args(options, None, &quick, &extra, &paths), timeout), "the staged files")
+        })?;
         blocking.staged = stopping_errors(&tip, &base, &staged);
         // Read the identifiers of the HEAD version with the same spelling the child linter uses to read the baseline file (baseline::baseline_identities), and split the hits that stop.
         let head_criticals = crate::baseline::baseline_identities(&base).map_err(|reason| Stop::Failed(format!("cannot read the report of the HEAD version: {}", reason)))?;

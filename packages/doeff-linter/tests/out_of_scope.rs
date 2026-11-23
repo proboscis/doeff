@@ -206,7 +206,7 @@ fn an_included_directory_outside_the_root_is_judged_by_the_definition_rules() {
     let report = editor_report(&whole);
     assert_eq!(rule_keys(&report, "DOEFF126"), vec!["../tests/test_coord.hy::DOEFF126::test_plan::plan".to_string()], "{}", report);
     assert_eq!(whole.status.code(), Some(1), "{}", String::from_utf8_lossy(&whole.stderr));
-    let named = lint(walked.path(), &["tests/test_coord.hy", "architecture.hy"]);
+    let named = lint(walked.path(), &["--whole-repo-rules", "tests/test_coord.hy", "architecture.hy"]);
     let stderr = String::from_utf8_lossy(&named.stderr);
     let stdout = String::from_utf8_lossy(&named.stdout);
     assert!(!stderr.contains("out of scope"), "{}", stderr);

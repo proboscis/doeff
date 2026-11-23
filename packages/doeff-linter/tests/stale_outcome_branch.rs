@@ -256,7 +256,7 @@ fn the_production_code_of_this_repo_has_no_stale_branches() {
     // Adding to disable or deleting the definitions section turns red with "not judged"; writing a stale branch on an effect whose declaration was switched turns red with a hit.
     // The ADRs (docs/adr/*.hy) and the doeff-core-effects probe tests are outside this population (the 3 main dirs of `paths`).
     let root = doeff_root();
-    let report = editor(&root, &["packages"], None);
+    let report = editor(&root, &["--whole-repo-rules", "packages"], None);
     assert!(judged(&report) && wired(&report), "doeff's root settings did not judge {} — check the pyproject.toml [tool.doeff-linter.definitions] section and disable", RULE);
     let found: Vec<String> = violations(&report)
         .iter()

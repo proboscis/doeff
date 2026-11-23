@@ -1708,7 +1708,7 @@ fn placed_layers_depend_only_on_placed_modules() {
     assert!(decide["message"].as_str().unwrap().contains("app/billing/vocabulary.hy"), "{}", decide["message"]);
     assert_eq!(decide["range"]["start"]["line"], 1, "shown at the first import");
     // A run with one given file also gives the same single hit (the judgment is decided only by the given file's imports and location).
-    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "app/billing/core/decide.hy"], None);
+    let (_, stdout, _) = run(dir.path(), &["--output-format", "editor-json", "--no-log", "--whole-repo-rules", "app/billing/core/decide.hy"], None);
     let single: Value = serde_json::from_str(&stdout).unwrap();
     assert_eq!(keys(&single, "DOEFF140"), vec!["app/billing/core/decide.hy::DOEFF140::app.billing.vocabulary"]);
     // A layer name not in the declaration, and the foundation layer, are config errors.
@@ -3552,7 +3552,7 @@ fn record_waits_and_polling_are_not_lowered_by_the_registry() {
 
 /// Run editor-json with the named paths and the baseline report, and return (exit code, the new critical identifiers in lexicographic order).
 fn named_against_baseline(root: &Path, baseline: &Path, named: &[&str]) -> (i32, Vec<String>) {
-    let mut args = vec!["--output-format", "editor-json", "--no-log", "--baseline-report", baseline.to_str().unwrap()];
+    let mut args = vec!["--output-format", "editor-json", "--no-log", "--whole-repo-rules", "--baseline-report", baseline.to_str().unwrap()];
     args.extend_from_slice(named);
     let (code, stdout, stderr) = run(root, &args, None);
     let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("not JSON ({}): {}\n{}", e, stdout, stderr));
@@ -4666,7 +4666,7 @@ fn record_stubs_judge_the_stub_next_to_a_named_hy() {
         ("app/core/other.hy", "(defrecord Other (#^ str a))\n".to_string()),
         ("app/core/other.pyi", "from dataclasses import dataclass\n@dataclass\nclass Other:\n    a: str\n".to_string()),
     ]);
-    let (code, stdout, stderr) = run(dir.path(), &["--no-log", "--output-format", "editor-json", "app/core/rows.hy"], None);
+    let (code, stdout, stderr) = run(dir.path(), &["--no-log", "--output-format", "editor-json", "--whole-repo-rules", "app/core/rows.hy"], None);
     let report: Value = serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{}: {}\n{}", e, stdout, stderr));
     assert_eq!(keys(&report, "DOEFF145"), vec!["app/core/rows.pyi::DOEFF145::Row".to_string()], "{}", report);
     assert_ne!(code, 0);

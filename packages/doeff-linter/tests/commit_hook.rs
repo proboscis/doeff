@@ -478,7 +478,7 @@ fn the_hook_lints_only_the_staged_paths_with_the_rules_judged_from_one_file() {
     git(root, &["add", "app/queue/main.hy"]);
     let got = doeff_linter::commit_hook::assess(&options_with(root, &linter, &side.path().join("cache"), 60));
     assert_eq!(got.code, 0, "{:?}", got);
-    let runs = recorded_runs(&log);
+    let runs = linting_runs(&log);
     assert!(!runs.is_empty(), "the child linter was not fired");
     for (enable, paths) in &runs {
         assert_eq!(enable, "DOEFF016", "a whole-repo rule was applied: {:?}", runs);
@@ -765,7 +765,9 @@ fn without_report_out_the_hook_writes_no_report_and_its_stderr_is_unchanged() {
 
     let (code, with_report) = hook_from(cwd.path(), root, &["--report-out", "report.json"]);
     assert_eq!(code, 1, "{}", with_report);
-    assert_eq!(with_report, plain, "the report outlet changed the stderr text");
+    // The second run of the same stage reads the kept answers (one line each) -- the rest of the text is the same.
+    let unreused = |text: &str| text.lines().filter(|l| !l.contains("reused the kept answer")).collect::<Vec<_>>().join("\n");
+    assert_eq!(unreused(&with_report), unreused(&plain), "the report outlet changed the stderr text");
     let report = read_report(&cwd.path().join("report.json"));
     assert_eq!(report["code"], 1);
     let stage = &report["measurements"][1];
@@ -1390,4 +1392,54 @@ fn a_root_below_the_git_root_passes_a_change_to_a_file_with_an_old_hit() {
     git(root, &["add", "pkg/src/app/flat.py"]);
     let (code, stderr) = hook(root, &["--config", "pkg/pyproject.toml", "--root", "pkg"]);
     assert_eq!(code, 0, "{}", stderr);
+}
+
+/// A second hook run of the same stage (the same worktree, linter build and commit) reads the answers the first kept for the HEAD version and the staged files,
+/// fires no child linter, and stops the same way.
+#[test]
+fn a_second_run_of_the_same_stage_reads_the_kept_answers_and_lints_no_file() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "app/queue/main.hy", "(defn cycle [] 2)\n");
+    git(root, &["add", "app/queue/main.hy"]);
+    let side = tempfile::TempDir::new().unwrap();
+    let (linter, log) = recording_linter(side.path());
+    let options = options_with(root, &linter, &side.path().join("cache"), 60);
+    let first = doeff_linter::commit_hook::assess(&options);
+    let fired = linting_runs(&log).len();
+    assert_eq!(fired, 2, "the HEAD version and the staged files, once each: {:?}", linting_runs(&log));
+    let second = doeff_linter::commit_hook::assess(&options);
+    assert_eq!(linting_runs(&log).len(), fired, "linted again: {:?}", linting_runs(&log));
+    assert!(second.lines.iter().any(|l| l.contains("reused the kept answer of the staged files (1 file(s), 0 linted again)")), "{:?}", second);
+    assert!(second.lines.iter().any(|l| l.contains("reused the kept answer of the HEAD version")), "{:?}", second);
+    assert_eq!(first.code, second.code);
+    assert_eq!(first.measurements, second.measurements);
+    let violations = |a: &doeff_linter::commit_hook::Assessment| a.lines.iter().filter(|l| !l.contains("reused")).cloned().collect::<Vec<_>>();
+    assert_eq!(violations(&first), violations(&second));
+}
+
+/// A staged file changed again in the working tree after staging: the kept answer is not read (the tip child reads the working tree), the line names why,
+/// and the run lints the staged files only.
+#[test]
+fn a_staged_file_changed_after_staging_is_linted_again_and_named() {
+    let dir = baseline_repo();
+    let root = dir.path();
+    write(root, "app/queue/main.hy", "(defk cycle [] 2)\n");
+    git(root, &["add", "app/queue/main.hy"]);
+    let side = tempfile::TempDir::new().unwrap();
+    let (linter, log) = recording_linter(side.path());
+    let options = options_with(root, &linter, &side.path().join("cache"), 60);
+    doeff_linter::commit_hook::assess(&options);
+    let fired = linting_runs(&log).len();
+    write(root, "app/queue/main.hy", "(defk cycle [] 3)\n");
+    let second = doeff_linter::commit_hook::assess(&options);
+    assert!(second.lines.iter().any(|l| l.contains("not reusing a kept answer of the staged files: app/queue/main.hy in the working tree differs from the stage")), "{:?}", second);
+    let runs = linting_runs(&log);
+    assert_eq!(runs.len(), fired + 2, "{:?}", runs);
+    assert!(runs[fired..].iter().all(|(_, paths)| paths == &vec!["app/queue/main.hy".to_string()]), "{:?}", runs);
+}
+
+/// The runs of a recorded child linter that linted paths (not the `--version` asked for the build).
+fn linting_runs(log: &Path) -> Vec<(String, Vec<String>)> {
+    recorded_runs(log).into_iter().filter(|(_, paths)| !paths.is_empty()).collect()
 }
