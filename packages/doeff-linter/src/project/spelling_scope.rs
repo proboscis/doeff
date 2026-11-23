@@ -121,14 +121,12 @@ pub fn selected_files(root: &Path, files: &[String], except: &[String]) -> Vec<S
     selected(root, files, except, Extensions::Code)
 }
 
-/// Files that match `:files` and do not match `:except` (naming how the extension is chosen).
-pub fn selected(root: &Path, files: &[String], except: &[String], extensions: Extensions) -> Vec<String> {
+/// Walks the deduplicated/collapsed leading directories of `globs` once and returns all candidate files matching `extensions` (sorted, deduplicated).
+pub fn walk_candidates<'g>(root: &Path, globs: impl Iterator<Item = &'g String>, extensions: Extensions) -> Vec<String> {
+    let raw_starts: Vec<std::path::PathBuf> = globs.map(|g| root.join(walk_base(g))).collect();
+    let starts = super::retired::collapse_walk_roots(raw_starts, SKIPPED_DIRS);
     let mut rels: Vec<String> = Vec::new();
-    for glob in files {
-        let base = root.join(walk_base(glob));
-        if !base.exists() {
-            continue;
-        }
+    for base in starts {
         let walker = walkdir::WalkDir::new(&base).follow_links(false).into_iter().filter_entry(|entry| {
             let name = entry.file_name().to_string_lossy();
             entry.depth() == 0 || !entry.file_type().is_dir() || !(name.starts_with('.') || SKIPPED_DIRS.contains(&name.as_ref()))
@@ -140,14 +138,21 @@ pub fn selected(root: &Path, files: &[String], except: &[String], extensions: Ex
                 .filter(|entry| {
                     extensions == Extensions::Any || entry.path().extension().is_some_and(|e| READ_EXTENSIONS.iter().any(|x| e == *x))
                 })
-                .filter_map(|entry| relative_path(root, entry.path()))
-                .filter(|rel| glob_matches(glob, rel))
-                .filter(|rel| !except.iter().any(|p| glob_matches(p, rel))),
+                .filter_map(|entry| relative_path(root, entry.path())),
         );
     }
     rels.sort();
     rels.dedup();
     rels
+}
+
+/// Files that match `:files` and do not match `:except` (naming how the extension is chosen).
+pub fn selected(root: &Path, files: &[String], except: &[String], extensions: Extensions) -> Vec<String> {
+    walk_candidates(root, files.iter(), extensions)
+        .into_iter()
+        .filter(|rel| files.iter().any(|glob| glob_matches(glob, rel)))
+        .filter(|rel| !except.iter().any(|p| glob_matches(p, rel)))
+        .collect()
 }
 
 /// The line (0-based) at a byte position in the text.
