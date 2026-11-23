@@ -38,9 +38,11 @@ use doeff_indexer::hy_index::reader::{Delim, Form, Node, Reader, StrKind};
 use doeff_indexer::hy_index::{matches_pattern, RawCatalog};
 use rayon::prelude::*;
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 use super::architecture::{mangle_dotted, RetiredCalls, RetiredWords, WordPlace, WorldTouch};
+use super::facts_cache::{self, Reach};
 use super::names::module_of;
 use super::paths::relative_path;
 use super::world_catalog::touch_of_raw;
@@ -49,7 +51,7 @@ use super::world_catalog::touch_of_raw;
 const SKIPPED_DIRS: &[&str] = &["node_modules", "target", "__pycache__", "venv", "site-packages"];
 
 /// One hit of a spelling decided not to be used.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WordHit {
     pub rel: String,
     /// Byte range of the matched spelling.
@@ -67,7 +69,7 @@ pub struct WordHit {
 }
 
 /// One hit of a call decided not to be used.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CallHit {
     pub rel: String,
     pub start: usize,
@@ -154,6 +156,8 @@ fn files_under(path: &Path) -> Vec<PathBuf> {
     if !path.is_dir() {
         return Vec::new();
     }
+    #[cfg(test)]
+    super::perf_counters::record_walk("retired", path);
     WalkDir::new(path)
         .follow_links(false)
         .into_iter()
@@ -167,13 +171,47 @@ fn files_under(path: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
+/// Deduplicates walk start paths and collapses child paths that are already covered by a kept ancestor directory's `WalkDir`.
+/// A child path is NOT collapsed under an ancestor if any directory component between the ancestor and the child would be pruned by `WalkDir`'s hidden/`skipped_dirs` filter
+/// (e.g. `.agents/code-quality.json` is kept even when repo root is also a start path).
+pub(super) fn collapse_walk_roots(starts: Vec<PathBuf>, skipped_dirs: &[&str]) -> Vec<PathBuf> {
+    let mut normalized: Vec<PathBuf> = starts
+        .into_iter()
+        .filter(|p| p.exists())
+        .map(|p| p.components().collect::<PathBuf>())
+        .collect();
+    normalized.sort_by(|a, b| a.components().count().cmp(&b.components().count()).then_with(|| a.cmp(b)));
+    normalized.dedup();
+    let mut kept: Vec<(PathBuf, bool)> = Vec::with_capacity(normalized.len());
+    for path in normalized {
+        let is_dir = path.is_dir();
+        let covered = kept.iter().any(|(ancestor, ancestor_is_dir)| {
+            if !*ancestor_is_dir {
+                return false;
+            }
+            let Ok(rel) = path.strip_prefix(ancestor) else { return false };
+            let comps: Vec<_> = rel.components().collect();
+            let dir_count = if is_dir { comps.len() } else { comps.len().saturating_sub(1) };
+            !comps[..dir_count].iter().any(|c| {
+                let name = c.as_os_str().to_string_lossy();
+                name.starts_with('.') || skipped_dirs.contains(&name.as_ref())
+            })
+        });
+        if !covered {
+            kept.push((path, is_dir));
+        }
+    }
+    kept.into_iter().map(|(p, _)| p).collect()
+}
+
 /// Candidate files for the declared glob (files) (in order of path from the root, no overlap) — only under focus if given, otherwise only the leading dir of the glob is
 /// walked (the common reading for rules judged per file — DOEFF144, 145, 150, 151). The glob selection (selected) is done by the caller.
 pub(super) fn candidate_files<'g>(root: &Path, files: impl Iterator<Item = &'g String>, focus: Option<&[PathBuf]>) -> Vec<(String, PathBuf)> {
-    let starts: Vec<PathBuf> = match focus {
+    let raw_starts: Vec<PathBuf> = match focus {
         Some(paths) => paths.to_vec(),
         None => files.map(|g| root.join(literal_head(g))).collect(),
     };
+    let starts = collapse_walk_roots(raw_starts, SKIPPED_DIRS);
     let mut found: Vec<(String, PathBuf)> = starts
         .iter()
         .flat_map(|start| files_under(start))
@@ -278,12 +316,11 @@ fn hy_docstring<'f>(source: &str, items: &'f [Form]) -> Option<&'f Form> {
     is_doc.then_some(*doc)
 }
 
-/// Uncounted ranges for Hy — `;` comments (from a `;` outside a string to end of line) and definition docstrings.
-fn hy_uncounted(source: &str) -> Vec<(usize, usize)> {
+/// Uncounted ranges for Hy from an already-parsed form tree — `;` comments (from a `;` outside a string to end of line) and definition docstrings.
+fn hy_uncounted_from_forms(source: &str, forms: &[Form]) -> Vec<(usize, usize)> {
     let mut strings = Vec::new();
     let mut out = Vec::new();
-    let mut reader = Reader::new(source, 0, source.len());
-    for form in &reader.read_all() {
+    for form in forms {
         hy_strings_and_docstrings(source, form, &mut strings, &mut out);
     }
     strings.sort();
@@ -435,12 +472,14 @@ fn is_python(rel: &str) -> bool {
 }
 
 /// Content read for :in lines — the source with uncounted ranges (comments, docstrings) blanked with spaces (byte positions and lines unchanged). None for `.md` files, which are not counted.
-fn counted_text(rel: &str, source: &str) -> Option<String> {
+fn counted_text_with_forms(rel: &str, source: &str, hy_forms: Option<&[Form]>) -> Option<String> {
     if rel.ends_with(".md") {
         return None;
     }
+    #[cfg(test)]
+    super::perf_counters::record_strip("retired", rel);
     let uncounted = if rel.ends_with(".hy") {
-        hy_uncounted(source)
+        hy_uncounted_from_forms(source, hy_forms.unwrap_or(&[]))
     } else if is_python(rel) {
         python_uncounted(source)
     } else {
@@ -549,41 +588,36 @@ fn python_contract_sites(source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// The content with the places that do not count the contract-spelling words blanked with spaces (same length and lines as counted) — in Hy, ordinary strings whose content is exactly that word, and
-/// names of field definitions in a defwire body and the name part of defsystem `:reads` / `:writes` strings that are exactly that word; in Python (`.py`, `.pyi`), unprefixed one-line strings whose content is exactly that word. None for groups
-/// with no contract-spelling words and for other kinds of file (nothing blanked).
-fn contract_blanked(rel: &str, source: &str, counted: &str, words: &BTreeSet<&str>) -> Option<String> {
+/// Blanks the pre-extracted contract-spelling candidate sites whose text matches `words` with spaces (same length and lines as `counted`).
+fn contract_blanked_from_sites(source: &str, counted: &str, sites: Option<&[(usize, usize)]>, words: &BTreeSet<&str>) -> Option<String> {
     if words.is_empty() {
         return None;
     }
-    let sites = if rel.ends_with(".hy") {
-        let mut sites = Vec::new();
-        let mut reader = Reader::new(source, 0, source.len());
-        for form in &reader.read_all() {
-            hy_contract_sites(source, form, &mut sites);
-        }
-        sites
-    } else if is_python(rel) {
-        python_contract_sites(source)
-    } else {
-        return None;
-    };
+    let sites = sites?;
     let mut bytes = counted.as_bytes().to_vec();
-    for (start, end) in sites.into_iter().filter(|&(start, end)| source.get(start..end).is_some_and(|text| words.contains(text))) {
+    for &(start, end) in sites.iter().filter(|&&(start, end)| source.get(start..end).is_some_and(|text| words.contains(text))) {
         // Ranges are exactly a word (no newline, on character boundaries), so blanking with ASCII spaces keeps it valid UTF-8.
         bytes[start..end].iter_mut().for_each(|b| *b = b' ');
     }
     Some(String::from_utf8(bytes).expect("blanked the whole word range"))
 }
 
-/// Per-line hits (:in lines). Matched against the content with comments and docstrings blanked (counted_text), with :rule-lines checked against the original lines. For words in the group's :contract-files
-/// spellings, search further in the content with the contract-spelling places (string content, defwire field definition names) blanked (contract_blanked).
-fn line_hits(rel: &str, source: &str, counted: Option<&str>, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
+/// Per-line hits (:in lines). Matched against the content with comments and docstrings blanked (`counted`), with :rule-lines checked against the original lines. For words in the group's :contract-files
+/// spellings, search further in the content with the contract-spelling places (string content, defwire field definition names) blanked (`contract_blanked_from_sites`).
+fn line_hits(
+    rel: &str,
+    source: &str,
+    counted: Option<&str>,
+    contract_sites: Option<&[(usize, usize)]>,
+    group: &RetiredWords,
+    patterns: &[Regex],
+    contract_words: &BTreeSet<&str>,
+) -> Vec<WordHit> {
     let mut out = Vec::new();
     let Some(counted) = counted else {
         return out;
     };
-    let blanked = contract_blanked(rel, source, counted, &group.contracts.words_in(&group.words));
+    let blanked = contract_blanked_from_sites(source, counted, contract_sites, contract_words);
     let words_text = blanked.as_deref().unwrap_or(counted);
     let mut offset = 0;
     for ((line, masked), words_line) in source.split_inclusive('\n').zip(counted.split_inclusive('\n')).zip(words_text.split_inclusive('\n')) {
@@ -639,12 +673,11 @@ fn hy_definition_names(source: &str, form: &Form, out: &mut Vec<(usize, usize)>)
     }
 }
 
-/// Ranges of definition names (Hy and Python; none for other files).
-fn definition_names(rel: &str, source: &str) -> Vec<(usize, usize)> {
+/// Ranges of definition names (Hy from already-parsed forms, Python via regex; none for other files).
+fn definition_names_with_forms(rel: &str, source: &str, hy_forms: Option<&[Form]>) -> Vec<(usize, usize)> {
     let mut out = Vec::new();
     if rel.ends_with(".hy") {
-        let mut reader = Reader::new(source, 0, source.len());
-        for form in &reader.read_all() {
+        for form in hy_forms.unwrap_or(&[]) {
             hy_definition_names(source, form, &mut out);
         }
     } else if is_python(rel) {
@@ -656,10 +689,10 @@ fn definition_names(rel: &str, source: &str) -> Vec<(usize, usize)> {
     out
 }
 
-/// Hits of definition names (:in names).
-fn name_hits(rel: &str, source: &str, group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
+/// Hits of definition names (:in names) using pre-extracted definition-name ranges.
+fn name_hits(rel: &str, source: &str, def_names: &[(usize, usize)], group: &RetiredWords, patterns: &[Regex]) -> Vec<WordHit> {
     let mut out = Vec::new();
-    for (start, end) in definition_names(rel, source) {
+    for &(start, end) in def_names {
         let name = &source[start..end];
         for (s, e, spelling, detail) in match_group(name, name, group, patterns) {
             out.push(WordHit {
@@ -721,23 +754,129 @@ fn hy_calls(source: &str, form: &Form, group: &RetiredCalls, rel: &str, out: &mu
     }
 }
 
-/// Groups with regular expressions already built (not rebuilt per file — built only once across all of agora).
+/// Pre-split anchored glob segments to avoid per-file Vec allocations across hundreds of globs.
+struct CompiledSelection<'a> {
+    files: Vec<Vec<&'a str>>,
+    except: Vec<Vec<&'a str>>,
+}
+
+impl<'a> CompiledSelection<'a> {
+    fn new(files: &'a [String], except: &'a [String]) -> Self {
+        let split = |globs: &'a [String]| globs.iter().map(|g| g.split('/').filter(|p| !p.is_empty()).collect()).collect();
+        CompiledSelection { files: split(files), except: split(except) }
+    }
+
+    fn matches(&self, path_parts: &[&str]) -> bool {
+        self.files.iter().any(|g| super::paths::segments_match(g, path_parts))
+            && !self.except.iter().any(|g| super::paths::segments_match(g, path_parts))
+    }
+}
+
+struct PreparedWordGroup<'a> {
+    group: &'a RetiredWords,
+    patterns: Vec<Regex>,
+    selection: CompiledSelection<'a>,
+    contract_words: BTreeSet<&'a str>,
+}
+
+struct PreparedCallGroup<'a> {
+    group: &'a RetiredCalls,
+    selection: CompiledSelection<'a>,
+}
+
+/// Groups with regular expressions and glob segments already built (not rebuilt per file — built only once across all of agora).
 pub struct Prepared<'a> {
-    words: Vec<(&'a RetiredWords, Vec<Regex>)>,
-    calls: &'a [RetiredCalls],
+    words: Vec<PreparedWordGroup<'a>>,
+    calls: Vec<PreparedCallGroup<'a>>,
     parts: &'a PartCalls,
 }
 
 impl<'a> Prepared<'a> {
     pub fn new(words: &'a [RetiredWords], calls: &'a [RetiredCalls], parts: &'a PartCalls) -> Prepared<'a> {
         // These are regular expressions already checked at read time (architecture.rs), so failing to read them here cannot happen.
-        let words = words.iter().map(|g| (g, g.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect())).collect();
+        let words = words
+            .iter()
+            .map(|g| PreparedWordGroup {
+                group: g,
+                patterns: g.patterns.iter().filter_map(|p| Regex::new(p).ok()).collect(),
+                selection: CompiledSelection::new(&g.files, &g.except),
+                contract_words: g.contracts.words_in(&g.words),
+            })
+            .collect();
+        let calls = calls
+            .iter()
+            .map(|g| PreparedCallGroup { group: g, selection: CompiledSelection::new(&g.files, &g.except) })
+            .collect();
         Prepared { words, calls, parts }
     }
 
     /// Whether any group looks at file rel.
     fn wants(&self, rel: &str) -> bool {
-        self.words.iter().any(|(g, _)| selected(rel, &g.files, &g.except)) || self.calls.iter().any(|g| rel.ends_with(".hy") && selected(rel, &g.files, &g.except))
+        let parts: Vec<&str> = rel.split('/').collect();
+        self.words.iter().any(|g| g.selection.matches(&parts))
+            || (rel.ends_with(".hy") && self.calls.iter().any(|g| g.selection.matches(&parts)))
+    }
+}
+
+/// Lazily memoized per-file parse and derived views so each file is parsed, comment-stripped, and scanned at most once across all groups.
+struct FileAnalysis<'a> {
+    rel: &'a str,
+    source: &'a str,
+    hy_forms: Option<Vec<Form>>,
+    counted: Option<Option<String>>,
+    def_names: Option<Vec<(usize, usize)>>,
+    contract_sites: Option<Option<Vec<(usize, usize)>>>,
+}
+
+impl<'a> FileAnalysis<'a> {
+    fn new(rel: &'a str, source: &'a str) -> Self {
+        Self { rel, source, hy_forms: None, counted: None, def_names: None, contract_sites: None }
+    }
+
+    fn ensure_hy_forms(&mut self) {
+        if self.hy_forms.is_none() && self.rel.ends_with(".hy") {
+            #[cfg(test)]
+            super::perf_counters::record_parse("retired", self.rel);
+            self.hy_forms = Some(Reader::new(self.source, 0, self.source.len()).read_all());
+        }
+    }
+
+    fn ensure_counted(&mut self) {
+        if self.counted.is_none() {
+            if self.rel.ends_with(".hy") && !self.rel.ends_with(".md") {
+                self.ensure_hy_forms();
+            }
+            let text = counted_text_with_forms(self.rel, self.source, self.hy_forms.as_deref());
+            self.counted = Some(text);
+        }
+    }
+
+    fn ensure_def_names(&mut self) {
+        if self.def_names.is_none() {
+            if self.rel.ends_with(".hy") {
+                self.ensure_hy_forms();
+            }
+            let names = definition_names_with_forms(self.rel, self.source, self.hy_forms.as_deref());
+            self.def_names = Some(names);
+        }
+    }
+
+    fn ensure_contract_sites(&mut self) {
+        if self.contract_sites.is_none() {
+            let sites = if self.rel.ends_with(".hy") {
+                self.ensure_hy_forms();
+                let mut out = Vec::new();
+                for form in self.hy_forms.as_deref().unwrap_or(&[]) {
+                    hy_contract_sites(self.source, form, &mut out);
+                }
+                Some(out)
+            } else if is_python(self.rel) {
+                Some(python_contract_sites(self.source))
+            } else {
+                None
+            };
+            self.contract_sites = Some(sites);
+        }
     }
 }
 
@@ -746,25 +885,43 @@ pub fn judge(rel: &str, source: &str, words: &[RetiredWords], calls: &[RetiredCa
     judge_prepared(rel, source, &Prepared::new(words, calls, parts))
 }
 
-/// Match one file against the groups already built.
+/// Match one file against the groups already built (parsing, comment-stripping, and extracting definition/contract sites at most once per file).
 fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>, Vec<CallHit>) {
     let mut word_hits = Vec::new();
-    // The content with comments and docstrings blanked is built only once per file (only when there is an :in lines group).
-    let mut counted: Option<Option<String>> = None;
-    for (group, patterns) in prepared.words.iter().filter(|(g, _)| selected(rel, &g.files, &g.except)) {
-        word_hits.extend(match group.place {
-            WordPlace::Lines => line_hits(rel, source, counted.get_or_insert_with(|| counted_text(rel, source)).as_deref(), group, patterns),
-            WordPlace::Names => name_hits(rel, source, group, patterns),
-            WordPlace::Paths => path_hits(rel, group, patterns),
-        });
+    let mut analysis = FileAnalysis::new(rel, source);
+    let rel_parts: Vec<&str> = rel.split('/').collect();
+    for entry in prepared.words.iter().filter(|g| g.selection.matches(&rel_parts)) {
+        match entry.group.place {
+            WordPlace::Lines => {
+                analysis.ensure_counted();
+                if !entry.contract_words.is_empty() && analysis.counted.as_ref().and_then(|c| c.as_deref()).is_some() {
+                    analysis.ensure_contract_sites();
+                }
+                let counted = analysis.counted.as_ref().and_then(|c| c.as_deref());
+                let sites = analysis.contract_sites.as_ref().and_then(|s| s.as_deref());
+                word_hits.extend(line_hits(rel, source, counted, sites, entry.group, &entry.patterns, &entry.contract_words));
+            }
+            WordPlace::Names => {
+                analysis.ensure_def_names();
+                let names = analysis.def_names.as_deref().unwrap_or(&[]);
+                word_hits.extend(name_hits(rel, source, names, entry.group, &entry.patterns));
+            }
+            WordPlace::Paths => {
+                word_hits.extend(path_hits(rel, entry.group, &entry.patterns));
+            }
+        }
     }
     let mut call_hits = Vec::new();
-    let call_groups: Vec<&RetiredCalls> = prepared.calls.iter().filter(|g| rel.ends_with(".hy") && selected(rel, &g.files, &g.except)).collect();
+    let call_groups: Vec<&RetiredCalls> = if rel.ends_with(".hy") {
+        prepared.calls.iter().filter(|g| g.selection.matches(&rel_parts)).map(|g| g.group).collect()
+    } else {
+        Vec::new()
+    };
     if !call_groups.is_empty() {
-        let mut reader = Reader::new(source, 0, source.len());
-        let forms = reader.read_all();
+        analysis.ensure_hy_forms();
+        let forms = analysis.hy_forms.as_deref().unwrap_or(&[]);
         for group in call_groups {
-            for form in &forms {
+            for form in forms {
                 hy_calls(source, form, group, rel, &mut call_hits);
             }
         }
@@ -775,20 +932,53 @@ fn judge_prepared(rel: &str, source: &str, prepared: &Prepared) -> (Vec<WordHit>
     (word_hits, call_hits)
 }
 
-/// Read and judge the files matching the declared groups (only files under focus if given). Files that cannot be read return a reason.
+/// Per-file cached verdict of `retired::find` (path-free so `objects/` is shared across worktrees; `source` is kept only for files that have hits).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+enum CachedRetiredFile {
+    Clean,
+    Hits { rel: String, source: String, words: Vec<WordHit>, calls: Vec<CallHit> },
+    Error(String),
+}
+
+/// Read and judge the files matching the declared groups (only files under focus if given), backed by `facts_cache` keyed by the group definitions.
+/// Files that cannot be read return a reason.
 pub fn find(root: &Path, words: &[RetiredWords], calls: &[RetiredCalls], parts: &PartCalls, focus: Option<&[PathBuf]>) -> (Vec<FileHits>, Vec<String>) {
     let prepared = Prepared::new(words, calls, parts);
     let globs = words.iter().flat_map(|g| g.files.iter()).chain(calls.iter().flat_map(|g| g.files.iter()));
-    judge_files(
-        root,
-        globs,
-        focus,
-        |rel, _| prepared.wants(rel),
-        |rel, path, source| {
-            let (word_hits, call_hits) = judge_prepared(&rel, &source, &prepared);
-            Ok((!word_hits.is_empty() || !call_hits.is_empty()).then(|| FileHits { rel, path, source, words: word_hits, calls: call_hits }))
-        },
-    )
+    let wanted: Vec<(String, PathBuf)> = candidate_files(root, globs, focus).into_iter().filter(|(rel, _)| prepared.wants(rel)).collect();
+    if wanted.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+    let key = facts_cache::hash_key(&(words, calls, &parts.by_module));
+    let reach = if focus.is_some() { Reach::Named } else { Reach::Whole };
+    let cached: Vec<CachedRetiredFile> = facts_cache::per_file_compact_keyed_in(reach, root, "retired", &key, &wanted, |rel, path| {
+        #[cfg(test)]
+        super::perf_counters::record_read("retired", rel);
+        match std::fs::read_to_string(path) {
+            Ok(source) => {
+                let (word_hits, call_hits) = judge_prepared(rel, &source, &prepared);
+                if word_hits.is_empty() && call_hits.is_empty() {
+                    Some(CachedRetiredFile::Clean)
+                } else {
+                    Some(CachedRetiredFile::Hits { rel: rel.to_string(), source, words: word_hits, calls: call_hits })
+                }
+            }
+            Err(error) => Some(CachedRetiredFile::Error(format!("{}: cannot read: {}", rel, error))),
+        }
+    });
+    let mut found = Vec::new();
+    let mut errors = Vec::new();
+    for item in cached {
+        match item {
+            CachedRetiredFile::Clean => {}
+            CachedRetiredFile::Hits { rel, source, words, calls } => {
+                let path = root.join(&rel);
+                found.push(FileHits { rel, path, source, words, calls });
+            }
+            CachedRetiredFile::Error(error) => errors.push(error),
+        }
+    }
+    (found, errors)
 }
 
 /// The common reading for rules judged per file (DOEFF144, 145, 150, 151) — read in parallel the files that wants selected among the declared glob candidates (only under focus if given),
