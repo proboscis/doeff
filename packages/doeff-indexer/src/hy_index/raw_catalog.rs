@@ -61,7 +61,7 @@ impl RawCategory {
 }
 
 /// Evidence picked up by method name alone (weak), and the module that is the condition for counting it.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct RawMethod {
     pub name: String,
         /// Counted only when this module looks like an import of the file or a reference inside a definition. If empty, always counted.
@@ -74,7 +74,7 @@ pub struct RawMethod {
 }
 
 /// The catalog for one classification.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct RawCatalogEntry {
     pub category: RawCategory,
     pub patterns: Vec<String>,
@@ -83,7 +83,7 @@ pub struct RawCatalogEntry {
 }
 
 /// The whole catalog.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
 pub struct RawCatalog {
     pub categories: Vec<RawCatalogEntry>,
         /// Names that match a pattern but are not side effects (pure modules, lowercase exception types).
