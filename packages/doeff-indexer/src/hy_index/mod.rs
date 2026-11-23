@@ -36,7 +36,7 @@ pub use model::{
     TypeNote,
 };
 pub use position::LineIndex;
-pub use raw::{annotate as annotate_raw, matches_pattern, ViaTrace};
+pub use raw::{annotate as annotate_raw, annotate_via, matches_pattern, CompiledRawCatalog, ViaTrace};
 pub use raw_catalog::{RawCatalog, RawCategory};
 
 /// The catalog used to judge raw side effects, and reasons for values in user additions that could not be read.
