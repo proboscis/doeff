@@ -365,6 +365,9 @@ TOUR_SCRIPTS = {
 }
 # The tests run with pytest in the copied dir (the dir's pytest.ini makes it pytest's root). test_spire.py runs in its own dir (SPIRE_TEST_FILES).
 TOUR_TEST_FILES = ("test_trading.py",)
+# The tests of the dir that need a package besides doeff (clocks.py needs doeff-time), so a core-only venv cannot run them:
+# tests/test_docs_article_algebraic_effects.py runs them against the repo.
+TOUR_TEST_FILES_BEYOND_CORE = ("test_clocks.py",)
 
 
 @dataclass(frozen=True)
