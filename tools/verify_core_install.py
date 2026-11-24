@@ -278,18 +278,18 @@ SPIRE_TEST_FILES = (
 )
 SPIRE_FIRST_LINE = "1. a scripted player on seed 7, on screen"
 SPIRE_LAST_LINES = (
-    "  -> ('win', 6)",
+    "  -> ('win', 7)",
     "2. a random bot on seed 3",
-    "  -> ('win', 4)",
+    "  -> ('lose', 8)",
     "3. record that fight, then replay it with no dice and no player",
-    "  -> ('win', 4) ('win', 4) same: True tape: 32 answers",
+    "  -> ('lose', 8) ('lose', 8) same: True tape: 58 answers",
     "4. a Monte Carlo bot on seed 3",
-    "  -> ('win', 4)",
+    "  -> ('win', 3)",
     "5. 100 fights, one task each: random bot vs Monte Carlo bot",
-    "  -> random bot wins 0.73",
+    "  -> random bot wins 0.79",
     "  -> monte carlo wins 1.0",
     "6. damage by card over 100 random fights",
-    "  -> {'Strike': 3663, 'Defend': 0, 'Bash': 632}",
+    "  -> {'Strike': 2949, 'Bash': 688, 'Poison': 633, 'Defend': 0}",
 )
 
 

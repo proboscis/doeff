@@ -105,10 +105,12 @@ Follow the run of `budget(5)(research(TOPICS))` below: `k` is a value, and the h
 
 ## One program, layer by layer
 
-`battle` is a small deck-building fight in the spirit of the game Slay the Spire. It yields four kinds of effect: `Roll`, `Choose`, `Show` and `Played`. Nothing in it says where the random numbers come from, who picks the cards, whether there is a screen, or whether anyone is counting. In every layer below, `battle` is the same function.
+`battle` is a small deck-building fight in the spirit of the game Slay the Spire. It asks the outside world for four things, each with an effect: `Roll`, `Choose`, `Show` and `Played`. Nothing in it says where the random numbers come from, who picks the cards, whether there is a screen, or whether anyone is counting. In every layer below, `battle` is the same function.
+
+One card lasts longer than its turn. Poison deals 3 damage at the end of each of the next three turns, and it is written as what it is, a loop that waits. `battle` starts `poison` as a task of its own with `Spawn`, and `poison` waits for the end of each turn with one more effect, `TurnEnds`. Two handlers give it that time, and they are in every stack below: `turns()`, the game's turn clock, just outside `battle`, and `scheduled`, doeff's scheduler, outermost. [Time is a handler too](#time-is-a-handler-too-turns-and-seconds) shows the clock.
 
 <details markdown="1">
-<summary>spire.py (excerpt): the four effects and <code>battle</code></summary>
+<summary>spire.py (excerpt): the effects, <code>poison</code> and <code>battle</code></summary>
 
 ~~~python
 # spire.py (excerpt)
@@ -116,7 +118,7 @@ import random
 import sys
 from dataclasses import dataclass, replace
 
-from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
+from doeff import CompletePromise, CreatePromise, EffectBase, Gather, Resume, Spawn, Wait, do, handler, run
 from doeff_core_effects import scheduled
 
 
@@ -144,9 +146,24 @@ class Played(EffectBase):  # "a card was played" (for statistics)
     damage: int
 
 
+@dataclass(frozen=True)
+class TurnEnds(EffectBase):  # a lasting card effect: "wait for the end of the turn"
+    pass
+
+
+@dataclass(frozen=True)
+class Hurt(EffectBase):  # a lasting card effect deals damage to the enemy
+    n: int
+
+
+@dataclass(frozen=True)
+class EndTurn(EffectBase):  # the fight: "the turn is over"; the answer is what the lasting effects dealt
+    pass
+
+
 # ---- The game: plain data and one @do program.
-CARDS = {"Strike": (1, 6, 0), "Defend": (1, 0, 5), "Bash": (2, 8, 0)}  # cost, damage, block
-DECK = ("Strike",) * 5 + ("Defend",) * 4 + ("Bash",)
+CARDS = {"Strike": (1, 6, 0), "Defend": (1, 0, 5), "Bash": (2, 8, 0), "Poison": (1, 0, 0)}  # cost, damage, block
+DECK = ("Strike",) * 4 + ("Defend",) * 4 + ("Bash", "Poison")
 
 
 @dataclass(frozen=True)
@@ -193,6 +210,13 @@ def hit(s: Fight, card: str) -> Hit:
 
 
 @do
+def poison(n: int, turns: int):  # a lasting card effect: n damage at the end of each of the next turns
+    for _ in range(turns):
+        yield TurnEnds()
+        yield Hurt(n)
+
+
+@do
 def battle(s: Fight = Fight()):
     """Fight to the end. Returns ("win" | "lose", the turn it ended on)."""
     while s.hp > 0 and s.enemy_hp > 0:
@@ -210,9 +234,18 @@ def battle(s: Fight = Fight()):
             dealt = hit(s, card)
             s = replace(dealt.state, discard=dealt.state.discard + (card,))
             yield Played(card, dealt.damage)
+            if card == "Poison":
+                yield Spawn(poison(3, turns=3), daemon=True)  # a task of its own: it outlives this turn
             if s.enemy_hp <= 0:
                 return "win", s.turn
         s = replace(s, discard=s.discard + hand)
+        poisoned = yield EndTurn()  # every lasting effect that waits runs up to its next wait
+        if poisoned:
+            s = replace(s, enemy_hp=s.enemy_hp - poisoned)
+            yield Played("Poison", poisoned)
+            yield Show(f"   poison deals {poisoned}")
+            if s.enemy_hp <= 0:
+                return "win", s.turn
         intent = yield Roll(3)  # the enemy: 0 chomp 11, 1 thrash 7, 2 bellow (+3 strength)
         if intent == 2:
             s = replace(s, enemy_strength=s.enemy_strength + 3)
@@ -234,7 +267,7 @@ Here are the stacks the layers below build, one per step, with `battle` unchange
 
 ### Layer 1: a scripted player and a screen
 
-`scripted` answers `Choose` from a list, and `dice(7)` answers `Roll` from a seeded generator. The same seed and script give the same fight on every run, so a bug report becomes a seed and a list of moves.
+`scripted` answers `Choose` from a list, and `dice(7)` answers `Roll` from a seeded generator. The same seed and script give the same fight on every run, so a bug report becomes a seed and a list of moves. On this seed the script plays the Poison on turn 5, and the poison is still dealing on turn 7, where it ends the fight.
 
 <details markdown="1">
 <summary>The handlers of Layer 1, the run and what it prints</summary>
@@ -285,27 +318,35 @@ def quiet_stats(effect: Played, k):
 
 ~~~python
 moves = [0, 0, 0, None] * 20
-print(run(quiet_stats(printed(dice(7)(scripted(moves)(battle()))))))
+print(run(scheduled(quiet_stats(printed(dice(7)(scripted(moves)(turns()(battle()))))))))
 ~~~
 
 ~~~text
-    T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike
-    T1 you 40 (5 block) | enemy 44 | 2 energy | Strike Defend Defend Strike
-    T1 you 40 (5 block) | enemy 38 | 1 energy | Defend Defend Strike
-       enemy hits for 11, you take 1
-    T2 you 39 (0 block) | enemy 38 | 3 energy | Bash Strike Strike Strike Defend
+    T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Bash Defend Strike
+    T1 you 40 (5 block) | enemy 44 | 2 energy | Strike Bash Defend Strike
+    T1 you 40 (5 block) | enemy 38 | 1 energy | Bash Defend Strike
+       enemy hits for 11, you take 6
+    T2 you 34 (0 block) | enemy 38 | 3 energy | Poison Strike Defend Strike Defend
        enemy hits for 11, you take 11
-    T3 you 28 (0 block) | enemy 38 | 3 energy | Strike Strike Strike Defend Defend
-    T3 you 28 (0 block) | enemy 32 | 2 energy | Strike Strike Defend Defend
-    T3 you 28 (0 block) | enemy 26 | 1 energy | Strike Defend Defend
-       enemy hits for 11, you take 11
-    T4 you 17 (0 block) | enemy 20 | 3 energy | Defend Strike Defend Strike Bash
+    T3 you 23 (0 block) | enemy 38 | 3 energy | Strike Defend Strike Defend Defend
+    T3 you 23 (0 block) | enemy 32 | 2 energy | Defend Strike Defend Defend
+    T3 you 23 (5 block) | enemy 32 | 1 energy | Strike Defend Defend
+       enemy hits for 11, you take 6
+    T4 you 17 (0 block) | enemy 26 | 3 energy | Defend Strike Bash Strike Poison
        enemy bellows
-    T5 you 17 (0 block) | enemy 20 | 3 energy | Bash Strike Defend Strike Defend
-    T5 you 17 (0 block) | enemy 12 | 1 energy | Strike Defend Strike Defend
+    T5 you 17 (0 block) | enemy 26 | 3 energy | Poison Strike Bash Defend Defend
+    T5 you 17 (0 block) | enemy 26 | 2 energy | Strike Bash Defend Defend
+    T5 you 17 (0 block) | enemy 20 | 1 energy | Bash Defend Defend
+       poison deals 3
        enemy hits for 14, you take 14
-    T6 you 3 (0 block) | enemy 3 | 3 energy | Strike Defend Defend Strike Strike
-('win', 6)
+    T6 you 3 (0 block) | enemy 17 | 3 energy | Strike Defend Defend Strike Strike
+       poison deals 3
+       enemy bellows
+    T7 you 3 (0 block) | enemy 14 | 3 energy | Strike Strike Defend Poison Strike
+    T7 you 3 (0 block) | enemy 8 | 2 energy | Strike Defend Poison Strike
+    T7 you 3 (0 block) | enemy 2 | 1 energy | Defend Poison Strike
+       poison deals 3
+('win', 7)
 ~~~
 
 </details>
@@ -332,18 +373,18 @@ def random_bot(effect: Choose, k):
 ~~~
 
 ~~~python
-print(run(quiet_stats(silent(dice(3)(random_bot(battle()))))))
+print(run(scheduled(quiet_stats(silent(dice(3)(random_bot(turns()(battle()))))))))
 ~~~
 
 ~~~text
-('win', 4)
+('lose', 8)
 ~~~
 
 </details>
 
 ### Layer 3: record and replay
 
-`record` passes each effect on and keeps the answer, and `replay` answers from the tape. The 32 answers are the whole fight: keep them with a crash report, and the crash happens again, move for move.
+`record` passes each effect on and keeps the answer, and `replay` answers from the tape. The 58 answers are the whole fight: keep them with a crash report, and the crash happens again, move for move. The poison is not on the tape. It asks the outside world for nothing, so the replayed fight simply runs it again.
 
 <details markdown="1">
 <summary><code>record</code> and <code>replay</code>, the runs and what they print</summary>
@@ -375,13 +416,13 @@ def replay(tape: list):
 
 ~~~python
 tape: list = []
-first = run(quiet_stats(silent(dice(3)(random_bot(record(tape)(battle()))))))
-again = run(quiet_stats(silent(replay(tape)(battle()))))
+first = run(scheduled(quiet_stats(silent(dice(3)(random_bot(record(tape)(turns()(battle()))))))))
+again = run(scheduled(quiet_stats(silent(replay(tape)(turns()(battle()))))))
 print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 ~~~
 
 ~~~text
-('win', 4) ('win', 4) same: True tape: 32 answers
+('lose', 8) ('lose', 8) same: True tape: 58 answers
 ~~~
 
 </details>
@@ -394,7 +435,7 @@ print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 
 [The same video as an mp4 file (1:11)](../assets/videos/article-monte-carlo.mp4)
 
-To answer `Choose`, `monte_carlo` runs `battle` itself, many times, each time as a new run from the state after a candidate move, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight, and none of them runs `k`: the handler resumes `k` once, with the move it picks. The playouts are rough: each starts from the next turn's draw, and three per move is very few. The next layer measures how much better the bot plays anyway.
+To answer `Choose`, `monte_carlo` runs `battle` itself, many times, each time as a new run from the state after a candidate move, while the fight that asked stays paused as `k`. It needs no model of the game: it plays the real `battle`, so when a card changes, the bot plays the changed card. The runs inside the handler have their own stacks, so they do not use up the dice of the paused fight, and none of them runs `k`: the handler resumes `k` once, with the move it picks. The playouts are rough: each starts from the next turn's draw, a poison that is still running is not in the state it starts from, and three per move is very few. The next layer measures how much better the bot plays anyway.
 
 <details markdown="1">
 <summary><code>monte_carlo</code>, the run and what it prints</summary>
@@ -407,7 +448,7 @@ def monte_carlo(playouts: int):
     The handler runs `battle` itself, under dice and a random bot, and picks the move with the
     most wins. The paused fight's `k` is not run by the playouts: it is resumed once, with that
     move. A playout starts from the next turn's draw, which is a cheap approximation of "the
-    rest of this turn".
+    rest of this turn", and a poison that is still running is not in the state it starts from.
     """
 
     @handler
@@ -420,7 +461,7 @@ def monte_carlo(playouts: int):
                 if s.enemy_hp <= 0:
                     wins += 1
                     continue
-                result, _ = run(quiet_stats(silent(dice(n)(random_bot(battle(s))))))
+                result, _ = run(scheduled(quiet_stats(silent(dice(n)(random_bot(turns()(battle(s))))))))
                 wins += result == "win"
             if wins / playouts > best_score:
                 best, best_score = i, wins / playouts
@@ -432,11 +473,11 @@ PLAYOUTS = 3  # per candidate move; the 100 Monte Carlo fights take well under a
 ~~~
 
 ~~~python
-print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
+print(run(scheduled(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(turns()(battle()))))))))
 ~~~
 
 ~~~text
-('win', 4)
+('win', 3)
 ~~~
 
 </details>
@@ -449,7 +490,7 @@ print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(battle()))))))
 
 [The same video as an mp4 file (1:42)](../assets/videos/article-hundred-fights.mp4)
 
-`win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks take turns on one thread: `scheduled` switches only at an effect it answers itself, such as `Spawn`, so here each fight runs to its end before the next one starts. On the same hundred seeds, the random bot wins 73 fights and the Monte Carlo bot wins all 100.
+`win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks take turns on one thread: `scheduled` switches only at an effect it answers itself, such as a `Spawn` or the end of a turn that a poison is waiting for. Between two of those a fight runs alone, so the hundred fights overlap and none of them needs a lock. On the same hundred seeds, the random bot wins 79 fights and the Monte Carlo bot wins all 100.
 
 <details markdown="1">
 <summary><code>win_rate</code>, the runs and what they print</summary>
@@ -461,7 +502,7 @@ def win_rate(player, fights: int):
     """The same battle `fights` times, one task per seed; returns the share of wins."""
     tasks = []
     for seed in range(fights):
-        tasks.append((yield Spawn(silent(dice(seed)(player(battle()))))))
+        tasks.append((yield Spawn(silent(dice(seed)(player(turns()(battle())))))))
     results = yield Gather(*tasks)
     return sum(r == "win" for r, _ in results) / fights
 ~~~
@@ -472,7 +513,7 @@ print("monte carlo wins", run(scheduled(quiet_stats(win_rate(monte_carlo(PLAYOUT
 ~~~
 
 ~~~text
-random bot wins 0.73
+random bot wins 0.79
 monte carlo wins 1.0
 ~~~
 
@@ -480,7 +521,7 @@ monte carlo wins 1.0
 
 ### Layer 6: a damage count per card
 
-`damage_stats` takes the place of `quiet_stats`, outside `win_rate`. An effect a task's own handlers do not take travels out past the `Spawn`, so the `Played` of all hundred fights reach this one handler.
+`damage_stats` takes the place of `quiet_stats`, outside `win_rate`. An effect a task's own handlers do not take travels out past the `Spawn`, so the `Played` of all hundred fights reach this one handler. The damage of a poison is counted when it lands, at the end of a turn.
 
 <details markdown="1">
 <summary><code>damage_stats</code>, the run and what it prints</summary>
@@ -505,7 +546,7 @@ print(totals)
 ~~~
 
 ~~~text
-{'Strike': 3663, 'Defend': 0, 'Bash': 632}
+{'Strike': 2949, 'Bash': 688, 'Poison': 633, 'Defend': 0}
 ~~~
 
 </details>
@@ -533,7 +574,7 @@ def play() -> None:
     """A fight against the enemy, played by a person; the dice are seeded by the system."""
     seed = random.SystemRandom().randrange(10**6)
     print(f"seed {seed}")
-    print("->", run(quiet_stats(printed(dice(seed)(human(battle()))))))
+    print("->", run(scheduled(quiet_stats(printed(dice(seed)(human(turns()(battle()))))))))
 ~~~
 
 ~~~bash
@@ -544,7 +585,7 @@ python spire.py play
 
 ### The stacks side by side
 
-`battle` is the same function in every stack, and some of them replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot: keep the answer, yield an effect of their own, hold the paused fight as `k`.
+`battle` is the same function in every stack, and some of them replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot: keep the answer, yield an effect of their own, hold the paused fight as `k`. Every stack also has the turn clock `turns()` innermost and `scheduled` outermost, which the table leaves out.
 
 | Run | Layers around `battle`, from the inside out | What changes |
 |---|---|---|
@@ -559,7 +600,7 @@ python spire.py play
 
 ## One mechanism under all of it
 
-Every handler in this post is a function of `(effect, k)`. `Spawn` and `Gather` come from doeff's packages, and `scheduled` is a reference handler for them, written in the same form as `dice`. Nothing makes these effects special: any handler can answer them instead.
+Every handler in this post is a function of `(effect, k)`. `Spawn`, `Gather`, `Wait` and the promise effects come from doeff's packages, and `scheduled` is a reference handler for them, written in the same form as `dice`. Nothing makes these effects special: any handler can answer them instead.
 
 | The program yields | Handlers in this post |
 |---|---|
@@ -567,7 +608,8 @@ Every handler in this post is a function of `(effect, k)`. `Spawn` and `Gather` 
 | `Choose(state, hand, energy)` | `scripted(moves)`, `random_bot`, `monte_carlo(PLAYOUTS)`, `human`, and the same `record(tape)` and `replay(tape)` |
 | `Show(text)` | `printed`, `silent` |
 | `Played(card, damage)` | `quiet_stats`, `damage_stats(totals)` |
-| `Spawn(program)`, `Gather(*tasks)` | `scheduled` |
+| `TurnEnds()`, `Hurt(n)`, `EndTurn()` | `turns()`, which waits on a promise of `scheduled` |
+| `Spawn(program)`, `Gather(*tasks)`, `Wait(future)`, `CreatePromise()`, `CompletePromise(promise, value)` | `scheduled` |
 
 The other effects that doeff's packages define work the same way, and you can install your own handler instead:
 
@@ -581,17 +623,19 @@ The other effects that doeff's packages define work the same way, and you can in
 
 ## Time is a handler too: turns and seconds
 
-A game has more than one kind of time. A poison lasts five turns. A damage number rises on the screen for 0.4 seconds. Neither of them is the wall clock, and each is easiest to write as a loop that waits:
+A game has more than one kind of time. The Poison of `battle` lasts three turns. A damage number rises on the screen for 0.4 seconds. Neither of them is the wall clock, and each is easiest to write as a loop that waits:
 
 ~~~python
-# clocks.py (excerpt)
+# spire.py (excerpt)
 @do
-def poison(n: int, turns: int):  # a card effect: n damage at the end of each of the next turns
+def poison(n: int, turns: int):  # a lasting card effect: n damage at the end of each of the next turns
     for _ in range(turns):
         yield TurnEnds()
         yield Hurt(n)
+~~~
 
-
+~~~python
+# clocks.py (excerpt)
 @do
 def rising(text: str):  # an animation: the number rises for four frames, 0.1 s apart
     for height in range(4):
@@ -599,37 +643,34 @@ def rising(text: str):  # an animation: the number rises for four frames, 0.1 s 
         yield Delay(0.1)
 ~~~
 
-`TurnEnds` is an effect of the game, and its handler is the game's own turn clock. The handler keeps the `k` of each card effect that waits, and resumes them all when the fight says that the turn has ended:
+`TurnEnds` is an effect of the game, and its handler is the game's own turn clock. The clock does not keep `k` itself. It waits on a promise, so `scheduled` keeps the task of the card effect. When the fight says that the turn has ended, the clock completes the promise, and every card effect that waits runs up to its next wait:
 
 ~~~python
-# clocks.py (excerpt)
+# spire.py (excerpt)
 def turns():
-    waiting, dealt = (), 0
+    bell, dealt = None, 0  # the promise of the turn that is on, and what the lasting effects dealt
 
     @handler
-    def lasting(effect: TurnEnds | Hurt, k):  # around each card effect
-        nonlocal waiting, dealt
+    def turn_clock(effect: TurnEnds | Hurt | EndTurn, k):
+        nonlocal bell, dealt
+        if isinstance(effect, TurnEnds):
+            if bell is None:
+                bell = yield CreatePromise()
+            yield Wait(bell.future)  # the scheduler keeps this task until the fight ends the turn
+            return (yield Resume(k, None))
         if isinstance(effect, Hurt):
             dealt += effect.n
             return (yield Resume(k, None))
-        waiting = (*waiting, k)  # it waits for the end of the turn: keep its k, and go back to the fight
-
-    @handler
-    @do(non_tail=True)  # it goes on after each card effect it resumes
-    def turn_clock(effect: Lasting | TurnEnds, k):
-        nonlocal waiting, dealt
-        if isinstance(effect, Lasting):
-            yield lasting(effect.program)  # the card effect runs up to its first wait
-            return (yield Resume(k, None))
-        ready, waiting, dealt = waiting, (), 0
-        for card_effect in ready:  # the turn ends: each card effect runs up to its next wait
-            yield Resume(card_effect, None)
-        return (yield Resume(k, dealt))
+        over, bell = bell, None
+        if over is not None:
+            yield CompletePromise(over, None)  # every task that waits runs up to its next wait
+        total, dealt = dealt, 0
+        return (yield Resume(k, total))
 
     return turn_clock
 ~~~
 
-`Delay` comes from the package doeff-time. Its `sim_time_handler` is a virtual clock: each animation is a task, and the clock moves on to the next wake-up when every task waits. The two clocks are stacked around one fight:
+`Delay` comes from the package doeff-time. Its `sim_time_handler` is a virtual clock: each animation is a task, and the clock moves on to the next wake-up when every task waits. `clocks.py` is a smaller fight with the same `poison` and the same turn clock, where a poison lasts five turns and each hit has a number that rises on seconds. The two clocks are stacked around it:
 
 ~~~python
 # clocks.py (excerpt)
@@ -676,22 +717,18 @@ With asyncio, the seconds are the event loop's, and a turn has to be an object o
 Layer 1 is already a test: with a scripted player and seeded dice, the fight is the same on every run. Many Python test suites have a `mock.patch` that finds its target by a string, so moving an import can make it miss, and the test can still pass while the real thing runs. With effects, a test installs handlers instead, and nothing is patched.
 
 <details markdown="1">
-<summary>test_spire.py: two tests, nothing patched</summary>
+<summary>test_spire.py: three tests, nothing patched</summary>
 
 ~~~python
 # test_spire.py
 from doeff import Resume, handler, run
+from doeff_core_effects import scheduled
 
-from spire import Fight, Played, battle, dice, quiet_stats, scripted, silent
-
-
-def test_a_strike_finishes_an_enemy_on_6_hit_points():
-    # seed 7 deals Defend Strike Defend Defend Strike, and the script plays the Strike
-    fight = battle(Fight(enemy_hp=6))
-    assert run(quiet_stats(silent(dice(7)(scripted([1])(fight))))) == ("win", 1)
+from spire import Fight, Played, battle, dice, quiet_stats, scripted, silent, turns
 
 
-def test_bash_makes_the_next_strikes_hit_harder():
+def played_in(fight):
+    """Run a silent fight on seed 7 and return the (card, damage) of every Played, in order."""
     played = []
 
     @handler
@@ -699,8 +736,26 @@ def test_bash_makes_the_next_strikes_hit_harder():
         played.append((effect.card, effect.damage))
         return (yield Resume(k, None))
 
-    run(log(silent(dice(7)(scripted([0, 0, 0, None] * 20)(battle())))))
-    assert played[-3:] == [("Bash", 8), ("Strike", 9), ("Strike", 9)]
+    run(scheduled(log(silent(dice(7)(fight)))))
+    return played
+
+
+def test_a_strike_finishes_an_enemy_on_6_hit_points():
+    # seed 7 deals Defend Strike Bash Defend Strike, and the script plays the Strike
+    fight = scripted([1])(turns()(battle(Fight(enemy_hp=6))))
+    assert run(scheduled(quiet_stats(silent(dice(7)(fight))))) == ("win", 1)
+
+
+def test_bash_makes_the_next_strike_hit_harder():
+    played = played_in(scripted([2, 1])(turns()(battle())))
+    assert played[:2] == [("Bash", 8), ("Strike", 9)]
+
+
+def test_a_poison_deals_3_at_the_end_of_each_of_the_next_3_turns():
+    # the script plays the Poison on turn 5; it is still dealing on turn 7, and that wins the fight
+    played = played_in(scripted([0, 0, 0, None] * 20)(turns()(battle())))
+    assert [damage for card, damage in played if card == "Poison"] == [0, 3, 3, 3]
+    assert played[-1] == ("Poison", 3)
 ~~~
 
 </details>
@@ -708,22 +763,24 @@ def test_bash_makes_the_next_strikes_hit_harder():
 Leave out a handler and the run stops at the `yield` nobody answered, as below. [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks) puts a `mock.patch` test and a handler test side by side.
 
 ~~~python
-run(silent(dice(7)(scripted(moves)(battle()))))
+run(scheduled(silent(dice(7)(scripted(moves)(turns()(battle()))))))
 ~~~
 
 ~~~text
 doeff Traceback (most recent call last):
 
-  battle()  spire.py:110
+  battle()  spire.py:134
     yield Played(card, dealt.damage)
     handlers:
+      turns ↗
       scripted ↗
       dice ↗
       silent ↗
+      scheduled ↗
 
 UnhandledEffect: no handler found for effect: Played (Played(card='Defend', damage=0))
-  handlers in scope (innermost→outermost): scripted → dice → silent
-  skipped by annotation: scripted (effect: Choose), dice (effect: Roll), silent (effect: Show) — a handler only sees the effects its effect parameter is annotated with
+  handlers in scope (innermost→outermost): turns → scripted → dice → silent → scheduled
+  skipped by annotation: turns (effect: TurnEnds | Hurt | EndTurn), scripted (effect: Choose), dice (effect: Roll), silent (effect: Show) — a handler only sees the effects its effect parameter is annotated with
   hint: install a handler for Played: run(fn(prog)), where fn is a def (effect: Played, k) marked with @handler that returns (yield Resume(k, value))
 ~~~
 

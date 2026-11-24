@@ -1,21 +1,21 @@
 # test_clocks.py
-from doeff import Resume, do, handler, run
+from doeff import Resume, Spawn, do, handler, run
 from doeff_core_effects import scheduled
 from doeff_time import GetTime, sim_time_handler
 
-from clocks import START, Draw, Lasting, TurnEnds, battle, player, poison, rising, turns
+from clocks import START, Draw, EndTurn, battle, player, poison, rising, turns
 
 
 def test_a_poison_deals_3_at_the_end_of_each_of_5_turns():
     @do
     def seven_turns():
-        yield Lasting(poison(3, turns=5))
+        yield Spawn(poison(3, turns=5), daemon=True)
         dealt = ()
         for _ in range(7):
-            dealt = (*dealt, (yield TurnEnds()))
+            dealt = (*dealt, (yield EndTurn()))
         return dealt
 
-    assert run(turns()(seven_turns())) == (3, 3, 3, 3, 3, 0, 0)
+    assert run(scheduled(turns()(seven_turns()))) == (3, 3, 3, 3, 3, 0, 0)
 
 
 def test_an_animation_draws_a_frame_every_tenth_of_a_second_of_virtual_time():

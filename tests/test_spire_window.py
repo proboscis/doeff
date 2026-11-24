@@ -16,10 +16,11 @@ tk = pytest.importorskip("tkinter")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "examples" / "effects_tour"))
 
 from doeff import Resume, handler, run  # noqa: E402
-from spire import Choose, Show, battle, dice, quiet_stats, scripted, window  # noqa: E402
+from doeff_core_effects import scheduled  # noqa: E402
+from spire import Choose, Show, battle, dice, quiet_stats, scripted, turns, window  # noqa: E402
 
 SEED = 39
-MOVES = [0, 2, 0, 2, 1, 1, 1]  # Strike Strike Defend, Bash Strike, Strike Strike: this seed wins on turn 3
+MOVES = [0, 0, None, 1, 0, 0, 0, 0, 0]  # Strike Defend, Strike Defend Poison, Bash Strike, Strike: this seed wins on turn 4
 
 
 @pytest.fixture(autouse=True)
@@ -47,7 +48,7 @@ def _terminal_fight() -> _Fight:
         lines.append(effect.text)
         return (yield Resume(k, None))
 
-    return _Fight(lines, run(quiet_stats(keep(dice(SEED)(scripted(MOVES)(battle()))))))
+    return _Fight(lines, run(scheduled(quiet_stats(keep(dice(SEED)(scripted(MOVES)(turns()(battle()))))))))
 
 
 def _click_when_asked(moves: list[int]) -> None:
@@ -85,8 +86,8 @@ def test_clicks_play_the_same_fight_as_the_terminal():
     drawn, clicked, end = window()
     lines, tee = _shown_lines(drawn)
     _click_when_asked(list(MOVES))
-    result = run(quiet_stats(drawn(tee(dice(SEED)(clicked(battle()))))))
-    assert result == expected.result == ("win", 3)
+    result = run(scheduled(quiet_stats(drawn(tee(dice(SEED)(clicked(turns()(battle()))))))))
+    assert result == expected.result == ("win", 4)
     assert lines == expected.lines
     root = tk._default_root
     root.after(1, root.destroy)
@@ -114,7 +115,7 @@ def test_end_turn_answers_none_like_an_empty_line():
         return (yield Resume(k, (yield effect)))
 
     with pytest.raises(SystemExit):
-        run(quiet_stats(drawn(dice(SEED)(clicked(spy(finish(battle())))))))
+        run(scheduled(quiet_stats(drawn(dice(SEED)(clicked(spy(finish(turns()(battle())))))))))
     assert answers == [None, 0]
 
 
@@ -124,5 +125,5 @@ def test_closing_the_window_stops_the_fight():
     close = root.tk.call("wm", "protocol", root, "WM_DELETE_WINDOW")
     root.after(1, lambda: root.tk.eval(close))
     with pytest.raises(SystemExit):
-        run(quiet_stats(drawn(dice(SEED)(clicked(battle())))))
+        run(scheduled(quiet_stats(drawn(dice(SEED)(clicked(turns()(battle())))))))
     root.destroy()
