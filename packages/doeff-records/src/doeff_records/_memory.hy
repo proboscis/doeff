@@ -751,7 +751,7 @@
                   (if (> (len ordered) ask.limit) (ListCursor store.epoch (get top -1 1) (get top -1 0)) None)
                   store.epoch
                   store.head
-                  (memory-joined-rows store ask.join-tables taken-texts now-ms))))
+                  :joined (memory-joined-rows store ask.join-tables taken-texts now-ms))))
   (setv matching (memory-key-page-texts store decl ask now-ms))
   (setv taken (cut matching ask.limit)
         rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
@@ -759,7 +759,7 @@
         (if (> (len matching) ask.limit) (ListCursor store.epoch (get taken -1)) None)
         store.epoch
         store.head
-        (memory-joined-rows store ask.join-tables taken now-ms)))
+        :joined (memory-joined-rows store ask.join-tables taken now-ms)))
 
 
 (defn #^ (| Count NotIndexed) memory-count-rows [#^ MemoryStore store #^ CountRows ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み

@@ -5,6 +5,7 @@
 ;;   (d) 宣言に無い表を join-tables に名指すと UndeclaredTable(tables=(その名,)) で断る(memory・PostgreSQL・HTTP wire の理由)
 ;;   (e) 添える表への SetStoreOutage / AddStoreFault は Unreachable に当たる(memory)
 (require doeff-hy.macros [deftest defk <- val on-raise])
+(import dataclasses [dataclass])
 (import json)
 (import doeff [run with_handlers])
 (import doeff_core_effects [scheduled inline-compute-handler postgres-sql-handler])
@@ -208,3 +209,14 @@
       (finally
         (run-sql connections (drop-records-tables pg-store))
         (.close connections)))))
+
+
+(deftest test-page-allows-subclasses-with-non-default-positional-fields
+  ;; Page.joined is kw_only so frozen dataclass subclasses (such as replica-kept pages) can add required fields.
+  (defclass [(dataclass :frozen True)] TaggedPage [Page]
+    (#^ str tag))
+  (val tagged (TaggedPage #() None 1 0 "kept"))
+  (assert (= #(tagged.tag tagged.joined) #("kept" (FrozenMap))) tagged)
+  (val with-join (TaggedPage #() None 1 0 "kept" :joined (FrozenMap {"notes" #()})))
+  (assert (= with-join.joined (FrozenMap {"notes" #()})) with-join))
+

@@ -70,7 +70,7 @@
    #("read-row" (Missing))
    #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9))
    #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]" 1760000000000) 1 9))
-   #("list-rows" (Page #(ROW) None 1 9 (FrozenMap {"charters" #(ROW) "tickets" #()})))
+   #("list-rows" (Page #(ROW) None 1 9 :joined (FrozenMap {"charters" #(ROW) "tickets" #()})))
    #("list-rows" (Page #() None 2 0))
    #("list-rows" (Reset 3 0))
    #("list-rows" (NotIndexed #("note")))
@@ -433,16 +433,16 @@
 (deftest test-a-joined-page-answer-must-match-the-requested-join-tables
   ;; 添えた表の答え: client は Page.joined の表が要求 ListRows.join-tables と一致する事を照らす(単独でも ReadBatch の中でも)。
   (val ask (ListRows "parts" :join-tables #("charters" "tickets")))
-  (val fitting (Page #() None 1 0 (FrozenMap {"charters" #() "tickets" #()})))
+  (val fitting (Page #() None 1 0 :joined (FrozenMap {"charters" #() "tickets" #()})))
   (assert (= (run (answer-for-request ask fitting)) fitting))
   (assert (= (run (answer-for-request (ReadBatch #(ask)) (BatchRead #(fitting)))) (BatchRead #(fitting))))
   ;; 添えない要求の答えに joined が無い時は前の版と同じ綴り。
   (val plain-page (run (encode-answer (Page #() None 1 0))))
   (assert (not-in "joined" plain-page) plain-page)
   (for [#(req ans) [#(ask (Page #() None 1 0))
-                    #(ask (Page #() None 1 0 (FrozenMap {"charters" #()})))
-                    #(ask (Page #() None 1 0 (FrozenMap {"charters" #() "tickets" #() "extra" #()})))
-                    #((ListRows "parts") (Page #() None 1 0 (FrozenMap {"charters" #()})))
+                    #(ask (Page #() None 1 0 :joined (FrozenMap {"charters" #()})))
+                    #(ask (Page #() None 1 0 :joined (FrozenMap {"charters" #() "tickets" #() "extra" #()})))
+                    #((ListRows "parts") (Page #() None 1 0 :joined (FrozenMap {"charters" #()})))
                     #((ReadBatch #(ask)) (BatchRead #((Page #() None 1 0))))]]
     (try
       (run (answer-for-request req ans))

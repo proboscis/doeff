@@ -1468,7 +1468,7 @@
                     (is-not ordered-by None)
                       (ListCursor head.epoch (get (get taken -1) 0) (get (. (row-of (get taken -1)) value) ordered-by))
                     True (ListCursor head.epoch (get (get taken -1) 0))))
-  (Page rows cursor head.epoch head.head joined))
+  (Page rows cursor head.epoch head.head :joined joined))
 
 
 (defk list-rows-page [store ask top-records head]

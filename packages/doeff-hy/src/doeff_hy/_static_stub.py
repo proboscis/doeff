@@ -279,12 +279,21 @@ def _annotation(node: ast.expr | None) -> ast.expr | None:
 
 
 def _default(node: ast.expr) -> ast.expr:
-    """Convert a default value to .pyi form: keep literals (including negative numbers) and make expressions `...` (do not copy expressions into a declaration with no body)."""
+    """Convert a default value to .pyi form: keep literals (including negative numbers), preserve dataclass field(..., init/kw_only) flags, and make other expressions `...`."""
     match node:
         case ast.Constant():
             return node
         case ast.UnaryOp(op=ast.USub(), operand=ast.Constant()):
             return node
+        case ast.Call(func=ast.Name(id="field"), args=[], keywords=keywords):
+            kept = [
+                ast.keyword(arg=k.arg, value=_default(k.value))
+                for k in keywords
+                if k.arg in {"default", "default_factory", "init", "kw_only"}
+            ]
+            if any(k.arg in {"init", "kw_only"} for k in kept):
+                return ast.Call(func=_name("field"), args=[], keywords=kept)
+            return ast.Constant(value=...)
         case _:
             return ast.Constant(value=...)
 

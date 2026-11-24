@@ -1246,7 +1246,7 @@
             (<- joined FrozenMap (joined-rows-from value))
             (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor" True))
                   (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))
-                  joined))
+                  :joined joined))
       {"kind" "written"}
         (do (<- (answer-object-of value "written" #("kind" "version" "value") #("position" "replayed")))
             (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))

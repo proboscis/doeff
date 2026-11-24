@@ -521,7 +521,7 @@
   (#^ (| ListCursor None) next-cursor)
   (#^ int epoch)
   (#^ int sequence)
-  (setv #^ (get FrozenMap (get tuple #(Row ...))) joined (field :default-factory FrozenMap))
+  (setv #^ (get FrozenMap (get tuple #(Row ...))) joined (field :default-factory FrozenMap :kw-only True))
   (defn #^ None __post_init__ [self]
     (object.__setattr__ self "joined" (frozen-map-of self.joined "Page.joined"))
     (for [#(name group) (.items self.joined)]
