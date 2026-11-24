@@ -242,3 +242,29 @@ def test_c_without_a_source_tree_the_preparation_writes_from_the_store_as_before
     baked = _bake(second, first.store, rig, inherit=None)
     assert baked.carried == {} and baked.compiled == [], (baked.carried, baked.compiled)
     assert baked.counts.get("rebuilt") == 0 and baked.counts.get("stored", 0) >= len(_HY_SOURCES), baked.counts
+
+
+def test_d_reported_counts_carries_carried_trusted_checked_and_carry_seconds(first: _First, rig: _Rig, tmp_path: Path) -> None:
+    """焼きの道具の stderr の carried・trusted・checked・carry_s が env_translation の reported-counts に読まれて BytecodeCounts に残り、
+    写し元の無い回では None になること。"""
+    from doeff import run
+    from doeff_cluster._worker.intent.env_prepare_model import BytecodeTree
+    from doeff_cluster._worker.protocol.env_translation import reported_counts
+
+    second = tmp_path / "second"
+    _copy_tree(first.tree, second, {"mac/macros.hy": f"; {first.salt}\n(defmacro answer [] (+ 1 7))\n"})
+    baked = _bake(second, first.store, rig, inherit=first.tree)
+    assert re.search(r"carried=\d+ trusted=\d+ checked=\d+ carry_s=[0-9.]+", baked.stderr), baked.stderr
+    counts = run(reported_counts(baked.stderr, (BytecodeTree(tree=str(second), roots=(".",), declared=True),)))
+    assert counts is not None
+    assert counts.carried == baked.carried["carried"]
+    assert counts.trusted == baked.carried["trusted"]
+    assert counts.checked == baked.carried["checked"]
+    assert counts.carry_seconds is not None and counts.carry_seconds >= 0.0
+
+    plain = tmp_path / "plain"
+    _write(plain, _files(first.salt))
+    plain_baked = _bake(plain, first.store, rig, inherit=None)
+    plain_counts = run(reported_counts(plain_baked.stderr, (BytecodeTree(tree=str(plain), roots=(".",), declared=True),)))
+    assert plain_counts is not None
+    assert (plain_counts.carried, plain_counts.trusted, plain_counts.checked, plain_counts.carry_seconds) == (None, None, None, None)

@@ -459,12 +459,14 @@
    inherits・changed = 写し元の木と、写し元から変わった module(頭の註 --inherit — carry)。写し元から置いた .pyc のうち、照らさずに
    残せる物は照らさず、残りは今までどおり照らす(焼かずに残した物の列に入る)。置いた数と照らさずに残した数は stderr の 1 行で名乗る。"
   (prepare-path paths)
-  (setv #(trusted carried carry-problems) (carry items inherits changed store)
+  (setv carry-started (time.monotonic)
+        #(trusted carried carry-problems) (carry items inherits changed store)
         kept (tuple (gfor #(i t) (zip items trusted) (or t (current-pyc (get i 0) (get i 1)))))
+        carry-s (- (time.monotonic) carry-started)
         work (tuple (gfor #(i k) (zip items kept) :if (not k) i)))
   (when inherits
-    (print (.format "写し元の木から引き継いだ .pyc: carried={} trusted={} checked={}"
-                    carried (sum trusted) (- carried (sum trusted)))
+    (print (.format "写し元の木から引き継いだ .pyc: carried={} trusted={} checked={} carry_s={:.2f}"
+                    carried (sum trusted) (- carried (sum trusted)) carry-s)
            :file sys.stderr :flush True))
   (mark-progress progress)
   (setv first-results (if (is share None) #() (pass-results work (fetch-jobs jobs) paths (partial bake-one store share True) progress))

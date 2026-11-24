@@ -269,3 +269,20 @@
   (assert (isinstance verdict RuntimeIdentity) verdict)
   (<- read-back (| BytecodeCounts Malformed None) (marker-bytecode (json.loads text)))
   (assert (= read-back counts) read-back))
+
+
+(deftest test-the-marker-bytecode-field-round-trips-carry-counts-and-seconds
+  ;; 写し元の木から .pyc を引き継いだ回の carried・trusted・checked・carrySeconds が、env-marker->json から完成マーカーに綴られ
+  ;; marker-bytecode で同じ値に読み戻せること(引き継ぎの無い回は None のまま)。
+  (<- scene Declared (declared-scene))
+  (val counts (BytecodeCounts :stored 12 :rebuilt 2 :reused 3480 :failed 0 :scan-seconds 1.2 :closure-seconds 3.4
+                              :compile-seconds 18.5 :bake-jobs 8 :carried 3482 :trusted 61 :checked 3421 :carry-seconds 14.25
+                              :trees #((TreeCounts :name "app" :stored 12 :rebuilt 2 :reused 3480 :failed 0))))
+  (<- raw dict (env-marker->json (EnvMarker :env scene.env :key scene.key :platform PLATFORM :stages #() :downloaded 0 :built 0
+                                            :interpreter "/usr/bin/python3" :child-protocol 1 :bytecode counts)))
+  (val bc (get raw "bytecode"))
+  (assert (= #((get bc "carried") (get bc "trusted") (get bc "checked") (get bc "carrySeconds"))
+             #(3482 61 3421 14.25))
+          bc)
+  (<- read-back (| BytecodeCounts Malformed None) (marker-bytecode (json.loads (json.dumps raw))))
+  (assert (= read-back counts) read-back))

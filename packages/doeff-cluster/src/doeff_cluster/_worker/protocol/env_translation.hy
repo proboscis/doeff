@@ -118,6 +118,8 @@
   (re.compile r"(?m)tree=(\S+) stored=(\d+) rebuilt=(\d+) reused=(\d+) failed=(\d+)(?: fetched=(\d+))? problem=(.*)$"))
 ;; 焼いた並列数の行(bake_plan の jobs-line — 無ければ並列数を None と読む)。
 (val BAKE-JOBS-PATTERN (re.compile r"bake_jobs=(\d+)"))
+;; 写し元の木からの .pyc の引き継ぎの行(_foundation/bytecode_pool の bake — 引き継ぎの無い回は行が無いので None と読む)。
+(val CARRIED-PATTERN (re.compile r"carried=(\d+) trusted=(\d+) checked=(\d+)(?: carry_s=([0-9.]+))?"))
 (val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
 ;; file system の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
@@ -1362,16 +1364,21 @@
 (defk reported-counts [text trees]
   {:pre [(: text str) (: trees tuple)] :post [(: % (| BytecodeCounts None))]}
   "焼く道具の stderr の全体の行と木ごとの行を、完成マーカーに載せる数と秒にするため(全体の行が無い・欄が欠けていれば None — 0 で
-   埋めない)。木ごとの数は要求の木の順で、木の名は root の下の dir の名(path は載せない)。焼いた並列数は bake_jobs= の行から読む
-   (行の無い古い道具は None)。"
+   埋めない)。木ごとの数は要求の木の順で、木の名は root の下の dir の名(path は載せない)。焼いた並列数は bake_jobs= の行から、
+   写し元の木からの引き継ぎの数と秒は carried=… trusted=… checked=… の行から読む(行の無い回・古い道具は None)。"
   (val total (.search COMPILED-PATTERN text))
   (val jobs (.search BAKE-JOBS-PATTERN text))
+  (val carried (.search CARRIED-PATTERN text))
   (if (is total None)
       None
       (do (val lines (tuple (.finditer TREE-PATTERN text)))
           (BytecodeCounts :stored (int (.group total 1)) :rebuilt (int (.group total 2)) :reused (int (.group total 3))
                           :fetched (int (or (.group total 8) 0))
                           :bake-jobs (if (is jobs None) None (int (.group jobs 1)))
+                          :carried (if (is carried None) None (int (.group carried 1)))
+                          :trusted (if (is carried None) None (int (.group carried 2)))
+                          :checked (if (is carried None) None (int (.group carried 3)))
+                          :carry-seconds (if (or (is carried None) (is (.group carried 4) None)) None (float (.group carried 4)))
                           :failed (int (.group total 4))
                           :compile-seconds (float (.group total 5))
                           :closure-seconds (float (.group total 6)) :scan-seconds (float (.group total 7))

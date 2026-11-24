@@ -181,11 +181,15 @@
   (val counts marker.bytecode)
   (val bytecode (if (is counts None)
                     None
-                    {"stored" counts.stored "rebuilt" counts.rebuilt "reused" counts.reused "failed" counts.failed
-                     "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
-                     "compileSeconds" counts.compile-seconds "bakeJobs" counts.bake-jobs
-                     "trees" (lfor t counts.trees {"name" t.name "stored" t.stored "rebuilt" t.rebuilt "reused" t.reused
-                                                   "failed" t.failed})}))
+                    (| {"stored" counts.stored "rebuilt" counts.rebuilt "reused" counts.reused "failed" counts.failed
+                        "scanSeconds" counts.scan-seconds "closureSeconds" counts.closure-seconds
+                        "compileSeconds" counts.compile-seconds "bakeJobs" counts.bake-jobs
+                        "trees" (lfor t counts.trees {"name" t.name "stored" t.stored "rebuilt" t.rebuilt "reused" t.reused
+                                                      "failed" t.failed})}
+                       (if (is counts.carried None) {} {"carried" counts.carried})
+                       (if (is counts.trusted None) {} {"trusted" counts.trusted})
+                       (if (is counts.checked None) {} {"checked" counts.checked})
+                       (if (is counts.carry-seconds None) {} {"carrySeconds" counts.carry-seconds}))))
   ;; 処理ステージの files(root に書いた file の数 — 数えない処理ステージは null)・parts(区切りの秒)・volume(disk の種類)・
   ;; startupSeconds(起こしてから最初の処理ステージまで)は #3676 で足した欄(読み手の置き場の名指しは読まない — 報告だけ)。
   (val volume marker.volume)
@@ -279,10 +283,17 @@
   {:pre [(: counts BytecodeCounts)] :post [(: % str)]}
   "焼きの 1 行(準備の記録 — env_tool の log へ出る): 焼いた数・保存先から書いた数・分け合う保存先から取り寄せた数と、焼いた並列数・焼きの
    秒を並べ、小さい node の焼きが並列数のせいで段の上限に近づいたか、ほかの機体が焼いた物を取り寄せて焼かずに済んだかを、機体ごとに記録から
-   読ませるため(ADR-DOE-BUILD-002 R8)。並列数を名乗らない古い道具の回は `-`。"
-  (.format "焼き: rebuilt={} stored={} fetched={} reused={} failed={} bake_jobs={} compile_s={:.2f} closure_s={:.2f}"
-           counts.rebuilt counts.stored counts.fetched counts.reused counts.failed (if (is counts.bake-jobs None) "-" counts.bake-jobs)
-           counts.compile-seconds counts.closure-seconds))
+   読ませるため(ADR-DOE-BUILD-002 R8)。並列数を名乗らない古い道具の回は `-`。写し元から引き継いだ回は carried・trusted・checked(と
+   carry_s)も並べる。"
+  (+ (.format "焼き: rebuilt={} stored={} fetched={} reused={} failed={} bake_jobs={} compile_s={:.2f} closure_s={:.2f}"
+              counts.rebuilt counts.stored counts.fetched counts.reused counts.failed (if (is counts.bake-jobs None) "-" counts.bake-jobs)
+              counts.compile-seconds counts.closure-seconds)
+     (if (is counts.carried None)
+         ""
+         (.format " carried={} trusted={} checked={}" counts.carried counts.trusted counts.checked))
+     (if (is counts.carry-seconds None)
+         ""
+         (.format " carry_s={:.2f}" counts.carry-seconds))))
 
 
 (defk build-memory-of [current-before peak-before peak-after sampled]
