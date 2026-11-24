@@ -1,157 +1,169 @@
 WEBVTT
 
 i1
-00:00:00.250 --> 00:00:04.700
+00:00:00.250 --> 00:00:04.950
 doeff is a Python library for algebraic effects.
 
 i2
-00:00:06.150 --> 00:00:11.800
+00:00:06.150 --> 00:00:12.650
 This video shows what algebraic effects are, and then how you write them with doeff.
 
 a1
-00:00:13.650 --> 00:00:19.900
+00:00:14.500 --> 00:00:19.600
 What are algebraic effects for? Four things a program does besides computing.
 
 p1
-00:00:21.050 --> 00:00:25.450
+00:00:20.750 --> 00:00:24.700
 Side effects: printing, saving a file, sending a message.
 
 p2
-00:00:26.600 --> 00:00:30.350
+00:00:25.850 --> 00:00:29.950
 Dependencies: a value the program needs from outside.
 
 p3
-00:00:31.500 --> 00:00:39.550
+00:00:31.100 --> 00:00:38.400
 Async and scheduling: waiting for a second, a turn or a click, retrying, running many tasks at once.
 
 p4
-00:00:40.700 --> 00:00:45.650
+00:00:39.550 --> 00:00:45.800
 And swapping: the same program runs in tests, in replay, in production.
 
 p5
-00:00:46.800 --> 00:00:53.450
+00:00:46.950 --> 00:00:53.600
 One mechanism does all four. Asking for a value is the simplest use, so we start there.
 
 t1
-00:00:55.300 --> 00:01:02.500
+00:00:55.450 --> 00:01:03.300
 Our example is tiny: a program that buys tea. It needs two things from outside: a price, and a yes.
 
 a2
-00:01:03.650 --> 00:01:10.300
+00:01:04.450 --> 00:01:10.250
 With algebraic effects, the program only says what it needs. That request is an effect.
 
 a3
-00:01:11.450 --> 00:01:15.650
+00:01:11.400 --> 00:01:16.050
 How to get it is decided outside the program, by a handler.
 
 a4
-00:01:17.050 --> 00:01:21.400
+00:01:17.200 --> 00:01:21.250
 The handler answers, and the program goes on from where it asked.
 
 a5
-00:01:23.250 --> 00:01:30.000
+00:01:23.100 --> 00:01:30.150
 You know half of this already: an exception. It is raised inside, and caught by a handler outside.
 
 a6
-00:01:31.150 --> 00:01:35.650
+00:01:31.300 --> 00:01:35.600
 But after the catch, the program never goes back to where it raised.
 
 a7
-00:01:36.800 --> 00:01:42.550
+00:01:36.750 --> 00:01:41.950
 An effect handler sends an answer back, and the program picks up where it left off.
 
 a8
-00:01:45.400 --> 00:01:49.800
+00:01:45.350 --> 00:01:49.650
 So the program says what it needs, and the handlers decide how.
 
 b1
-00:01:51.650 --> 00:01:59.150
+00:01:51.500 --> 00:01:59.000
 Now the same idea in doeff. The tea program is a Python function, order, marked with @do.
 
 b2
-00:02:00.300 --> 00:02:05.700
+00:02:00.150 --> 00:02:06.200
 Where it needs something, it yields an effect. First Price: what does the item cost?
 
 b3
-00:02:06.850 --> 00:02:12.800
+00:02:07.350 --> 00:02:13.700
 Then Confirm: may I pay that much? Then it returns. It never says who answers.
 
 b4
-00:02:14.650 --> 00:02:21.250
+00:02:15.550 --> 00:02:22.400
 Handlers sit outside the function. prices answers Price with 3, and order goes on.
 
 b5
-00:02:22.400 --> 00:02:27.950
+00:02:23.550 --> 00:02:29.300
 With Confirm, the handler also gets k: the rest of order, paused at the yield.
 
 b6
-00:02:29.100 --> 00:02:34.650
+00:02:30.450 --> 00:02:35.800
 It resumes k with True, and order returns bought, 3.
 
 b7
-00:02:35.800 --> 00:02:43.300
+00:02:36.950 --> 00:02:43.750
 It could also keep k for later, or never resume it. Either way, k is resumed at most once.
 
 w1
-00:02:45.150 --> 00:02:51.900
+00:02:45.600 --> 00:02:50.200
 Keeping k for later is the third use: scheduling. Take a card game.
 
 w2.1
-00:02:53.050 --> 00:02:57.650
-A poison hurts the enemy at the end of each of the next five turns.
+00:02:51.350 --> 00:02:56.017
+A Poison card hurts the enemy at the end of each turn, for three turns.
 
 w2.2
-00:02:57.650 --> 00:03:01.500
-It is a plain loop: wait for the turn to end, then hurt.
+00:02:56.017 --> 00:03:02.450
+The fight spawns it as a task of its own: a plain loop that waits for the turn to end, then hurts.
 
 w3.1
-00:03:02.650 --> 00:03:04.183
-TurnEnds is an effect.
+00:03:03.600 --> 00:03:09.583
+TurnEnds is an effect. Its handler, the turn clock, makes a promise and waits on it.
 
 w3.2
-00:03:04.183 --> 00:03:11.400
-Its handler is the game's turn clock: it keeps k, the rest of poison, and resumes it when the turn ends.
+00:03:09.583 --> 00:03:15.300
+So doeff's scheduler keeps k, the rest of poison, until the fight ends the turn.
+
+w3.3
+00:03:15.300 --> 00:03:18.150
+Then k is resumed, and the poison hurts.
 
 w4
-00:03:12.550 --> 00:03:19.000
+00:03:19.300 --> 00:03:25.600
 A damage number that rises on screen is the same loop on another clock: it waits a tenth of a second.
 
 w5
-00:03:20.550 --> 00:03:26.000
+00:03:27.300 --> 00:03:32.000
 Two handlers, stacked: two kinds of time, with no locks and no events.
 
 s1.1
-00:03:27.850 --> 00:03:29.517
+00:03:33.850 --> 00:03:35.833
 The fourth use is swapping.
 
 s1.2
-00:03:29.517 --> 00:03:35.100
+00:03:35.833 --> 00:03:42.500
 Handlers stack around the function: swap the stack, and the same function runs another way.
 
 s2
-00:03:36.250 --> 00:03:42.950
+00:03:43.650 --> 00:03:50.300
 Tests, replay, a bot, many at once, production. order does not change a line.
 
 c1
-00:03:45.250 --> 00:03:51.200
-The article needs a bigger program, so it uses battle: one small card fight.
+00:03:52.650 --> 00:03:58.100
+The article needs a bigger program, so it uses the whole card fight: battle.
 
-c2
-00:03:52.350 --> 00:03:57.250
-Each turn you draw a hand and play cards, then the enemy hits back, until one side is out of HP.
+c2.1
+00:03:59.250 --> 00:04:02.033
+Each turn you draw a hand and play cards.
 
-c3
-00:03:58.950 --> 00:04:06.250
-It is a good example: it needs four things from outside. Dice, a choice of card, a screen, a count.
+c2.2
+00:04:02.033 --> 00:04:07.450
+At its end a Poison hurts, and the enemy hits back, until one side is out of HP.
+
+c3.1
+00:04:08.600 --> 00:04:12.933
+It is a good example: it needs five things from outside.
+
+c3.2
+00:04:12.933 --> 00:04:17.950
+Dice, a choice of card, a screen, a count, and the end of a turn.
 
 c4
-00:04:08.050 --> 00:04:14.100
-And each of those can be answered in many ways: by a script, a bot, a tape, or a person.
+00:04:19.300 --> 00:04:25.450
+And they can be answered in many ways: by a script, a bot, a tape, or a person.
 
 e2
-00:04:15.250 --> 00:04:21.000
+00:04:27.000 --> 00:04:31.700
 The article runs battle under six stacks, and does not change a line of it.
 
 e1
-00:04:22.850 --> 00:04:29.600
+00:04:33.550 --> 00:04:41.000
 To start, pip install doeff. Then you need three things: @do, yield, and a handler.
