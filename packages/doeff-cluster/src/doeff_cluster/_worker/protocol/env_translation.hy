@@ -120,6 +120,8 @@
 (val BAKE-JOBS-PATTERN (re.compile r"bake_jobs=(\d+)"))
 ;; 写し元の木からの .pyc の引き継ぎの行(_foundation/bytecode_pool の bake — 引き継ぎの無い回は行が無いので None と読む)。
 (val CARRIED-PATTERN (re.compile r"carried=(\d+) trusted=(\d+) checked=(\d+)(?: carry_s=([0-9.]+))?"))
+;; 焼く道具の Note を slog-handler が stderr へ出す時の頭の印(例: `    INFO ...`)。準備の記録へ写す時に外す。
+(val SLOG-PREFIX-PATTERN (re.compile r"^\s*(?:DEBUG|INFO|WARNING|ERROR)\s+"))
 (val NO-TREE-LINE "焼く道具の報告にこの木の行が無い")
 ;; file system の effect の答えの型の和(失敗・様子・錠・中身・一覧・空きの byte・答えの無い書き)。
 (val FILE-ANSWER (| FileFailed PathStat LockHeld str bytes tuple int None))
@@ -1388,6 +1390,21 @@
                                                           :failed (int (.group m 5)) :fetched (int (or (.group m 6) 0)))))))))
 
 
+(defk compile-notes [text]
+  {:pre [(: text str)] :post [(: % tuple)]}
+  "焼く道具の stderr から、全体の行・木ごとの行・並列数の行のほかに出た所見の行(写し元の木から引き継いだ .pyc・焼きの内訳・
+   compile_s の内訳・閉包の数・分け合う保存先・保存先や焼きの問題)を準備の記録へ残す順で取り出すため(slog の頭の印は外す)。"
+  (var kept #())
+  (for [raw (.splitlines text)]
+    (val line (.strip (.sub SLOG-PREFIX-PATTERN "" raw)))
+    (when (and line
+               (is (.search COMPILED-PATTERN line) None)
+               (is (.search TREE-PATTERN line) None)
+               (is (.search BAKE-JOBS-PATTERN line) None))
+      (:= kept (+ kept #(line)))))
+  kept)
+
+
 (defk compile-answer [result trees venv]
   {:pre [(: result CommandResult) (: trees tuple) (: venv str)] :post [(: % (| BytecodeReport EnvFailure))]}
   "焼く道具の終わりと stderr を CompileTrees の答えにするため: 全体の報告の行を全部の欄まで読め、終わりが 0(全部の木の検めが通った)か
@@ -1628,6 +1645,9 @@
     (<- env tuple (project-uv-environment shared-dir uv-cache venv))
     (<- args tuple (compile-argv uv code-prepare project-dir trees entries jobs progress :pycache pycache :inherit-pycache inherit-pycache))
     (<- result CommandResult (uv-command args project-dir (+ env #((EnvEntry :name "PYTHONDONTWRITEBYTECODE" :value "1")))))
+    (<- extra tuple (compile-notes result.stderr))
+    (for [line extra]
+      (<- (AppendText notes (.format "env: {}\n" line))))
     (<- compiled (| BytecodeReport EnvFailure) (compile-answer result trees venv))
     (resume compiled))
 

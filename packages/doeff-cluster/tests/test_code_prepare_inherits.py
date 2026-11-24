@@ -245,11 +245,12 @@ def test_c_without_a_source_tree_the_preparation_writes_from_the_store_as_before
 
 
 def test_d_reported_counts_carries_carried_trusted_checked_and_carry_seconds(first: _First, rig: _Rig, tmp_path: Path) -> None:
-    """焼きの道具の stderr の carried・trusted・checked・carry_s が env_translation の reported-counts に読まれて BytecodeCounts に残り、
-    写し元の無い回では None になること。"""
+    """焼きの道具の stderr の carried・trusted・checked・carry_s と内訳の行が env_translation の reported-counts・compile-notes と
+    env_prepare の bake-line に読まれて BytecodeCounts と準備の記録に残り、写し元の無い回では None になること。"""
     from doeff import run
+    from doeff_cluster._worker.core.env_prepare import bake_line
     from doeff_cluster._worker.intent.env_prepare_model import BytecodeTree
-    from doeff_cluster._worker.protocol.env_translation import reported_counts
+    from doeff_cluster._worker.protocol.env_translation import compile_notes, reported_counts
 
     second = tmp_path / "second"
     _copy_tree(first.tree, second, {"mac/macros.hy": f"; {first.salt}\n(defmacro answer [] (+ 1 7))\n"})
@@ -260,7 +261,16 @@ def test_d_reported_counts_carries_carried_trusted_checked_and_carry_seconds(fir
     assert counts.carried == baked.carried["carried"]
     assert counts.trusted == baked.carried["trusted"]
     assert counts.checked == baked.carried["checked"]
-    assert counts.carry_seconds is not None and counts.carry_seconds >= 0.0
+    assert counts.carry_seconds is not None
+    assert counts.carry_seconds >= 0.0
+    line = run(bake_line(counts))
+    assert isinstance(line, str), line
+    assert "Call(" not in line, line
+    assert f"carried={counts.carried} trusted={counts.trusted} checked={counts.checked} carry_s=" in line, line
+    notes = run(compile_notes(baked.stderr))
+    assert any(n.startswith("写し元の木から引き継いだ .pyc:") and "carry_s=" in n for n in notes), notes
+    assert any(n.startswith("焼きの内訳:") for n in notes), notes
+    assert any(n.startswith("compile_s の内訳:") for n in notes), notes
 
     plain = tmp_path / "plain"
     _write(plain, _files(first.salt))

@@ -740,6 +740,7 @@
 (val BAKE-COMPILE-SECONDS 1.5)
 (val BAKE-CLOSURE-SECONDS 0.75)
 (val BAKE-SCAN-SECONDS 0.5)
+(val BAKE-CARRY-SECONDS 0.25)
 ;; 模擬の焼く道具が並列数の行(bake_plan の jobs-line の形)で名乗る並列数(1 でない値 — 既定の写し間違いと区別する)。
 (val BAKE-JOBS 3)
 
@@ -759,6 +760,7 @@
    回数(1 回の呼びで 1)・compiled-trees と stored は木ごと・rebuilt = 木ごとに焼いた相対 path の一覧。"
   (<- trees tuple (options-of args "--tree"))
   (<- roots-texts tuple (options-of args "--roots"))
+  (<- inherits tuple (options-of args "--inherit"))
   (<- entries-text (| str None) (option-of args "--entries"))
   (val entries (if entries-text (tuple (.split entries-text ",")) #()))
   ;; 木ごとの引数の揃え方は本物の道具と同じ(--roots は木ごとに 1 つ)— 揃わない命令は翻訳の誤りなので名指しで落とす。
@@ -791,10 +793,14 @@
     (:= rebuilt (+ rebuilt (len fresh)))
     (:= lines (+ lines #((.format "tree={} stored={} rebuilt={} reused=0 failed=0 problem={}" tree tree-stored (len fresh)
                                   (if under-roots "-" "木に焼くべき source が 1 つも無い"))))))
+  (val carry-lines (if (any inherits)
+                       #((.format "写し元の木から引き継いだ .pyc: carried={} trusted={} checked={} carry_s={:.2f}"
+                                  stored stored 0 BAKE-CARRY-SECONDS))
+                       #()))
   (val total (.format "stored={} rebuilt={} reused=0 failed=0 compile_s={} closure_s={} scan_s={}" stored rebuilt
                       BAKE-COMPILE-SECONDS BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS))
   (val jobs (.format "bake_jobs={} asked_jobs={} room_mib=- child_mib=320" BAKE-JOBS BAKE-JOBS))
-  (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ #(jobs) lines #(total)) (+ line "\n")))
+  (ProcessOutcome :stdout "" :stderr (.join "" (gfor line (+ #(jobs) carry-lines lines #(total)) (+ line "\n")))
                   :exit-code (if (any (gfor line lines (not (.endswith line "problem=-")))) 1 0)))
 
 

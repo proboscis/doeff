@@ -496,10 +496,12 @@
   (<- order tuple (plan.bake-order items))
   (<- paths tuple (plan.trees-import-path trees))
   (<- (MarkProgress))
+  (<- bake-started float (GetMonotonic))
   (<- answer plan.BakeAnswer (BakeSources order jobs paths code-store inherits (or walk.changed (frozenset))))
   (<- (MarkProgress))
   (val failures answer.failed)
   (<- baked float (GetMonotonic))
+  (<- (Note (.format "compile_s の内訳: plan_s={:.2f} tool_s={:.2f}" (- bake-started closed) (- baked bake-started))))
   (for [#(path rel reason) (cut failures 0 20)]
     (<- (Note f"  焼けない: {path}/{rel}: {reason}")))
   (for [reason answer.unstored]

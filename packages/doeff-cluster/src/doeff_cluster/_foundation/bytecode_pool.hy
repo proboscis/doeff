@@ -435,17 +435,21 @@
 (defn #^ tuple carry [#^ tuple items #^ dict inherits #^ frozenset changed #^ (| str None) store]  ; cannot be a defk: 焼く前に親が呼ぶ素の関数
   "写し元の木の在る木の items(#(木の path 相対 path module 名) の列)に、写し元の .pyc を置き(carry-pyc)、照らさずに残せる物
    (carried-current)の保存先の印を進めるため(頭の註 --inherit)。答え = #(items と同じ順の、照らさずに残すか の列 置いた数
-   印を進められなかった理由の列)。inherits = 木の path → 写し元の木の path(--inherit)。"
-  (setv carried (tuple (gfor #(tree rel _) items
+   印を進められなかった理由の列 引き継ぎの合計秒 hardlink の秒 照らし省略の判定の秒 保存先の印の秒)。inherits = 木の path → 写し元の木の path(--inherit)。"
+  (setv t0 (time.monotonic)
+        carried (tuple (gfor #(tree rel _) items
                              :setv source (.get inherits tree)
                              (and (is-not source None) (carry-pyc tree source rel))))
+        t1 (time.monotonic)
         trusted (tuple (gfor #(#(tree rel _) placed) (zip items carried) (and placed (carried-current tree rel changed))))
-        marks (tuple (gfor #(item keep) (zip items trusted) :if keep (keep-mark store #* item))))
-  #(trusted (sum carried) (tuple (gfor m marks :if m m))))
+        t2 (time.monotonic)
+        marks (tuple (gfor #(item keep) (zip items trusted) :if keep (keep-mark store #* item)))
+        t3 (time.monotonic))
+  #(trusted (sum carried) (tuple (gfor m marks :if m m)) (- t3 t0) (- t1 t0) (- t2 t1) (- t3 t2)))
 
 
 (defn #^ tuple bake [#^ tuple items #^ int jobs #^ tuple paths #^ (| str None) store #^ (| str None) progress share
-                     #^ dict inherits #^ frozenset changed]  ; cannot be a defk: process の pool を回す
+                     #^ dict inherits #^ frozenset changed #^ float [init-s 0.0]]  ; cannot be a defk: process の pool を回す
   "items(#(木の path 相対 path module 名) の列)のうち、在る .pyc が今の source と macro に合わない物をこの順に用意し、#(焼けなかった物の
    #(木の path 相対 path 理由) の列 保存先から書いた物の #(木の path 相対 path) の列 焼かずに残した物の #(木の path 相対 path) の列
    保存先へ書けなかった理由の列(重ねない・名の順) 分け合う保存先から書いた物の #(木の path 相対 path) の列)を返すため。jobs 個の
@@ -457,24 +461,34 @@
    焼く。同じ root を同時に準備する並びの多い機体が先へ進んで置いた物を、並びの少ない機体が焼かずに取り寄せるため — 1 回りだけでは、
    準備を早く始めた機体は、遅れて始めた並びの多い機体が置く物を待たずに焼いてしまう。
    inherits・changed = 写し元の木と、写し元から変わった module(頭の註 --inherit — carry)。写し元から置いた .pyc のうち、照らさずに
-   残せる物は照らさず、残りは今までどおり照らす(焼かずに残した物の列に入る)。置いた数と照らさずに残した数は stderr の 1 行で名乗る。"
+   残せる物は照らさず、残りは今までどおり照らす(焼かずに残した物の列に入る)。置いた数と照らさずに残した数と内訳の秒は stderr で名乗る。"
   (prepare-path paths)
-  (setv carry-started (time.monotonic)
-        #(trusted carried carry-problems) (carry items inherits changed store)
+  (setv #(trusted carried carry-problems carry-s link-s trust-s mark-s) (carry items inherits changed store)
+        check-start (time.monotonic)
         kept (tuple (gfor #(i t) (zip items trusted) (or t (current-pyc (get i 0) (get i 1)))))
-        carry-s (- (time.monotonic) carry-started)
-        work (tuple (gfor #(i k) (zip items kept) :if (not k) i)))
+        check-s (- (time.monotonic) check-start)
+        work (tuple (gfor #(i k) (zip items kept) :if (not k) i))
+        trusted-count (sum trusted)
+        checked-count (- carried trusted-count))
   (when inherits
-    (print (.format "写し元の木から引き継いだ .pyc: carried={} trusted={} checked={} carry_s={:.2f}"
-                    carried (sum trusted) (- carried (sum trusted)) carry-s)
+    (print (.format "写し元の木から引き継いだ .pyc: carried={} trusted={} checked={} carry_s={:.2f} (link={:.2f} trust={:.2f} mark={:.2f})"
+                    carried trusted-count checked-count carry-s link-s trust-s mark-s)
            :file sys.stderr :flush True))
   (mark-progress progress)
-  (setv first-results (if (is share None) #() (pass-results work (fetch-jobs jobs) paths (partial bake-one store share True) progress))
+  (setv fetch-start (time.monotonic)
+        first-results (if (is share None) #() (pass-results work (fetch-jobs jobs) paths (partial bake-one store share True) progress))
+        fetch-s (- (time.monotonic) fetch-start)
         answered (dict (gfor #(item result) (zip work first-results) :if (!= (get result 0) "missed") #(item result)))
         rest (tuple (gfor item work :if (not-in item answered) item))
+        bake-start (time.monotonic)
         rest-results (pass-results rest jobs paths (partial bake-one store share False) progress)
+        bake-s (- (time.monotonic) bake-start)
+        pool-s (+ fetch-s bake-s)
         answered (| answered (dict (zip rest rest-results)))
         results (tuple (gfor item work (get answered item))))
+  (print (.format "焼きの内訳: init_s={:.2f} carry_s={:.2f} (link={:.2f} trust={:.2f} mark={:.2f}) check_s={:.2f} pool_s={:.2f} (fetch={:.2f} bake={:.2f}) work={}"
+                  init-s carry-s link-s trust-s mark-s check-s pool-s fetch-s bake-s (len work))
+         :file sys.stderr :flush True)
   ;; 保存先を使えなかった理由は、1 回り目で焼かずに返した物の理由(取り寄せの断り)も残す。焼けなかった理由は焼けなかった物の列に載る。
   #((tuple (gfor #(item result) (zip work results) :if (= (get result 0) "failed") #((get item 0) (get item 1) (get result 1))))
     (tuple (gfor #(item result) (zip work results) :if (= (get result 0) "stored") #((get item 0) (get item 1))))
@@ -510,6 +524,7 @@
 (defn #^ None main []  ; cannot be a defk: console の入口(素の関数として呼ばれる)
   "標準入力の焼く物を用意し、焼けなかった物・保存先から書いた物・焼かずに残した物・保存先へ書けなかった理由を標準出力へ書くため
    (頭の註の形)。"
+  (setv main-started (time.monotonic))
   (setv parser (argparse.ArgumentParser))
   (.add-argument parser "--jobs" :type int :required True :help "並列数")
   (.add-argument parser "--store-module" :required True :help "worker の版の doeff-hy の code_store.py")
@@ -541,7 +556,7 @@
         inherits (dict (gfor #(tree source) (or args.inherit []) #(tree source))))
   (setv share (shared-store code-store args.store))
   (setv #(failed stored reused unstored fetched)
-        (bake items args.jobs (tuple (or args.path [])) args.store args.progress share inherits changed))
+        (bake items args.jobs (tuple (or args.path [])) args.store args.progress share inherits changed (- (time.monotonic) main-started)))
   (for [#(tree rel reason) failed]
     (print (.format "failed\t{}\t{}\t{}" tree rel (.join " " (.split reason))) :flush True))
   (for [#(tree rel) stored]

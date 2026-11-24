@@ -35,7 +35,7 @@
 (import doeff_cluster._worker.intent.worker_model [BootMarks])
 (import doeff_cluster._worker.core.boot_timing [read-boot-marks boot-stamps stamps-out-of-order BOOT-STARTED-VAR BOOT-EXEC-VAR])
 (import doeff_cluster [process-clock])
-(import doeff_cluster._sim.env_world [env-world EnvWorld WorldCommit read-world-log world-files])
+(import doeff_cluster._sim.env_world [BAKE-CARRY-SECONDS env-world EnvWorld WorldCommit read-world-log world-files])
 (import tests.env_fixtures [LOCK env-of base-world app-commit lib-commit])
 (import tests.link_rig [LinkRig])
 
@@ -126,6 +126,25 @@
              [#(4 1 1) #((len lib-1.files) 0 0)])
           warm-tree)
   (assert (= (get (next (gfor s (get again "stages") :if (= (get s "name") "tree") s)) "files") 1) warm-tree)
+  ;; 写し元の在る root の完成マーカーの bytecode と準備の記録に carried・trusted・checked・carry_s が載り、焼きの 1 行が Call でなく数の文になる。
+  (val warm-baked (get again "bytecode"))
+  (assert (and (> (get warm-baked "carried") 0) (= (get warm-baked "trusted") (get warm-baked "carried"))
+               (= (get warm-baked "checked") 0) (= (get warm-baked "carrySeconds") BAKE-CARRY-SECONDS))
+          warm-baked)
+  (<- warm-log (read-world-log))
+  (assert (not (any (gfor n warm-log.notes (in "Call(" (str n))))) warm-log.notes)
+  (val carry-notes (lfor n warm-log.notes :if (.startswith (str n) "写し元の木から引き継いだ .pyc:") n))
+  (assert (= (len carry-notes) 1) warm-log.notes)
+  (assert (in (.format "carried={} trusted={} checked={} carry_s={:.2f}"
+                       (get warm-baked "carried") (get warm-baked "trusted") (get warm-baked "checked") BAKE-CARRY-SECONDS)
+              (get carry-notes 0))
+          carry-notes)
+  (val warm-bake-lines (lfor n warm-log.notes :if (.startswith (str n) "焼き: ") n))
+  (assert (= (len warm-bake-lines) 2) warm-log.notes)
+  (assert (in (.format "carried={} trusted={} checked={} carry_s={:.2f}"
+                       (get warm-baked "carried") (get warm-baked "trusted") (get warm-baked "checked") BAKE-CARRY-SECONDS)
+              (get warm-bake-lines 1))
+          warm-bake-lines)
   True)
 
 
