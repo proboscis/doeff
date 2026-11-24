@@ -257,11 +257,8 @@ if TYPE_CHECKING:
     from doeff_core_effects._http_server_effects import WsSendText as WsSendText
     from doeff_core_effects._http_server_effects import WsSendTextEach as WsSendTextEach
     from doeff_core_effects._http_server_effects import WsShortcut as WsShortcut
-    from doeff_core_effects._http_server_effects import WsShortcutAnswered as WsShortcutAnswered
-    from doeff_core_effects._http_server_effects import WsShortcutFailed as WsShortcutFailed
     from doeff_core_effects._http_server_effects import WsTextArrived as WsTextArrived
     from doeff_core_effects._http_server_effects import WsTextSent as WsTextSent
-    from doeff_core_effects._http_server_effects import ws_shortcut_outcome as ws_shortcut_outcome
     from doeff_core_effects._inline_compute import computed as computed
     from doeff_core_effects._inline_compute import inline_compute_handler as inline_compute_handler
     from doeff_core_effects._latest_effects import AwaitLatest as AwaitLatest
@@ -748,11 +745,8 @@ _LAZY_EXPORTS = {
     "WsSendText": "doeff_core_effects._http_server_effects",
     "WsSendTextEach": "doeff_core_effects._http_server_effects",
     "WsShortcut": "doeff_core_effects._http_server_effects",
-    "WsShortcutAnswered": "doeff_core_effects._http_server_effects",
-    "WsShortcutFailed": "doeff_core_effects._http_server_effects",
     "WsTextArrived": "doeff_core_effects._http_server_effects",
     "WsTextSent": "doeff_core_effects._http_server_effects",
-    "ws_shortcut_outcome": "doeff_core_effects._http_server_effects",
     "aiohttp_http_server": "doeff_core_effects._aiohttp_http_server",
     "scripted_http_server": "doeff_core_effects._scripted_http_server",
     "AwaitProcessExit": "doeff_core_effects._process_effects",

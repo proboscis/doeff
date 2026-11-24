@@ -691,54 +691,6 @@
    "reason": "Name added by ordinary development while doeff-cluster was being frozen name by name still awaiting a scope answer, after the table (96a47fa85) (not in the table in the inventory of doeff main 19e345109). ADR-DOE-API-001 R15 brought doeff-cluster into scope, and it disappears from the inventory when the child card of step 1, which hides submodules with _, hides it"
   },
   {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.http_server_effects",
-   "name": "WsShortcutAnswered",
-   "reason": "Function that decides the match and answer of the ws interface, read by both the real and the scripted handlers, and its answer type (a name inside the handler). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule http_server_effects is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.http_server_effects",
-   "name": "WsShortcutFailed",
-   "reason": "Function that decides the match and answer of the ws interface, read by both the real and the scripted handlers, and its answer type (a name inside the handler). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule http_server_effects is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.http_server_effects",
-   "name": "ws_shortcut_outcome",
-   "reason": "Function that decides the match and answer of the ws interface, read by both the real and the scripted handlers, and its answer type (a name inside the handler). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule http_server_effects is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.aiohttp_http_server",
-   "name": "WsShortcutAnswered",
-   "reason": "Name inside the ws-interface handler that the real handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule aiohttp_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.aiohttp_http_server",
-   "name": "WsShortcutFailed",
-   "reason": "Name inside the ws-interface handler that the real handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule aiohttp_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.aiohttp_http_server",
-   "name": "ws_shortcut_outcome",
-   "reason": "Name inside the ws-interface handler that the real handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule aiohttp_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_http_server",
-   "name": "WsShortcutAnswered",
-   "reason": "Type and name inside the ws-interface handler that the scripted handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule scripted_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_http_server",
-   "name": "ws_shortcut_outcome",
-   "reason": "Type and name inside the ws-interface handler that the scripted handler's module read from http_server_effects (defined in http_server_effects). Commit 7977d349c added it without fixing the table — found in the inventory of doeff main 2b10bc9ec. The submodule scripted_http_server is still public; it disappears from the inventory when batch 5/6 (http, ws) of step 1, which hides submodules with _, moves it inside and step 3 removes the forwarding module"
-  },
-  {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.api_policy",
    "name": "OUTBOX_ENDED",
@@ -791,12 +743,6 @@
    "module": "doeff_cluster.shared.core.supplied_spelling",
    "name": "OBJECT_SPELLING",
    "reason": "Name added by ordinary development after the table was re-split into groups in R15 (06df12fc0) (doeff main d4fe279f3, ADR-DOE-CLUSTER-004 — not in the table in the inventory of doeff main 5b57bdc8a). It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _ and step 3 removes the forwarding module"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects.scripted_http_server",
-   "name": "WsShortcutFailed",
-   "reason": "Name added when 4fa2eb931 split the ws-interface answers into steps. The type that the scripted handler imports is visible from the module. It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _"
   },
   {
    "package": "doeff-stream",
