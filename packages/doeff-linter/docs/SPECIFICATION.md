@@ -243,11 +243,11 @@ The HEAD tree is placed under the fact cache's root, where the relative paths of
 `--commit-hook` cuts off each child linter run at a limit in seconds (`--commit-hook-timeout-s` wins over the settings' `commit_hook.timeout_s`; default 20).
 0 means no limit (it measures to the end without cutting off).
 
-- The limit is measured in the child's CPU seconds (utime and stime in `/proc/<pid>/stat`, plus cutime and cstime of waited-for descendants). On a busy machine
-  only the wall seconds grow, and when it was measured by wall, a commit with 0 hits was cut off every time and blocked unless there was no limit (node-h load 42-73). A child that does not finish without using CPU
-  is cut off by a wall fallback limit (limit x 4). On a machine where the child's CPU seconds cannot be read (a Mac with no /proc), wall seconds are used as before.
-  The decision is in one place, `cut_measure`, and the blocking line names the yardstick (`cut off at the CPU-seconds limit of N s`, `cut off at the wall limit of N s (child CPU seconds
-  cannot be read on this machine)`, `cut off at the wall backstop limit of M s (... a child that does not finish without using CPU)`).
+- The limit is measured in the child's CPU seconds (utime and stime in `/proc/<pid>/stat`, plus live and waited-for descendants). On a busy machine
+  only the wall seconds grow, and when it was measured by wall, a commit with 0 hits was cut off every time and blocked unless there was no limit (node-h load 42-73). A stalled child that does not finish without using CPU
+  is cut off by an unrunnable-wall backstop limit (limit x 4), counting only wall seconds while no thread of the child or its descendants is runnable (`R` in `/proc/<pid>/task/<tid>/stat`, so time waiting for CPU under `cpu.max` throttling, `cpu.idle`, or low `cpu.weight` is not counted). On a machine where the child's CPU seconds and thread state cannot be read (a Mac with no /proc), wall seconds are used as before.
+  The decision is in one place, `cut_measure` (fed by `unrunnable_wall`), and the blocking line names the yardstick (`cut off at the CPU-seconds limit of N s`, `cut off at the wall limit of N s (child CPU seconds
+  cannot be read on this machine)`, `cut off at the unrunnable-wall backstop limit of M s (... wall seconds while no thread of the child or its descendants was runnable)`).
 
 - When cut off, it blocks the commit with exit code 1 (before, it passed with 0, and workers did not re-check the commit that passed, and a DOEFF167 hit from a commit that changed
   the declaration file got into main).
