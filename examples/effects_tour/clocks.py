@@ -6,7 +6,7 @@
 #   - the seconds are doeff-time's sim_time_handler, a virtual clock: it moves on to the next wake-up
 #     when every task waits.
 # Both stand on doeff's scheduler, `scheduled`, which keeps every task that waits. So a poison that
-# lasts five turns and a number that rises for 0.4 s run side by side, on one thread, with no lock or
+# lasts three turns and a number that rises for 0.4 s run side by side, on one thread, with no lock or
 # event for either. On the virtual clock the fight prints at once, the same in every run.
 # Needs `pip install doeff doeff-time`.
 from __future__ import annotations
@@ -42,7 +42,7 @@ def rising(text: str):  # an animation: the number rises for four frames, 0.1 s 
 
 
 @do
-def battle(enemy: int = 30):
+def battle(enemy: int = 27):
     """Play a card a turn until the enemy is down. Returns the turn it ended on."""
     turn = 0
     while enemy > 0:
@@ -52,7 +52,7 @@ def battle(enemy: int = 30):
             enemy -= 6
             yield Spawn(rising("-6"), daemon=True)
         elif card == "Poison":
-            yield Spawn(poison(3, turns=5), daemon=True)
+            yield Spawn(poison(3, turns=3), daemon=True)
         yield Draw(f"turn {turn}: {card}, enemy {enemy}")
         dealt = yield EndTurn()
         if dealt:

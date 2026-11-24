@@ -670,7 +670,7 @@ def turns():
     return turn_clock
 ~~~
 
-`Delay` comes from the package doeff-time. Its `sim_time_handler` is a virtual clock: each animation is a task, and the clock moves on to the next wake-up when every task waits. `clocks.py` is a smaller fight with the same `poison` and the same turn clock, where a poison lasts five turns and each hit has a number that rises on seconds. The two clocks are stacked around it:
+`Delay` comes from the package doeff-time. Its `sim_time_handler` is a virtual clock: each animation is a task, and the clock moves on to the next wake-up when every task waits. `clocks.py` is a smaller fight with the same `poison` and the same turn clock, where each hit has a number that rises on seconds. The two clocks are stacked around it:
 
 ~~~python
 # clocks.py (excerpt)
@@ -678,15 +678,15 @@ def turns():
     return run(scheduled(sim_time_handler(start_time=START)(printed(player(plays, seconds)(fight)))))
 ~~~
 
-The player takes 0.25 s to pick a card. The poison of turn 1 hurts at the end of every turn, and its number is still rising when the Strike of turn 2 lands:
+The player takes 0.25 s to pick a card. The poison of turn 1 hurts at the end of turns 1, 2 and 3, and its number is still rising when the Strike of turn 2 lands:
 
 ~~~text
-0.25s  turn 1: Poison, enemy 30
+0.25s  turn 1: Poison, enemy 27
 0.25s                          -3
 0.35s                          -3^
 0.45s                          -3^^
 0.50s                          -6
-0.50s  turn 2: Strike, enemy 21
+0.50s  turn 2: Strike, enemy 18
 0.50s                          -3
 0.55s                          -3^^^
 0.60s                          -6^
@@ -694,7 +694,7 @@ The player takes 0.25 s to pick a card. The poison of turn 1 hurts at the end of
 0.70s                          -6^^
 0.70s                          -3^^
 0.75s                          -6
-0.75s  turn 3: Strike, enemy 12
+0.75s  turn 3: Strike, enemy 9
 0.75s                          -3
 0.80s                          -6^^^
 0.80s                          -3^^^
@@ -703,8 +703,7 @@ The player takes 0.25 s to pick a card. The poison of turn 1 hurts at the end of
 0.95s                          -6^^
 0.95s                          -3^^
 1.00s                          -6
-1.00s  turn 4: Strike, enemy 3
-1.00s                          -3
+1.00s  turn 4: Strike, enemy 0
 the enemy is down on turn 4
 ~~~
 

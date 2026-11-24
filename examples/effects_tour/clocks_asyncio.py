@@ -22,9 +22,9 @@ class Turns:  # the end of a turn, as asyncio sees it: a condition, a count and 
             await self.ended.wait_for(lambda: self.count > seen)
 
     async def end(self):
-        self.dealt = 0
+        self.dealt = 0  # noqa: DOEFF002 - the turn of the asyncio version is one shared object
         async with self.ended:
-            self.count += 1
+            self.count += 1  # noqa: DOEFF002 - the same
             self.ended.notify_all()
         await asyncio.sleep(0)  # let every card effect take its turn before the fight reads the damage
         return self.dealt
@@ -42,7 +42,7 @@ async def rising(screen, text: str):
         await asyncio.sleep(0.1)
 
 
-async def battle(choose, screen, enemy: int = 30):
+async def battle(choose, screen, enemy: int = 27):
     turns, animations = Turns(), set()
     turn = 0
     while enemy > 0:
@@ -52,7 +52,7 @@ async def battle(choose, screen, enemy: int = 30):
             enemy -= 6
             animations.add(asyncio.create_task(rising(screen, "-6")))
         elif card == "Poison":
-            turns.effects = (*turns.effects, asyncio.create_task(poison(turns, 3, 5)))
+            turns.effects = (*turns.effects, asyncio.create_task(poison(turns, 3, 3)))
             await asyncio.sleep(0)  # let the poison start waiting before the turn ends
         screen(f"turn {turn}: {card}, enemy {enemy}")
         dealt = await turns.end()
