@@ -282,7 +282,10 @@
 
 (defclass [(dataclass :frozen True)] PrepareNote [EffectBase]
   "準備を止めない所見を 1 行記録する(例: editable で入るだけの依存の repo の bytecode を焼けなかった — 2026-09-27)。答え = None。"
-  (#^ str text))
+  (#^ str text)
+  (defn #^ None __post_init__ [self]  ; cannot be a defk: dataclass の __post_init__ — 解いていない Program などの非文字列が記録へ混ざるのを構成時に断る
+    (when (not (isinstance self.text str))
+      (raise (TypeError (.format "PrepareNote.text は文字列: {!r}" self.text))))))
 
 
 (defclass [(dataclass :frozen True)] DiskFree [EffectBase]
