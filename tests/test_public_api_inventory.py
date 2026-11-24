@@ -187,6 +187,60 @@ def ping_handler_with_state_dir() -> ProgramHandler:
     return ping_handler
 
 
+def kept(limit: int = 1):
+    def decorator(func):
+        @do
+        def kept_fn(*args, **kwargs):
+            yield ping()
+            return (yield func(*args, **kwargs))
+
+        return kept_fn
+
+    return decorator
+
+
+def kept_directly(func):
+    @do
+    def kept_fn(*args, **kwargs):
+        return (yield func(*args, **kwargs))
+
+    return kept_fn
+
+
+def kept_handled(func):
+    @do
+    def kept_fn(*args, **kwargs):
+        return (yield WithHandlerType(ping_handler, func(*args, **kwargs)))
+
+    return kept_fn
+
+
+def kept_answering(limit: int = 1):
+    def decorator(func):
+        @do
+        def kept_fn(effect, cont):
+            return (yield Resume(cont, func(effect)))
+
+        return kept_fn
+
+    return decorator
+
+
+def kept_plain(func):
+    def kept_fn(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return kept_fn
+
+
+def kept_either(func, plain: bool = False):
+    @do
+    def kept_fn(*args, **kwargs):
+        return (yield func(*args, **kwargs))
+
+    return func if plain else kept_fn
+
+
 LIMIT = 3
 '''
 
@@ -277,6 +331,12 @@ def sample(tmp_path: Path) -> Iterator[ModuleType]:
         ("ping_handler_for", "handler", "function returning a handler"),
         ("ping_handler_reading", "handler", "function returning a handler"),
         ("not_a_ping_handler_for", "other", "function not returning a handler"),
+        ("kept", "other", "program decorator"),
+        ("kept_directly", "other", "program decorator"),
+        ("kept_handled", "other", "decorator returning a program function that installs a handler"),
+        ("kept_answering", "other", "decorator returning a program function that answers an effect"),
+        ("kept_plain", "unclassified", "function"),
+        ("kept_either", "unclassified", "function"),
     ],
 )
 def test_names_are_typed_by_marker_return_type_and_return_shape(
@@ -286,6 +346,10 @@ def test_names_are_typed_by_marker_return_type_and_return_shape(
 
     A return type that says nothing about the content (Any, Callable[..., Any]) is left to the return shape; if that does
     not decide either, the name is unclassified.
+    A function whose source shows a decorator over program functions (it takes a function and every return names a @do
+    function defined inside it, or it takes settings and returns such a decorator) is a program decorator when nothing it
+    reads installs a handler or answers an effect (ADR-DOE-API-001 R38); one that returns a plain function, or the given
+    function on some path, stays unclassified.
     A function read as returning a handler (a factory) is called with minimal arguments (none, or a placeholder for each
     argument without a default); if it returns an unmarked value it becomes "a function that does not return a handler"
     (ADR-DOE-API-001 R3: even if the return type says ProgramHandler, a function that passes the program through when

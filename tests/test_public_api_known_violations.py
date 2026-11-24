@@ -29,7 +29,9 @@ by the key (module that shows the name, name). A submodule whose name does not s
    (ADR-DOE-API-001 R<number>), or, for a row with no rule, one English sentence giving the reason it is allowed. A row without a basis, a basis containing a record id or an issue number,
    and a row with the same key as the violations table are red. Only groups whose shape the inventory checks (ALLOWED_GROUPS) can be used. In the group "Allowed — program helper"
    (ADR-DOE-API-001 R18 — functions the rule allows name by name that only emit effects and return a program), only names whose inventory shape is a program helper can be placed:
-   placing a function that installs a handler, answers an effect, or does not return a program is red. In the group "Allowed — Hy macro"
+   placing a function that installs a handler, answers an effect, or does not return a program is red. In the group "Allowed — program decorator"
+   (R38 — decorators over program functions, such as cache of doeff-core-effects), only names whose inventory shape is a program decorator can be placed: placing a decorator
+   whose program function installs a handler or answers an effect, or a function that returns something other than a @do function defined inside it, is red. In the group "Allowed — Hy macro"
    (R14, R15, R31 — a module that shows macros sits at a public boundary), only rows whose inventory shape is a Hy macro, and rows of public submodules that show only Hy
    macros (macro modules), can be placed: placing a non-macro name or a submodule that also shows names outside macros is red.
    In the group "Allowed — CLI command" (R7, R31), only console script and Rust executable rows whose name an ADR rule mentions can be placed
@@ -96,6 +98,8 @@ GROUP_HEADS = ("Violation — ", "Boundary — ", "Unsorted — ")
 ALLOWED_HEAD = "Allowed — "
 #: Group of program helpers the rule allows name by name (ADR-DOE-API-001 R18) — only names whose inventory shape is a program helper can be placed.
 HELPER_GROUP = "Allowed — program helper"
+#: Group of decorators over program functions the rule allows name by name (ADR-DOE-API-001 R38) — only names whose inventory shape is a program decorator can be placed.
+DECORATOR_GROUP = "Allowed — program decorator"
 #: Group of Hy macros the rule allows (ADR-DOE-API-001 R14, R15, R31) — only macro names and rows of macro modules can be placed.
 MACRO_GROUP = "Allowed — Hy macro"
 #: Group of CLI commands the rule allows (ADR-DOE-API-001 R7, R31) — only console script and Rust executable rows can be placed.
@@ -125,6 +129,8 @@ PYTEST_PLUGIN_FORM = "entry point(pytest11)"
 #: What each allowed group can hold (the shape the inventory checks — used in the sentence that names a name whose shape does not fit). A group with no check cannot be used.
 ALLOWED_SHAPES: dict[str, str] = {
     HELPER_GROUP: "Only functions that return a program and, inside, neither install a handler nor answer an effect can be placed (ADR-DOE-API-001 R18)",
+    DECORATOR_GROUP: "Only decorators over program functions (a function that takes a function and returns a @do function defined inside it, or one that takes settings and returns"
+    " such a decorator) that, inside, neither install a handler nor answer an effect can be placed (ADR-DOE-API-001 R38)",
     MACRO_GROUP: "Only Hy macros and public submodules that show nothing but Hy macros (macro modules) can be placed"
     "(ADR-DOE-API-001 R14, R15, R31)",
     COMMAND_GROUP: "Only console scripts and Rust executables that an ADR-DOE-API-001 rule names and decides to keep can be placed"
@@ -388,6 +394,7 @@ def fits_allowed_group(
     writers = facts.writers
     shapes: dict[str, Callable[[], bool]] = {
         HELPER_GROUP: lambda: row["form"] == tool.PROGRAM_HELPER,
+        DECORATOR_GROUP: lambda: row["form"] == tool.PROGRAM_DECORATOR,
         CONVERSION_GROUP: lambda: row["form"] == tool.CONVERSION,
         MACRO_GROUP: lambda: (
             row["form"] == tool.MACRO_FORM
@@ -1438,6 +1445,128 @@ def test_only_a_program_helper_can_be_put_into_the_helper_group(tmp_path: Path) 
         match=r"1 name\(s\) are in the allowed table but not in the inventory[\s\S]*doeff_fixture_api\.gone",
     ):
         check_package(package, *tables(["gone", "pinging"]))
+
+
+#: The shapes of a function that returns a function: a decorator over program functions that takes settings (the shape of doeff-core-effects' cache), one that takes
+#: the function directly, three that go beyond the shape (the program function applies a handler, a function of the same package inside installs one, the program
+#: function answers an effect), and one that returns a plain function.
+PROGRAM_DECORATORS = '''
+
+from doeff import Resume, do
+
+
+def memoized(limit: int = 1):
+    """A program decorator that takes settings: the @do function it gives only emits effects and runs the function."""
+
+    def decorator(func):
+        @do
+        def memoized_fn(*args, **kwargs):
+            yield PingEffect()
+            return (yield func(*args, **kwargs))
+
+        return memoized_fn
+
+    return decorator
+
+
+def pinged_first(func):
+    """A program decorator that takes the function directly."""
+
+    @do
+    def pinged_fn(*args, **kwargs):
+        yield PingEffect()
+        return (yield func(*args, **kwargs))
+
+    return pinged_fn
+
+
+def handled(func):
+    """Past a program decorator: the program function applies a handler."""
+
+    @do
+    def handled_fn(*args, **kwargs):
+        return (yield ping_handler(func(*args, **kwargs)))
+
+    return handled_fn
+
+
+def _install(program):
+    return ping_handler(program)
+
+
+def wrapped(limit: int = 1):
+    """Past a program decorator: the function of its package the program function calls installs the handler."""
+
+    def decorator(func):
+        @do
+        def wrapped_fn(*args, **kwargs):
+            return (yield _install(func(*args, **kwargs)))
+
+        return wrapped_fn
+
+    return decorator
+
+
+def answered(func):
+    """Past a program decorator: the program function answers an effect (Resume is handler control)."""
+
+    @do
+    def answered_fn(effect, cont):
+        return (yield Resume(cont, func(effect)))
+
+    return answered_fn
+
+
+def plain(func):
+    """Not a program decorator: the function it gives builds no program."""
+
+    def plain_fn(*args, **kwargs):
+        return func(*args, **kwargs)
+
+    return plain_fn
+'''
+
+
+@pytest.mark.timeout(_PROBE_SECONDS + 20)
+def test_only_a_program_decorator_can_be_put_into_the_decorator_group(tmp_path: Path) -> None:
+    """The group "Allowed — program decorator" of the allowed table can hold only names whose inventory shape is a program decorator (ADR-DOE-API-001 R38).
+
+    A decorator whose @do function only emits effects (taking settings and returning the decorator, or taking the function directly) is green if placed in the allowed table, and stays a
+    red violation if it is in neither table. Placing a decorator whose program function installs a handler (applying a handler value, or a function of the same package inside applying one)
+    or answers an effect, or a function that returns a plain function, in the allowed table is red (naming the group, name, shape, and name read). The inventory reads the source and does
+    not call the decorator.
+    """
+    repo = _fixture_repo(tmp_path, EFFECTS_AND_HANDLERS + PROGRAM_DECORATORS)
+    package = _read_fixture(repo)
+    forms = {row["name"]: row["form"] for row in package["exports"]}
+    assert (forms["memoized"], forms["pinged_first"]) == (tool.PROGRAM_DECORATOR, tool.PROGRAM_DECORATOR)
+    rest = ["answered", "handled", "plain", "wrapped"]
+
+    def tables(decorators: list[str]) -> Tables:
+        listed = sorted(set(rest) - set(decorators))
+        allowed = _fixture_grouped(
+            {(FIXTURE_ROOT, name): DECORATOR_GROUP for name in decorators},
+            FIXTURE_DECISION,
+        )
+        return Tables(_fixture_table({FIXTURE_ROOT: listed} if listed else {}), allowed)
+
+    check_package(package, *tables(["memoized", "pinged_first"]))
+    with pytest.raises(
+        AssertionError, match=r"in neither the known table nor the allowed table[\s\S]*doeff_fixture_api\.memoized"
+    ):
+        check_package(package, *tables(["pinged_first"]))
+
+    past_a_decorator = [
+        ("handled", tool.DECORATOR_INSTALLS, "handled reads ping_handler"),
+        ("wrapped", tool.DECORATOR_INSTALLS, "_install reads ping_handler"),
+        ("answered", tool.DECORATOR_ANSWERS, "answered reads Resume"),
+        ("plain", "function", "the shape of return does not decide it either"),
+    ]
+    for name, form, said in past_a_decorator:
+        with pytest.raises(AssertionError, match=re.escape(DECORATOR_GROUP)) as failure:
+            check_package(package, *tables(["memoized", "pinged_first", name]))
+        assert f"{FIXTURE_ROOT}.{name}({form}・" in str(failure.value)
+        assert said in str(failure.value)
 
 
 CONVERSIONS = '''

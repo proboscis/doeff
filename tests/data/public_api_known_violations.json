@@ -923,12 +923,6 @@
    "module": "doeff_stream",
    "name": "replay_clocked",
    "reason": "Test harness for a fold_clocked step: feeds a list of Clocked inputs to the step without the VM and returns the trace. It is replay for a step of fold_clocked, so there is no group to place it, as with replay"
-  },
-  {
-   "package": "doeff-core-effects",
-   "module": "doeff_core_effects",
-   "name": "cache",
-   "reason": "The decorator that memoizes a @do function through MemoExists, MemoGet and MemoPut, with the function's name and arguments as the key. Release 0.8.0 showed it as doeff_core_effects.cache.cache and the published durable-execution example decorates its steps with it; after the child cache was hidden with _ (ADR-DOE-API-001 R5) it had no public path, so the entry point shows it. It takes settings and returns a decorator, not a program, so it is not of the helper shape of R18 and no allowed group checks its shape — it stays here as a violation that is shown until a rule gives decorators over program functions a shape"
   }
  ]
 }

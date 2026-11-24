@@ -151,6 +151,13 @@ PROGRAM_HELPER = "program helper"
 #: The forms of a function that returns a program and whose body goes past a helper's.
 HELPER_INSTALLS = "function returning a program that installs a handler"
 HELPER_ANSWERS = "function returning a program that answers an effect"
+#: The form of a decorator over program functions (ADR-DOE-API-001 R38): it takes a function and returns a ``@do``
+#: function defined inside it whose program only emits effects; one that takes settings returns such a decorator.
+PROGRAM_DECORATOR = "program decorator"
+#: The forms of a decorator over program functions whose body goes past a helper's.
+DECORATOR_INSTALLS = "decorator returning a program function that installs a handler"
+DECORATOR_ANSWERS = "decorator returning a program function that answers an effect"
+_DECORATOR_BREACH_FORMS = {HELPER_INSTALLS: DECORATOR_INSTALLS, HELPER_ANSWERS: DECORATOR_ANSWERS}
 #: The form of a plain function that turns a value into a value (ADR-DOE-API-001 R35): its body makes no
 #: effect, handler or program and reads no clock, environment, file, process or randomness.
 CONVERSION = "conversion function"
@@ -848,9 +855,11 @@ class _Classifier:
     """Types the values a package exports (holds doeff's types, imported once per child)."""
 
     def __init__(self) -> None:
-        from doeff import EffectBase
+        from doeff import EffectBase, do
 
         self.effect_base: type = EffectBase
+        # What makes a ``def`` inside a decorator a program function (ADR-DOE-API-001 R38).
+        self.do: object = do
         program_module = importlib.import_module("doeff.program")
         self.handler_builders: tuple[object, ...] = tuple(
             program_module.__dict__[name]
@@ -988,7 +997,11 @@ class _Classifier:
                 if annotation is _MISSING
                 else f"return type {_annotation_text(annotation)} does not decide it, and the shape of return does not either"
             )
-            return self._returns_kind(function) or Verdict("unclassified", "function", unknown)
+            return (
+                self._returns_kind(function)
+                or self._decorator_verdict(function)
+                or Verdict("unclassified", "function", unknown)
+            )
         return self._conversion_verdict(
             function,
             Verdict("other", PLAIN_FUNCTION, f"return type {_annotation_text(annotation)}"),
@@ -1053,6 +1066,59 @@ class _Classifier:
         return Verdict(
             "other", breach.form, f"{read.reason}; {breach.where} reads {breach.name}"
         )
+
+    def _decorator_verdict(self, function: object) -> Verdict | None:
+        """The verdict on a decorator over program functions (ADR-DOE-API-001 R38); ``None`` when it is not one.
+
+        Read from its source and never called. The program the decorated function builds is held to a
+        helper's body (R18): nothing the decorator reads — the code defined inside it and the functions
+        of its own package it reads, followed through — installs a handler or answers an effect.
+        """
+        node = _function_node(function)
+        if node is None or not isinstance(function, types.FunctionType):
+            return None
+        shape = self._decorator_shape(node, function.__globals__)
+        if shape is None:
+            return None
+        breaches = (
+            found
+            for current in self._package_bodies(function)
+            if (found := self._body_breach(current)) is not None
+        )
+        breach = next(breaches, None)
+        if breach is None:
+            return Verdict(
+                "other", PROGRAM_DECORATOR, f"{shape}; it installs no handler inside and answers no effect"
+            )
+        return Verdict(
+            "other", _DECORATOR_BREACH_FORMS[breach.form], f"{shape}; {breach.where} reads {breach.name}"
+        )
+
+    def _decorator_shape(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef, namespace: dict[str, object]
+    ) -> str | None:
+        """How a ``def`` reads as a decorator over program functions, for the row's reason (``None`` when it does not).
+
+        A decorator takes the function it decorates as its one required argument, and every ``return``
+        of it names a ``@do`` function defined inside it. A ``def`` that takes settings returns such a
+        decorator defined inside it (``cache(ttl=60)``).
+        """
+        inner = _returned_def(node)
+        if inner is None:
+            return None
+        if _takes_one_argument(node) and self._is_do_def(inner, namespace):
+            return f"takes a function and returns the @do function {inner.name} defined inside it"
+        made = _returned_def(inner)
+        if made is not None and _takes_one_argument(inner) and self._is_do_def(made, namespace):
+            return (
+                f"returns the decorator {inner.name}, which takes a function and returns"
+                f" the @do function {made.name} defined inside it"
+            )
+        return None
+
+    def _is_do_def(self, node: ast.FunctionDef, namespace: dict[str, object]) -> bool:
+        """Whether a ``def`` read from source carries doeff's ``@do`` (calling it builds a program)."""
+        return any(_resolve(decorator, namespace) is self.do for decorator in node.decorator_list)
 
     def _conversion_verdict(self, function: object, read: Verdict, annotation: object) -> Verdict:
         """The verdict on a plain function with a value's return type: a conversion, a builder or neither
@@ -1577,6 +1643,39 @@ def _own_returns(node: ast.AST) -> Iterator[ast.Return]:
             child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
         ):
             yield from _own_returns(child)
+
+
+def _own_defs(node: ast.AST) -> Iterator[ast.FunctionDef]:
+    """The ``def`` statements of a function, not those of the functions and classes inside it."""
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.FunctionDef):
+            yield child
+        elif not isinstance(child, (ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)):
+            yield from _own_defs(child)
+
+
+def _returned_def(node: ast.FunctionDef | ast.AsyncFunctionDef) -> ast.FunctionDef | None:
+    """The one ``def`` inside a function that every ``return`` of it names (``None`` when a return gives anything else)."""
+    names = {
+        statement.value.id if isinstance(statement.value, ast.Name) else None
+        for statement in _own_returns(node)
+    }
+    if len(names) != 1 or None in names:
+        return None
+    found = [each for each in _own_defs(node) if each.name in names]
+    return found[0] if len(found) == 1 else None
+
+
+def _takes_one_argument(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Whether a ``def`` read from source must be passed exactly one argument (the function a decorator takes)."""
+    positional = [*node.args.posonlyargs, *node.args.args]
+    required = positional[: len(positional) - len(node.args.defaults)]
+    keyword_only = [
+        argument
+        for argument, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+        if default is None
+    ]
+    return len(required) == 1 and not keyword_only
 
 
 def _decorator_name(decorator: ast.expr) -> str | None:
@@ -2909,7 +3008,10 @@ _METHOD_NOTES = (
     "other: program functions (@do, defk) and functions whose return type is a program, other functions, classes, exceptions, types, constants, macros,"
     " console scripts and entry points. A function that returns a program gets the form 'program helper' when, inside it (and inside the"
     " same-package functions it reads), it neither installs a handler (does not read WithHandler, handler values, builders or factories) nor answers an effect (does not read Resume,"
-    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group 'Allowed — program helper' (ADR-DOE-API-001 R18).",
+    " Pass, Transfer and the like) -- the allowed-names table allows these name by name in the group 'Allowed — program helper' (ADR-DOE-API-001 R18)."
+    " A function whose return type does not decide it gets the form 'program decorator' when its source shows a decorator over program functions (it takes a"
+    " function and every return names a @do function defined inside it, or it takes settings and returns such a decorator defined inside it) and nothing it"
+    " reads installs a handler or answers an effect -- the allowed-names table allows these name by name in the group 'Allowed — program decorator' (R38).",
     "unclassified: functions with no return type or a type that says nothing about the contents (Any, object, Callable, a list of them) that the shape of return does not decide either,"
     " classes whose name ends in Effect or Handler but have no mark (and functions that return them), and names of modules that cannot be imported.",
     "When both the root and a submodule show the same name, they are merged into one row, and the column \"shown from\" lists the modules showing it relative to the import root,"
