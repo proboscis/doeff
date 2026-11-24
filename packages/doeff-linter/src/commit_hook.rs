@@ -27,8 +27,9 @@
 //!
 //! The child linter has a limit per run (default 20 seconds; 0 means no limit), and the commit is stopped if it is exceeded (exit code 1;
 //! the limit is measured in the child's CPU seconds -- on a busy machine only the wall seconds stretch, and with no limit 0-hit commits were cut off every time.
-//! For a child that does not finish without using CPU, a wall backstop limit [limit x WALL_BACKSTOP_FACTOR] is kept, and on machines where the child's CPU seconds cannot be read [Macs
-//! without /proc] it is measured in wall seconds -- the decision is in the one place cut_measure;
+//! For a child that does not finish without using CPU, an unrunnable-wall backstop limit [limit x WALL_BACKSTOP_FACTOR] is kept -- counting only wall seconds while no thread of the child or its
+//! descendants is runnable (`R` in `/proc/<pid>/task/<tid>/stat`, so time waiting for CPU under cgroup `cpu.max` throttling, `cpu.idle`, or low `cpu.weight` is not counted) -- and on machines where
+//! the child's CPU seconds and thread state cannot be read [Macs without /proc] it is measured in wall seconds -- the decision is in the one place cut_measure;
 //! original issue #2723). Previously it let the commit through when exceeded, merely writing in one line what had been passed without checking -- workers did not
 //! re-verify commits that passed. When stopping, it writes in one line which comparison, on which tree, which rules, and
 //! cut off at what limit in seconds, followed by a command that redoes the same comparison without a limit (unbounded_command -- in a form that can be pasted and run as is) and guidance to
@@ -390,24 +391,54 @@ pub struct LintRun {
 /// The yardstick by which the cut-off was judged (the limit is measured in the child's CPU seconds).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Measure {
-    /// The child's CPU seconds (utime and stime of the child and its waited-for descendants) exceeded the limit.
+    /// The child's CPU seconds (utime and stime of the child and its descendants) exceeded the limit.
     Cpu,
     /// On a machine where the child's CPU seconds cannot be read (a Mac without /proc), the wall seconds exceeded the limit.
     Wall,
-    /// The CPU seconds are within the limit, but the wall seconds exceeded the backstop limit (limit x WALL_BACKSTOP_FACTOR) -- a child that does not finish without using CPU.
+    /// The CPU seconds are within the limit, but the unrunnable wall seconds (wall seconds while no thread of the child or its descendants was in state `R`)
+    /// exceeded the backstop limit (limit x WALL_BACKSTOP_FACTOR) -- a stalled child that is neither running nor waiting for CPU.
     WallBackstop,
 }
 
-/// The multiplier of the wall backstop limit that cuts off a child that does not finish without using CPU (how many times the CPU-seconds limit). A child within the CPU-seconds limit is not cut off by wall
-/// until a core's share on a busy machine falls below 1/4 (node-h has 36 cores and load 73, giving a share of about 1/2).
+/// The multiplier of the unrunnable-wall backstop limit that cuts off a stalled child (how many times the CPU-seconds limit).
+/// Counts only wall seconds while no thread of the child or its descendants is runnable (`R`), so a child waiting for CPU under cgroup `cpu.max` throttling,
+/// `cpu.idle`, or low `cpu.weight` is not cut off by the machine's CPU priority policy.
 pub const WALL_BACKSTOP_FACTOR: u32 = 4;
 
-/// Pure: the decision whether to cut off one child linter run -- wall = wall seconds since it was started, cpu = the child's CPU seconds (None on machines where it cannot be read),
-/// limit = the limit. If CPU seconds can be read, measure by CPU seconds and look at wall only for the backstop limit (limit x WALL_BACKSTOP_FACTOR). If not, measure by wall.
-pub fn cut_measure(wall: Duration, cpu: Option<Duration>, limit: Duration) -> Option<Measure> {
+/// One observation of the child process tree at wall time `at` since launch:
+/// whether any thread of the child or its descendants was runnable (`R` in `/proc/<pid>/task/<tid>/stat`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RunSample {
+    pub at: Duration,
+    pub runnable: bool,
+}
+
+/// Pure: wall seconds added to the unrunnable counter by stepping from `prev` to `next`.
+/// Only an interval whose endpoints are both non-runnable is counted, so a brief non-runnable observation
+/// after a parent scheduling delay on a loaded machine is not charged as stalled time.
+pub fn unrunnable_step(prev: RunSample, next: RunSample) -> Duration {
+    if !prev.runnable && !next.runnable {
+        next.at.saturating_sub(prev.at)
+    } else {
+        Duration::ZERO
+    }
+}
+
+/// Pure: total wall seconds across a sequence of samples during which no thread of the child
+/// process tree was runnable (`R`).
+pub fn unrunnable_wall(samples: &[RunSample]) -> Duration {
+    samples.windows(2).fold(Duration::ZERO, |acc, pair| acc + unrunnable_step(pair[0], pair[1]))
+}
+
+/// Pure: the decision whether to cut off one child linter run -- wall = wall seconds since it was started,
+/// cpu = the child's CPU seconds (None on machines where `/proc` cannot be read),
+/// unrunnable = wall seconds during which no thread of the child or its descendants was runnable (`R`),
+/// limit = the limit. If `/proc` can be read, measure by CPU seconds and look at `unrunnable` only for
+/// the backstop limit (limit x WALL_BACKSTOP_FACTOR). If not, measure by wall.
+pub fn cut_measure(wall: Duration, cpu: Option<Duration>, unrunnable: Duration, limit: Duration) -> Option<Measure> {
     match cpu {
         Some(cpu) if cpu >= limit => Some(Measure::Cpu),
-        Some(_) if wall >= limit * WALL_BACKSTOP_FACTOR => Some(Measure::WallBackstop),
+        Some(_) if unrunnable >= limit * WALL_BACKSTOP_FACTOR => Some(Measure::WallBackstop),
         Some(_) => None,
         None if wall >= limit => Some(Measure::Wall),
         None => None,
@@ -424,14 +455,94 @@ pub fn cpu_of_stat(text: &str) -> Option<Duration> {
     Some(Duration::from_millis(ticks * 10))
 }
 
-/// The child process's CPU seconds (only on Linux with /proc -- on other machines and when unreadable it is None, and the cut-off is measured by wall).
+/// Pure: reads the process/thread state character (field 3, e.g. `'R'`, `'S'`, `'D'`, `'Z'`)
+/// from the contents of `/proc/<pid>/stat` or `/proc/<pid>/task/<tid>/stat`.
+/// The name field (the 2nd) can contain `')'` and spaces, so count from after the last `')'`.
+pub fn state_of_stat(text: &str) -> Option<char> {
+    let rest = &text[text.rfind(')')? + 1..];
+    let token = rest.split_whitespace().next()?;
+    let mut chars = token.chars();
+    let state = chars.next()?;
+    chars.next().is_none().then_some(state)
+}
+
+/// Pure: whether a Linux `/proc/<pid>/task/<tid>/stat` state character means runnable
+/// (`'R'`: running on CPU or waiting in the runqueue, including under cgroup `cpu.max` throttling, `cpu.idle`, or low `cpu.weight`).
+pub fn is_runnable_state(state: char) -> bool {
+    state == 'R'
+}
+
+/// Pure: parses the space-separated child PIDs from `/proc/<pid>/task/<tid>/children`.
+pub fn children_of_text(text: &str) -> Vec<u32> {
+    text.split_whitespace().filter_map(|word| word.parse::<u32>().ok()).collect()
+}
+
+/// One live observation of the child process tree from `/proc`: total CPU seconds across the child
+/// and its descendants and whether any thread is runnable (`'R'`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProcSample {
+    cpu: Duration,
+    runnable: bool,
+}
+
+/// Reads CPU seconds and runnable state across the child process and its descendants via `/proc`
+/// (only on Linux with `/proc` -- on other machines and when unreadable it is None, and the cut-off is measured by wall).
 #[cfg(target_os = "linux")]
-fn child_cpu(pid: u32) -> Option<Duration> {
-    std::fs::read_to_string(format!("/proc/{}/stat", pid)).ok().as_deref().and_then(cpu_of_stat)
+fn child_sample(root_pid: u32) -> Option<ProcSample> {
+    let root_stat = std::fs::read_to_string(format!("/proc/{}/stat", root_pid)).ok()?;
+    let mut total_cpu = cpu_of_stat(&root_stat)?;
+    let mut any_runnable = false;
+    let mut saw_any_thread = false;
+
+    let mut visited = BTreeSet::new();
+    let mut queue = std::collections::VecDeque::new();
+    visited.insert(root_pid);
+    queue.push_back(root_pid);
+
+    while let Some(pid) = queue.pop_front() {
+        if pid != root_pid {
+            if let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", pid)) {
+                if let Some(cpu) = cpu_of_stat(&stat) {
+                    total_cpu += cpu;
+                }
+            }
+        }
+        if let Ok(entries) = std::fs::read_dir(format!("/proc/{}/task", pid)) {
+            for entry in entries.flatten() {
+                let tid_name = entry.file_name();
+                let Some(tid) = tid_name.to_str() else { continue };
+                if !tid.bytes().all(|b| b.is_ascii_digit()) {
+                    continue;
+                }
+                let task_dir = entry.path();
+                if let Ok(tstat) = std::fs::read_to_string(task_dir.join("stat")) {
+                    if let Some(state) = state_of_stat(&tstat) {
+                        saw_any_thread = true;
+                        if is_runnable_state(state) {
+                            any_runnable = true;
+                        }
+                    }
+                }
+                if let Ok(children_text) = std::fs::read_to_string(task_dir.join("children")) {
+                    for child_pid in children_of_text(&children_text) {
+                        if visited.insert(child_pid) {
+                            queue.push_back(child_pid);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !saw_any_thread {
+        any_runnable = state_of_stat(&root_stat).is_some_and(is_runnable_state);
+    }
+
+    Some(ProcSample { cpu: total_cpu, runnable: any_runnable })
 }
 
 #[cfg(not(target_os = "linux"))]
-fn child_cpu(_pid: u32) -> Option<Duration> {
+fn child_sample(_root_pid: u32) -> Option<ProcSample> {
     None
 }
 
@@ -459,7 +570,7 @@ pub fn unmeasured_line(unmeasured: &Unmeasured) -> String {
         Measure::Cpu => format!("cut off at the CPU-seconds limit of {} s", secs),
         Measure::Wall => format!("cut off at the wall limit of {} s (child CPU seconds cannot be read on this machine)", secs),
         Measure::WallBackstop => format!(
-            "cut off at the wall backstop limit of {} s ({} times the CPU-seconds limit of {} s; a child that does not finish without using CPU)",
+            "cut off at the unrunnable-wall backstop limit of {} s ({} times the CPU-seconds limit of {} s; wall seconds while no thread of the child or its descendants was runnable)",
             secs * u64::from(WALL_BACKSTOP_FACTOR),
             WALL_BACKSTOP_FACTOR,
             secs
@@ -570,12 +681,32 @@ pub fn run_linter(linter: &Path, cwd: &Path, run: &LintRun, timeout: Option<Dura
     };
     let stdout = reader(child.stdout.take().map(|s| Box::new(s) as Box<dyn Read + Send>));
     let stderr = reader(child.stderr.take().map(|s| Box::new(s) as Box<dyn Read + Send>));
+    let mut prev_sample: Option<RunSample> = None;
+    let mut unrunnable = Duration::ZERO;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
             Ok(None) => {
                 if let Some(limit) = timeout {
-                    if let Some(measure) = cut_measure(started.elapsed(), child_cpu(child.id()), limit) {
+                    let wall = started.elapsed();
+                    let cpu = match child_sample(child.id()) {
+                        Some(proc_sample) => {
+                            let current = RunSample { at: wall, runnable: proc_sample.runnable };
+                            if let Some(prev) = prev_sample {
+                                unrunnable += unrunnable_step(prev, current);
+                            }
+                            prev_sample = Some(current);
+                            Some(proc_sample.cpu)
+                        }
+                        None if prev_sample.is_some() => {
+                            // `/proc` was readable on earlier polls (Linux) and became unavailable only as the child exited;
+                            // do not fall back to the non-/proc wall limit.
+                            std::thread::sleep(Duration::from_millis(20));
+                            continue;
+                        }
+                        None => None,
+                    };
+                    if let Some(measure) = cut_measure(wall, cpu, unrunnable, limit) {
                         let _ = child.kill();
                         let _ = child.wait();
                         return Measured::TimedOut(Cut { side: run.side, rules: run.rules.clone(), limit, measure });
@@ -1876,20 +2007,193 @@ mod tests {
             .contains("1 rule(s) (DOEFF016) applied on the tip tree (working tree) was cut off at the wall limit of 1 s (child CPU seconds cannot be read on this machine)"));
         let idle = Cut { side: Side::Tip, rules: ids(&["DOEFF016"]), limit: Duration::from_secs(2), measure: Measure::WallBackstop };
         assert!(unmeasured_line(&Unmeasured { what: "the staged files".to_string(), cut: idle })
-            .contains("cut off at the wall backstop limit of 8 s (4 times the CPU-seconds limit of 2 s"));
+            .contains("cut off at the unrunnable-wall backstop limit of 8 s (4 times the CPU-seconds limit of 2 s; wall seconds while no thread of the child or its descendants was runnable)"));
     }
 
-    /// If CPU seconds can be read, measure by CPU seconds -- a child that only stretched in wall time due to load (wall 9 seconds, CPU 3 seconds, limit 4 seconds) is not cut off, and it is cut off once CPU seconds
-    /// reach the limit. Wall looks only at the backstop limit (4 times the limit). Machines where it cannot be read measure by wall as before.
+    /// If CPU seconds can be read, measure by CPU seconds -- a child that only stretched in wall time while waiting for CPU (wall 1000 s, CPU 3 s, unrunnable 0 s, limit 4 s)
+    /// is not cut off even past limit x WALL_BACKSTOP_FACTOR wall time, and it is cut off once CPU seconds reach the limit or unrunnable wall seconds reach limit x WALL_BACKSTOP_FACTOR.
+    /// Machines where `/proc` cannot be read (Mac) measure by wall as before.
     #[test]
-    fn commit_hook_cut_measure_reads_cpu_seconds_and_keeps_a_wall_backstop() {
+    fn commit_hook_cut_measure_reads_cpu_seconds_and_keeps_an_unrunnable_wall_backstop() {
         let s = Duration::from_secs;
-        assert_eq!(cut_measure(s(9), Some(s(3)), s(4)), None);
-        assert_eq!(cut_measure(s(5), Some(s(4)), s(4)), Some(Measure::Cpu));
-        assert_eq!(cut_measure(s(15), Some(s(1)), s(4)), None);
-        assert_eq!(cut_measure(s(16), Some(s(1)), s(4)), Some(Measure::WallBackstop));
-        assert_eq!(cut_measure(s(3), None, s(4)), None);
-        assert_eq!(cut_measure(s(4), None, s(4)), Some(Measure::Wall));
+        let sample = |at: u64, runnable: bool| RunSample { at: s(at), runnable };
+
+        // Pure pipeline: sample sequence -> unrunnable seconds -> cut_measure.
+        let starved = [sample(0, true), sample(10, true), sample(50, true), sample(1000, true)];
+        let starved_unrunnable = unrunnable_wall(&starved);
+        assert_eq!(starved_unrunnable, s(0));
+        assert_eq!(cut_measure(s(1000), Some(s(3)), starved_unrunnable, s(4)), None);
+
+        assert_eq!(cut_measure(s(5), Some(s(4)), s(0), s(4)), Some(Measure::Cpu));
+        assert_eq!(cut_measure(s(100), Some(s(1)), s(15), s(4)), None);
+        assert_eq!(cut_measure(s(100), Some(s(1)), s(16), s(4)), Some(Measure::WallBackstop));
+
+        // Stalled child (no thread in state `R`): unrunnable wall reaches 16 s (= 4 x 4 s) and cuts off.
+        let stalled = [sample(0, true), sample(1, false), sample(10, false), sample(17, false)];
+        let stalled_unrunnable = unrunnable_wall(&stalled);
+        assert_eq!(stalled_unrunnable, s(16));
+        assert_eq!(cut_measure(s(17), Some(s(1)), stalled_unrunnable, s(4)), Some(Measure::WallBackstop));
+
+        // Machines without `/proc` (cpu == None): fall back to wall limit.
+        assert_eq!(cut_measure(s(3), None, s(0), s(4)), None);
+        assert_eq!(cut_measure(s(4), None, s(0), s(4)), Some(Measure::Wall));
+    }
+
+    /// Pure: unrunnable_wall sums only intervals whose endpoints are both non-runnable (`!runnable`),
+    /// ignoring intervals where the child was runnable (`R`) and single non-runnable transition blips.
+    #[test]
+    fn commit_hook_unrunnable_wall_counts_only_non_runnable_intervals() {
+        let s = Duration::from_secs;
+        let sample = |at: u64, runnable: bool| RunSample { at: s(at), runnable };
+        assert_eq!(unrunnable_wall(&[]), s(0));
+        assert_eq!(unrunnable_wall(&[sample(5, false)]), s(0));
+        assert_eq!(unrunnable_wall(&[sample(0, true), sample(100, true)]), s(0));
+        assert_eq!(unrunnable_wall(&[sample(0, false), sample(16, false)]), s(16));
+        // A single brief non-runnable observation after a long parent scheduling delay does not charge that delay.
+        assert_eq!(unrunnable_wall(&[sample(0, true), sample(10, false), sample(11, true)]), s(0));
+        // Mixed stretches: (6..9 -> 3s) + (21..25 -> 4s) = 7s.
+        let mixed = [
+            sample(0, true),
+            sample(5, true),
+            sample(6, false),
+            sample(9, false),
+            sample(10, true),
+            sample(20, true),
+            sample(21, false),
+            sample(25, false),
+        ];
+        assert_eq!(unrunnable_wall(&mixed), s(7));
+    }
+
+    /// Reads the state character from `/proc/<pid>/task/<tid>/stat` (handling `)` and spaces inside comm)
+    /// and parses child PIDs from `/proc/<pid>/task/<tid>/children`.
+    #[test]
+    fn commit_hook_state_of_stat_and_children_of_text() {
+        let stat_r = "4242 (doeff (lin) ter) R 1 4242 4242 0 -1 4194304";
+        let stat_s = "4242 (sleep) S 1 4242 4242 0 -1 4194304";
+        let stat_d = "4242 (io) D 1 4242 4242 0 -1 4194304";
+        assert_eq!(state_of_stat(stat_r), Some('R'));
+        assert_eq!(state_of_stat(stat_s), Some('S'));
+        assert_eq!(state_of_stat(stat_d), Some('D'));
+        assert_eq!(state_of_stat("4242 (x)"), None);
+        assert_eq!(state_of_stat("4242 (x) RUNNING"), None);
+        assert_eq!(state_of_stat("no paren"), None);
+
+        assert!(is_runnable_state('R'));
+        for non_runnable in ['S', 'D', 'T', 't', 'Z', 'X', 'I'] {
+            assert!(!is_runnable_state(non_runnable), "state {:?}", non_runnable);
+        }
+
+        assert_eq!(children_of_text("101 202\n303 "), vec![101, 202, 303]);
+        assert_eq!(children_of_text(""), Vec::<u32>::new());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn first_allowed_cpu() -> usize {
+        std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|text| {
+                text.lines()
+                    .find_map(|line| line.strip_prefix("Cpus_allowed_list:"))
+                    .and_then(|list| list.trim().split([',', '-']).next())
+                    .and_then(|first| first.parse::<usize>().ok())
+            })
+            .unwrap_or(0)
+    }
+
+    /// Real Linux check (ki-92a0b2dec251): a child pinned to the same CPU at nice 19 alongside nice 0 busy loops
+    /// stays runnable (`R`) while starved of CPU; even past 2 x (limit x WALL_BACKSTOP_FACTOR) wall seconds it is
+    /// not cut off as long as its CPU seconds remain within `limit`. A sleeping child (`S`) has no runnable thread
+    /// and is cut off at the unrunnable-wall backstop limit.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn commit_hook_run_linter_does_not_cut_cpu_starved_child_but_cuts_sleeping_child() {
+        use std::os::unix::fs::PermissionsExt;
+
+        struct KillOnDrop(Vec<std::process::Child>);
+        impl Drop for KillOnDrop {
+            fn drop(&mut self) {
+                for child in &mut self.0 {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                }
+            }
+        }
+
+        let cpu = first_allowed_cpu().to_string();
+        let dir = unique_dir(&std::env::temp_dir(), "doeff-linter-unrunnable-backstop").unwrap();
+        let limit = Duration::from_secs(1);
+        let run = LintRun { side: Side::Tip, rules: ids(&["DOEFF016"]), args: Vec::new() };
+
+        // 1. Starved child: runs a nice 19 busy loop as a descendant of `sh` (testing descendant walking too)
+        // on a CPU occupied by two nice 0 busy loops. Target wall > 2 x (1 s x 4) = 8 s while CPU << 1 s.
+        let starved_script = dir.join("starved.sh");
+        std::fs::write(
+            &starved_script,
+            format!(
+                "#!/bin/sh\ntaskset -c {} nice -n 19 bash -c 'SECONDS=0; while [ $SECONDS -lt 10 ]; do :; done'\nprintf '{{\"violations\":[]}}'\n",
+                cpu
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&starved_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let mut competitors = Vec::new();
+        for _ in 0..2 {
+            competitors.push(
+                Command::new("taskset")
+                    .args(["-c", &cpu, "nice", "-n", "0", "bash", "-c", "while :; do :; done"])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .spawn()
+                    .expect("spawn nice 0 busy loop competitor"),
+            );
+        }
+        let _guard = KillOnDrop(competitors);
+        std::thread::sleep(Duration::from_millis(50));
+
+        let started = Instant::now();
+        let starved_measured = run_linter(&starved_script, &dir, &run, Some(limit));
+        let starved_wall = started.elapsed();
+        drop(_guard);
+
+        match starved_measured {
+            Measured::Report(report) => assert_eq!(report["violations"], json!([])),
+            Measured::TimedOut(cut) => panic!("CPU-starved child was cut off after {:?}: {:?}", starved_wall, cut),
+            Measured::Failed(reason) => panic!("CPU-starved child failed after {:?}: {}", starved_wall, reason),
+        }
+        assert!(
+            starved_wall >= limit * WALL_BACKSTOP_FACTOR * 2,
+            "expected starved child to exceed 2x backstop ({:?}), ran for {:?}",
+            limit * WALL_BACKSTOP_FACTOR * 2,
+            starved_wall
+        );
+
+        // 2. Sleeping child: no runnable thread, cut off at the unrunnable-wall backstop limit (4 s).
+        let sleep_script = dir.join("sleep.sh");
+        std::fs::write(&sleep_script, "#!/bin/sh\nexec sleep 20\n").unwrap();
+        std::fs::set_permissions(&sleep_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        let started = Instant::now();
+        let sleep_measured = run_linter(&sleep_script, &dir, &run, Some(limit));
+        let sleep_wall = started.elapsed();
+        let _ = std::fs::remove_dir_all(&dir);
+
+        match sleep_measured {
+            Measured::TimedOut(cut) => {
+                assert_eq!(cut.measure, Measure::WallBackstop, "expected WallBackstop, got {:?}", cut);
+                let line = unmeasured_line(&Unmeasured { what: "the staged files".to_string(), cut });
+                assert!(line.contains("unrunnable-wall backstop limit of 4 s"), "{}", line);
+            }
+            Measured::Report(report) => panic!("sleeping child was not cut off after {:?}: {:?}", sleep_wall, report),
+            Measured::Failed(reason) => panic!("sleeping child failed after {:?}: {}", sleep_wall, reason),
+        }
+        assert!(
+            sleep_wall >= Duration::from_secs(3) && sleep_wall < Duration::from_secs(12),
+            "expected sleeping child to be cut off near 4 s backstop, took {:?}",
+            sleep_wall
+        );
     }
 
     /// A child linter gets a small rayon pool unless the caller chose one -- an unset or empty RAYON_NUM_THREADS becomes CHILD_THREADS, a set value is kept.
