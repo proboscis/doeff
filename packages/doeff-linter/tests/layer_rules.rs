@@ -3940,6 +3940,66 @@ fn clauses_without_a_counterexample_are_red() {
     let (_, report) = editor(dir.path());
     assert!(keys(&report, "DOEFF167").is_empty(), "{:?}", keys(&report, "DOEFF167"));
     assert_eq!(report["errors"], serde_json::json!([]), "{}", report["errors"]);
+
+    // Table-driven single deftest per service: a single deftest referencing a `val` table of broken handlers
+    // (both via `:params` and via `for`) satisfies both DOEFF164 and DOEFF167 without a separate deftest per clause.
+    let table_files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/intent/effects.hy", "(import doeff [EffectBase])\n(defclass Charge [EffectBase])\n(defclass Refund [EffectBase])\n".to_string()),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(import app.billing.intent.effects [Charge Refund])\n(defk run [] (Charge) (Refund))\n"),
+        (
+            "app/billing/tests/test_table_params.hy",
+            "(import app.billing.intent.effects [Charge Refund])\n(import app.billing.entry.main [run])\n\
+             (defhandler broken-charge (Charge [] (resume 0)))\n(defhandler broken-refund (Refund [] (resume 0)))\n\
+             (val CASES #(#(\"B1\" broken-charge) #(\"B2\" broken-refund)))\n\
+             (deftest test-billing-counterexamples [clause broken] {:params {\"clause,broken\" CASES}} (with-handlers [broken] (run)))\n"
+                .to_string(),
+        ),
+        (
+            "tables/COUNTEREXAMPLES/charge.txt",
+            "app/billing/tests/test_table_params.hy::broken-charge::app.billing.intent.effects.Charge\nBroken charge\nbreaks: billing::B1\n".to_string(),
+        ),
+        (
+            "tables/COUNTEREXAMPLES/refund.txt",
+            "app/billing/tests/test_table_params.hy::broken-refund::app.billing.intent.effects.Refund\nBroken refund\nbreaks: billing::B2\n".to_string(),
+        ),
+    ];
+    let tdir = world_repo_with(&table_files, "", "[\"DOEFF143\", \"DOEFF157\", \"DOEFF164\", \"DOEFF167\"]");
+    let tarch = tdir.path().join("architecture.hy");
+    let tbase = std::fs::read_to_string(&tarch).unwrap().replace(":foundation foundation", fakes).replace(
+        "(defservice billing \"Billing\" {:layers [core entry]})",
+        "(defservice billing \"Billing\" {:layers [core entry] :clauses [\"B1\" \"B2\"]})",
+    );
+    std::fs::write(&tarch, &tbase).unwrap();
+    let (_, treport) = editor(tdir.path());
+    assert!(keys(&treport, "DOEFF164").is_empty(), "{}", treport);
+    assert!(keys(&treport, "DOEFF167").is_empty(), "{}", treport);
+    assert_eq!(treport["errors"], serde_json::json!([]), "{}", treport["errors"]);
+    // Same with a `for` loop inside one deftest over the `val` table.
+    std::fs::write(
+        tdir.path().join("app/billing/tests/test_table_params.hy"),
+        "(import app.billing.intent.effects [Charge Refund])\n(import app.billing.entry.main [run])\n\
+         (defhandler broken-charge (Charge [] (resume 0)))\n(defhandler broken-refund (Refund [] (resume 0)))\n\
+         (val CASES #(#(\"B1\" broken-charge) #(\"B2\" broken-refund)))\n\
+         (deftest test-billing-counterexamples [] (for [#(clause broken) CASES] (with-handlers [broken] (run))))\n",
+    )
+    .unwrap();
+    let (_, treport_for) = editor(tdir.path());
+    assert!(keys(&treport_for, "DOEFF164").is_empty(), "{}", treport_for);
+    assert!(keys(&treport_for, "DOEFF167").is_empty(), "{}", treport_for);
+    assert_eq!(treport_for["errors"], serde_json::json!([]), "{}", treport_for["errors"]);
+    // Removing one row from CASES leaves B2 uncovered in DOEFF167 while DOEFF164 stays green.
+    std::fs::write(
+        tdir.path().join("app/billing/tests/test_table_params.hy"),
+        "(import app.billing.intent.effects [Charge Refund])\n(import app.billing.entry.main [run])\n\
+         (defhandler broken-charge (Charge [] (resume 0)))\n(defhandler broken-refund (Refund [] (resume 0)))\n\
+         (val CASES #(#(\"B1\" broken-charge)))\n\
+         (deftest test-billing-counterexamples [] (for [#(clause broken) CASES] (with-handlers [broken] (run))))\n",
+    )
+    .unwrap();
+    let (_, treport_missing) = editor(tdir.path());
+    assert!(keys(&treport_missing, "DOEFF164").is_empty(), "{}", treport_missing);
+    assert_eq!(keys(&treport_missing, "DOEFF167"), vec!["architecture.hy::DOEFF167::billing::B2"], "{}", treport_missing);
 }
 
 /// A service of a repo with no layer dirs (declaring the entry with `:entry-modules` — the merge-queue shape) also enters the population of DOEFF164 and 167,

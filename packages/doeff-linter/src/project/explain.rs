@@ -663,7 +663,7 @@ impl<'a> Narrator<'a> {
                     Some(clause) => format!("clause {} of service {}", clause, service),
                     None => format!("service {} :clauses", service),
                 },
-                format!("{}. Having just one counterexample for a service cannot tell whether broken answers that violate other clauses are distinguished — each clause needs a counterexample from a deliberately broken handler that violates that clause (the `breaks:` of a counterexample table row), or a reason for having no counterexample (:clause-exemptions) (ADR R2).", gap)
+                format!("{}. Having just one counterexample for a service cannot tell whether broken answers that violate other clauses are distinguished — add a row for that clause (referencing a deliberately broken handler whose counterexample table row declares `breaks:`) to the service's single table-driven counterexample deftest (do not add a separate deftest per clause), or record a reason in :clause-exemptions (ADR R2).", gap)
             ),
             Explain::HandlerArgumentHoldsState { handler, param, kind, type_text } => (
                 format!("argument {} of handler {} ({}{})", param, handler, kind, if type_text.is_empty() { String::new() } else { format!(" {}", type_text) }),
