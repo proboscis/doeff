@@ -11,15 +11,16 @@
 //    effect out, and order never says who answers.
 // 6. Handlers are rings around order. One of them gets k, the rest of order; it resumes it, keeps it or never resumes
 //    it, at most once.
-// 7. Keeping k for later is scheduling: in a card game, a poison waits for the end of a turn and the game's turn
-//    clock keeps its k; a number that rises on screen waits for seconds on another clock, stacked around the same game.
+// 7. Keeping k for later is scheduling: the card fight spawns its Poison card as a task that waits for the end of a
+//    turn; the fight's turn clock waits on a promise, so doeff's scheduler keeps k. A number that rises on screen
+//    waits for seconds on another clock, stacked around the same kind of fight.
 // 8. Swapping: the same function, unchanged, in five stacks.
-// 9. The article's example before the article uses it: what battle does, and why it was chosen (it needs four things
-//    from outside, and each can be answered in many ways).
+// 9. The article's example before the article uses it: what battle does, and why it was chosen (it needs five things
+//    from outside, and they can be answered in many ways).
 // 10. How to start.
-// Every code line on screen is a line of measure/order.py or of examples/effects_tour/clocks.py (check_code.py checks
-// it), and every result is a line of their output; the card fight's numbers and handler names are those of the
-// article's listing of spire.py and its runs.
+// Every code line on screen is a line of measure/order.py or of examples/effects_tour/spire.py and clocks.py
+// (check_code.py checks it), and every result is a line of their output; the card fight's numbers and handler names
+// are those of the article's listing of spire.py and its runs.
 // Each scene's motions come one at a time (pace.ts), and each headline waits for its line and its motions.
 import React from 'react';
 import {AbsoluteFill, interpolate} from 'remotion';
@@ -648,10 +649,11 @@ const Handling: React.FC = () => {
   );
 };
 
-// 7. Keeping k for later is scheduling, on the two clocks of examples/effects_tour/clocks.py. A card game first: a
-// poison hurts at the end of each of five turns. It is a loop that waits for the end of a turn, and the game's own turn
-// clock keeps its k until the turn ends. A number that rises on screen is the same kind of loop and waits 0.1 s on
-// doeff-time's virtual clock. The turns and the frames drawn are those clocks.py prints.
+// 7. Keeping k for later is scheduling, on the Poison card of the article's fight (examples/effects_tour/spire.py).
+// The fight spawns poison as a task of its own: a loop that waits for the end of a turn, then hurts. Its TurnEnds
+// goes out to the fight's turn clock, which waits on a promise, so doeff's scheduler keeps k until the fight ends
+// the turn. A number that rises on screen is the same kind of loop and waits 0.1 s on doeff-time's virtual clock.
+// The turns and the frames drawn are those examples/effects_tour/clocks.py prints.
 const W1 = 0;
 const W1_STEPS = chain(after(W1), [
   ['fates', 0.5],
@@ -660,6 +662,7 @@ const W1_STEPS = chain(after(W1), [
 ]);
 const W2 = nextLine(heard(W1, 'w1'), W1_STEPS);
 const W2_STEPS = chain(after(W2), [
+  ['spawn', 0.6],
   ['poison', 0.6],
   ['loop', 0.5],
 ]);
@@ -667,8 +670,10 @@ const W3 = nextLine(heard(W2, 'w2'), W2_STEPS);
 const W3_STEPS = chain(after(W3), [
   ['clock', 0.5],
   ['wait', 0.9],
+  ['promise', 0.5],
   ['keep', 0.5],
-  ['ends', 0.9],
+  ['ends', 0.5],
+  ['back', 0.9],
   ['hurt', 0.4],
 ]);
 const W4 = nextLine(heard(W3, 'w3'), W3_STEPS);
@@ -684,8 +689,8 @@ const W5_STEPS = chain(after(W5), [
 ]);
 const CLOCKS_SAID: Said = [
   [W1, [['Keep'], ['k', K], ['for later: that is'], ['scheduling', K]]],
-  [W2, [['A poison:'], ['wait for the turn to end,', K], ['then hurt']]],
-  [W3, [['The turn clock'], ['keeps k', K], ['until the turn ends']]],
+  [W2, [['Poison:'], ['a task of its own,', K], ['a plain loop']]],
+  [W3, [['A promise for the turn:'], ["doeff's scheduler"], ['keeps k', K]]],
   [W4, [['The same loop on another clock:'], ['seconds', PROD]]],
   [W5, [['Two clocks,'], ['stacked:', TEST], ['turns', K], ['and'], ['seconds', PROD]]],
 ];
@@ -693,13 +698,24 @@ const CLOCKS = f(sceneEnd(heard(W5, 'w5'), W5_STEPS));
 // What a handler can do with k, as the scene before said; keeping it is the one this scene is about.
 const FATES = ['resume k now', 'keep k for later', 'never resume k'];
 const KEPT = 1;
-// The two loops of clocks.py, side by side.
+// The fight of spire.py when the card is played, the card's loop, and what the turn clock does with TurnEnds and
+// with the end of a turn; then the animation's loop of clocks.py.
+const SPAWN_CODE = ['yield Spawn(poison(3, turns=3), daemon=True)'];
 const POISON_CODE = [
   '@do',
   'def poison(n: int, turns: int):',
   '    for _ in range(turns):',
   '        yield TurnEnds()',
   '        yield Hurt(n)',
+];
+const TURNS_CODE = [
+  'if isinstance(effect, TurnEnds):',
+  '    if bell is None:',
+  '        bell = yield CreatePromise()',
+  '    yield Wait(bell.future)',
+  '    return (yield Resume(k, None))',
+  '',
+  'yield CompletePromise(over, None)',
 ];
 const RISING_CODE = [
   '@do',
@@ -711,13 +727,15 @@ const RISING_CODE = [
 const LOOP = {y: 140, w: 560, size: 19, line: 34, poison: 60, rising: 660};
 const WAITS = 3;
 const ACTS = 4;
+// The turn clock's lines: TurnEnds comes in, the promise is made, the wait, the resume, and the end of the turn.
+const CLOCK = {x: 660, y: 140, w: 560, size: 16, line: 26, comes: 0, makes: 2, waits: 3, resumes: 4, says: 5, completes: 6};
 // The run of clocks.py on its two clocks. Where a second sits on screen; the turn clock's line, the row a number
 // starts on, and the line of seconds.
 const secondX = (seconds: number) => 210 + seconds * 900;
 const TURN_Y = 438;
 const FRAME_Y = 554;
 const SECOND_Y = 572;
-// A turn ends each 0.25 s, the time the player takes to pick a card, and the poison hurts at the end of each.
+// A turn ends each 0.25 s, the time the player takes to pick a card, and the poison hurts at the end of three.
 const TURN_ENDS = [0.25, 0.5, 0.75, 1.0];
 // The frames clocks.py draws: [the second, the height, the number]. A -3 is the poison's, a -6 a Strike's.
 const FRAMES: [number, number, string][] = [
@@ -726,19 +744,24 @@ const FRAMES: [number, number, string][] = [
   [0.5, 0, '-3'], [0.6, 1, '-3'], [0.7, 2, '-3'], [0.8, 3, '-3'],
   [0.75, 0, '-6'], [0.85, 1, '-6'], [0.95, 2, '-6'],
   [0.75, 0, '-3'], [0.85, 1, '-3'], [0.95, 2, '-3'],
-  [1.0, 0, '-6'], [1.0, 0, '-3'],
+  [1.0, 0, '-6'],
 ];
 // The second of the run the playhead is at, and the scene time it reaches a second of the run.
 const PLAYED = 1.03;
 const reached = (seconds: number) => W4_STEPS.play.from + (seconds / PLAYED) * (W4_STEPS.play.to - W4_STEPS.play.from);
+// Where the promise of turn 1 and the k that waits on it sit: on the end of the turn, on the turn clock's line.
+const BELL = {x: secondX(0.25), k: secondX(0.25) + 76};
 
 const Clocks: React.FC = () => {
   const frame = useSceneFrame();
+  // The line of the turn clock that is at work.
+  const at = (step: Step) => frame >= f(step.from);
+  const clockLine = at(W3_STEPS.back) ? CLOCK.resumes : at(W3_STEPS.ends) ? CLOCK.completes : at(W3_STEPS.keep) ? CLOCK.waits : at(W3_STEPS.promise) ? CLOCK.makes : frame >= f(W3_STEPS.wait.to) ? CLOCK.comes : undefined;
   return (
     <AbsoluteFill>
       <Chapter n={7} of={SCENES} name="Scheduling: keep k" />
       <Headline lines={CLOCKS_SAID} />
-      {/* What a handler can do with k; then a card of a card game, whose effect lasts five turns. */}
+      {/* What a handler can do with k; then a card of the card fight, whose effect lasts three turns. */}
       <Rise at={W1_STEPS.fates.from} out={W2} y={20}>
         {FATES.map((fate, i) => {
           const lit = i === KEPT && frame >= f(W1_STEPS.keep.from);
@@ -755,24 +778,34 @@ const Clocks: React.FC = () => {
           );
         })}
       </Rise>
-      <Rise at={W1_STEPS.card.from} out={W3} y={30} scale={0.9} origin={[930, 262]}>
-        <div style={{position: 'absolute', left: 850, top: 152, width: 160, height: 220, ...glass(`${TEST}cc`), background: `linear-gradient(170deg, ${TEST}40, rgba(12,13,20,0.92) 55%)`, boxShadow: `0 18px 40px rgba(0,0,0,0.55), 0 0 22px ${TEST}44`}}>
+      <Rise at={W1_STEPS.card.from} out={W3} y={30} scale={0.9} origin={[930, 250]}>
+        <div style={{position: 'absolute', left: 850, top: 140, width: 160, height: 220, ...glass(`${TEST}cc`), background: `linear-gradient(170deg, ${TEST}40, rgba(12,13,20,0.92) 55%)`, boxShadow: `0 18px 40px rgba(0,0,0,0.55), 0 0 22px ${TEST}44`}}>
           <div style={{position: 'absolute', left: 0, right: 0, top: 46, textAlign: 'center', fontFamily: DISPLAY, fontSize: 27, fontWeight: 800, color: TEXT}}>Poison</div>
-          <div style={{position: 'absolute', left: 14, right: 14, top: 100, textAlign: 'center', fontFamily: DISPLAY, fontSize: 17, fontWeight: 600, lineHeight: 1.4, color: TEST}}>3 damage at the end of each turn, for 5 turns</div>
+          <div style={{position: 'absolute', left: 14, right: 14, top: 100, textAlign: 'center', fontFamily: DISPLAY, fontSize: 17, fontWeight: 600, lineHeight: 1.4, color: TEST}}>3 damage at the end of each turn, for 3 turns</div>
         </div>
-        <Note x={770} y={388} w={320} text="a card of a card game" color={MUTED} size={16} align="center" />
       </Rise>
-      {/* The poison: its TurnEnds goes out to the turn clock, which keeps k until the turn ends. */}
+      <Rise at={W1_STEPS.card.from} out={W2} y={30}>
+        <Note x={770} y={376} w={320} text="a card of a card game" color={MUTED} size={16} align="center" />
+      </Rise>
+      {/* The fight spawns the card's loop as a task of its own. */}
+      <Rise at={W2_STEPS.spawn.from} out={W3} y={24} scale={0.96} origin={[940, 430]}>
+        <CodeWindow file="spire.py  ·  battle(), when the card is played" lines={SPAWN_CODE} x={LOOP.rising} y={384} w={LOOP.w} size={18} line={LOOP.line} />
+      </Rise>
+      {/* The poison: its TurnEnds goes out to the turn clock, which waits on a promise; the scheduler keeps k until the turn ends. */}
       <Rise at={W2_STEPS.poison.from} y={24} scale={0.96} origin={[340, 258]}>
         <CodeWindow
-          file="clocks.py" lines={POISON_CODE} x={LOOP.poison} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line}
-          scan={frame >= f(W2_STEPS.loop.from) ? WAITS + along(frame, W3_STEPS.ends) : undefined}
-          k={frame >= f(W3_STEPS.keep.from) && frame < f(W3_STEPS.ends.from) ? [2, ACTS] : undefined}
+          file="spire.py" lines={POISON_CODE} x={LOOP.poison} y={LOOP.y} w={LOOP.w} size={LOOP.size} line={LOOP.line}
+          scan={frame >= f(W2_STEPS.loop.from) ? WAITS + along(frame, W3_STEPS.back) : undefined}
+          k={frame >= f(W3_STEPS.keep.from) && frame < f(W3_STEPS.back.from) ? [2, ACTS] : undefined}
         />
+      </Rise>
+      <Rise at={W3_STEPS.clock.from} out={W4} y={24} scale={0.96} origin={[940, 258]}>
+        <CodeWindow file="spire.py  ·  turns(), the turn clock" lines={TURNS_CODE} x={CLOCK.x} y={CLOCK.y} w={CLOCK.w} size={CLOCK.size} line={CLOCK.line} scan={clockLine} />
+        <div style={{position: 'absolute', left: CLOCK.x + 56, top: codeMid(CLOCK.y, CLOCK.line, CLOCK.says) - 10, fontFamily: DISPLAY, fontSize: 15, fontWeight: 600, color: MUTED}}>and when the fight ends the turn:</div>
       </Rise>
       <Rise at={W3_STEPS.clock.from} y={16}>
         <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 46, fontFamily: CODE, fontSize: 17, fontWeight: 700, color: K, whiteSpace: 'nowrap'}}>
-          turns()<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — the game's own turn clock: it keeps each waiting k, and resumes it when a turn ends</span>
+          turns()<span style={{fontFamily: DISPLAY, fontWeight: 600, color: MUTED}}>  — the fight's turn clock: a turn has a promise, and doeff's scheduler keeps the tasks that wait on it</span>
         </div>
         <div style={{position: 'absolute', left: secondX(0), top: TURN_Y - 1, width: secondX(PLAYED) - secondX(0), height: 2, background: `${K}88`}} />
         {TURN_ENDS.map((seconds, i) => {
@@ -785,17 +818,20 @@ const Clocks: React.FC = () => {
           );
         })}
       </Rise>
-      <Travel id="c5-wait" d={arcOf(398, codeMid(LOOP.y, LOOP.line, WAITS), secondX(0.25), TURN_Y, -50)} color={K} step={W3_STEPS.wait} text="TurnEnds()" until={W3_STEPS.keep.from} size={18} leave />
-      <Rise at={W3_STEPS.keep.from} out={W3_STEPS.ends.from} y={0} scale={0.7} origin={[secondX(0.25), TURN_Y]}>
-        <Capsule x={secondX(0.25)} y={TURN_Y} text="k" color={K} size={18} />
+      <Travel id="c5-wait" d={arcOf(398, codeMid(LOOP.y, LOOP.line, WAITS), CLOCK.x + 30, codeMid(CLOCK.y, CLOCK.line, CLOCK.comes), -40)} color={K} step={W3_STEPS.wait} text="TurnEnds()" until={W3_STEPS.promise.from} size={18} leave />
+      <Rise at={W3_STEPS.promise.from} out={W3_STEPS.back.from} y={0} scale={0.7} origin={[BELL.x, TURN_Y]}>
+        <Capsule x={BELL.x} y={TURN_Y} text="promise" color={LOOK} size={15} mono={false} ghost={frame < f(W3_STEPS.ends.from)} />
+      </Rise>
+      <Rise at={W3_STEPS.keep.from} out={W3_STEPS.back.from} y={0} scale={0.7} origin={[BELL.k, TURN_Y]}>
+        <Capsule x={BELL.k} y={TURN_Y} text="k" color={K} size={18} />
       </Rise>
       <Rise at={W3_STEPS.keep.from} out={W4} y={16}>
-        <div style={{position: 'absolute', left: 680, top: 188, width: 500, padding: '18px 24px', ...glass(`${K}66`), fontFamily: DISPLAY, fontSize: 21, fontWeight: 600, lineHeight: 1.5, color: TEXT}}>
-          The turn clock keeps <span style={{fontFamily: CODE, fontWeight: 700, color: K}}>k</span>, the rest of poison, and resumes it when the turn ends.
+        <div style={{position: 'absolute', left: secondX(0), top: TURN_Y + 50, width: 760, fontFamily: DISPLAY, fontSize: 21, fontWeight: 600, lineHeight: 1.5, color: TEXT}}>
+          doeff's scheduler keeps <span style={{fontFamily: CODE, fontWeight: 700, color: K}}>k</span>, the rest of poison, until the fight ends the turn.
         </div>
       </Rise>
-      <Ping x={secondX(0.25)} y={TURN_Y} color={LOOK} at={W3_STEPS.ends.from} />
-      <Travel id="c5-back" d={arcOf(secondX(0.25), TURN_Y, 340, codeMid(LOOP.y, LOOP.line, ACTS), -50)} color={K} step={W3_STEPS.ends} text="k" until={W3_STEPS.hurt.from} size={18} leave />
+      <Ping x={BELL.x} y={TURN_Y} color={LOOK} at={W3_STEPS.ends.from} />
+      <Travel id="c5-back" d={arcOf(BELL.k, TURN_Y, 340, codeMid(LOOP.y, LOOP.line, ACTS), -30)} color={K} step={W3_STEPS.back} text="k" until={W3_STEPS.hurt.from} size={18} leave />
       <Rise at={W3_STEPS.hurt.from} out={W4} y={0} scale={0.7} origin={[470, codeMid(LOOP.y, LOOP.line, ACTS)]}>
         <Capsule x={470} y={codeMid(LOOP.y, LOOP.line, ACTS)} text="enemy -3" color={FAIL} size={18} />
       </Rise>
@@ -955,15 +991,17 @@ const Start: React.FC = () => {
   );
 };
 
-// 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the first line
-// the article's scripted run shows: T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike),
-// then why it was chosen: four things it needs from outside, each answered by the handlers the article stacks.
+// 9. The article's example, before the article uses it: what battle does (the hand and the numbers are the line of
+// turn 2 in the article's scripted run: T2 you 34 (0 block) | enemy 38 | 3 energy | Poison Strike Defend Strike Defend),
+// then why it was chosen: five things it needs from outside, answered by the handlers the article stacks.
 const C1 = 0;
 const C1_STEPS = chain(after(C1), [['sides', 0.6]]);
 const C2 = nextLine(heard(C1, 'c1'), C1_STEPS);
+// How long the round of a turn takes to draw.
+const C2_TURN = 1.8;
 const C2_STEPS = chain(after(C2), [
   ['hand', 0.9],
-  ['turn', 1.4],
+  ['turn', C2_TURN],
   ['until', 0.4],
 ]);
 const C3 = nextLine(heard(C2, 'c2'), C2_STEPS);
@@ -973,6 +1011,7 @@ const C3_STEPS = chain(after(C3), [
   ['choose', 0.7],
   ['show', 0.7],
   ['played', 0.7],
+  ['turn', 0.7],
 ]);
 const C4 = nextLine(heard(C3, 'c3'), C3_STEPS);
 const C4_STEPS = chain(after(C4), [
@@ -980,19 +1019,20 @@ const C4_STEPS = chain(after(C4), [
   ['card', 0.4],
   ['screen', 0.4],
   ['count', 0.4],
+  ['clock', 0.4],
 ]);
 const C5 = nextLine(heard(C4, 'c4'), C4_STEPS);
 const C5_STEPS = chain(after(C5), [['six', 0.6]]);
 const FIGHT_SAID: Said = [
   [C1, [["The article's example:"], ['battle(),', ACCENT], ['one small card fight']]],
-  [C2, [['Each turn:'], ['draw,', K], ['play,', PROD], ['and the enemy hits back', FAIL]]],
-  [C3, [['Why this example:'], ['four', ACCENT], ['things it needs from'], ['outside', TEST]]],
-  [C4, [['Each can be answered in'], ['many ways', TEST]]],
+  [C2, [['Each turn:'], ['draw,', K], ['play,', PROD], ['a Poison hurts,', TEST], ['the enemy hits back', FAIL]]],
+  [C3, [['Why this example:'], ['five', ACCENT], ['things it needs from'], ['outside', TEST]]],
+  [C4, [['They can be answered in'], ['many ways', TEST]]],
   [C5, [['The article runs'], ['battle()', ACCENT], ['under six stacks']]],
 ];
 const FIGHT = f(sceneEnd(heard(C5, 'e2'), C5_STEPS));
-const HAND = ['Defend', 'Strike', 'Defend', 'Defend', 'Strike'];
-const CARD: Record<string, [string, string]> = {Strike: [PROD, 'deal 6'], Defend: [K, 'block 5']};
+const HAND = ['Poison', 'Strike', 'Defend', 'Strike', 'Defend'];
+const CARD: Record<string, [string, string]> = {Strike: [PROD, 'deal 6'], Defend: [K, 'block 5'], Poison: [TEST, '3 a turn, 3 turns']};
 const KAPPA = 0.5523;
 // The round of a turn: an ellipse from its left end, over the top.
 const ROUND = ((cx: number, cy: number, rx: number, ry: number) =>
@@ -1002,14 +1042,17 @@ const ROUND = ((cx: number, cy: number, rx: number, ry: number) =>
 const TURN: [number, number, string, string, number][] = [
   [500, 214, 'draw a hand', K, 0.1],
   [780, 214, 'play cards', PROD, 0.38],
-  [640, 320, 'the enemy hits back', FAIL, 0.72],
+  [752, 322, 'a Poison hurts', TEST, 0.6],
+  [556, 322, 'the enemy hits back', FAIL, 0.8],
 ];
-// What battle needs from outside: [its step, the effect, what it is, who can answer, the step they come at, right, top].
-const NEEDS: [Step, string, string, string[], Step, boolean, boolean][] = [
-  [C3_STEPS.roll, 'Roll(n)', 'dice', ['dice(7)', 'replay(tape)'], C4_STEPS.dice, false, true],
-  [C3_STEPS.choose, 'Choose(...)', 'which card?', ['scripted', 'random_bot', 'monte_carlo', 'human'], C4_STEPS.card, true, true],
-  [C3_STEPS.show, 'Show(text)', 'a screen', ['printed', 'silent'], C4_STEPS.screen, false, false],
-  [C3_STEPS.played, 'Played(card, damage)', 'a count', ['quiet_stats', 'damage_stats'], C4_STEPS.count, true, false],
+// What battle needs from outside: [its step, the effect, what it is, who can answer, the step they come at, the
+// left of its column, where the way out of battle starts, the height the effect lands at, above the hub].
+const NEEDS: [Step, string, string, string[], Step, number, [number, number], number, boolean][] = [
+  [C3_STEPS.roll, 'Roll(n)', 'dice', ['dice(7)', 'replay(tape)'], C4_STEPS.dice, 40, [528, 372], 300, true],
+  [C3_STEPS.choose, 'Choose(...)', 'which card?', ['scripted', 'random_bot', 'monte_carlo', 'human'], C4_STEPS.card, 800, [752, 372], 300, true],
+  [C3_STEPS.show, 'Show(text)', 'a screen', ['printed', 'silent'], C4_STEPS.screen, 40, [528, 412], 480, false],
+  [C3_STEPS.played, 'Played(card, damage)', 'a count', ['quiet_stats', 'damage_stats'], C4_STEPS.count, 800, [752, 412], 480, false],
+  [C3_STEPS.turn, 'EndTurn()', 'the end of a turn', ['turns()', 'scheduled'], C4_STEPS.clock, 420, [640, 438], 500, false],
 ];
 
 const Side: React.FC<{x: number; name: string; hp: number; color: string; children: React.ReactNode}> = ({x, name, hp, color, children}) => (
@@ -1034,13 +1077,13 @@ const Fight: React.FC = () => {
       {/* What battle does: the table. */}
       <Rise at={0} out={C3} y={0}>
         <Rise at={C1_STEPS.sides.from} y={30} scale={0.94} origin={[230, 265]}>
-          <Side x={70} name="YOU" hp={40} color={TEST}>
+          <Side x={70} name="YOU" hp={34} color={TEST}>
             energy
             {[0, 1, 2].map((i) => <div key={i} style={{width: 18, height: 18, borderRadius: '50%', background: LOOK, boxShadow: `0 0 12px ${LOOK}`}} />)}
           </Side>
         </Rise>
         <Rise at={C1_STEPS.sides.from + 0.15} y={30} scale={0.94} origin={[1050, 265]}>
-          <Side x={890} name="ENEMY" hp={44} color={FAIL}>dice decide its move</Side>
+          <Side x={890} name="ENEMY" hp={38} color={FAIL}>dice decide its move</Side>
         </Rise>
         {HAND.map((name, i) => {
           const [color, does] = CARD[name];
@@ -1061,7 +1104,7 @@ const Fight: React.FC = () => {
           );
         })}
         <Rise at={C2_STEPS.hand.to} y={0}>
-          <div style={{position: 'absolute', left: 0, right: 0, top: 648, textAlign: 'center', fontFamily: CODE, fontSize: 16, color: MUTED}}>T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Defend Defend Strike</div>
+          <div style={{position: 'absolute', left: 0, right: 0, top: 648, textAlign: 'center', fontFamily: CODE, fontSize: 16, color: MUTED}}>T2 you 34 (0 block) | enemy 38 | 3 energy | Poison Strike Defend Strike Defend</div>
         </Rise>
         <Draw d={ROUND} color="rgba(255,255,255,0.45)" step={C2_STEPS.turn} dashed width={2} />
         {frame >= f(C2_STEPS.turn.from) && frame < f(C2_STEPS.turn.to + 0.3) && (
@@ -1071,7 +1114,7 @@ const Fight: React.FC = () => {
           <Note x={540} y={252} w={200} text="EACH TURN" color={MUTED} size={14} align="center" />
         </Rise>
         {TURN.map(([x, y, text, color, part]) => (
-          <Rise key={text} at={C2_STEPS.turn.from + part * 1.4} y={0} scale={0.7} origin={[x, y]}>
+          <Rise key={text} at={C2_STEPS.turn.from + part * C2_TURN} y={0} scale={0.7} origin={[x, y]}>
             <Capsule x={x} y={y} text={text} color={color} mono={false} size={16} />
           </Rise>
         ))}
@@ -1084,14 +1127,12 @@ const Fight: React.FC = () => {
       <Rise at={C3_STEPS.hub.from} y={0} scale={0.7} origin={[640, 392]}>
         <Rings cx={640} cy={392} core="battle()" rings={[]} w={224} h={92} font={20} note="one function" />
       </Rise>
-      {NEEDS.map(([step, effect, what, answers, answered, right, top], i) => {
+      {NEEDS.map(([step, effect, what, answers, answered, x, [fromX, fromY], at, top], i) => {
         // Above the hub, who can answer sits over the effect, and below it under; the way out never crosses them.
-        const x = right ? 800 : 40;
         const cx = x + 220;
-        const at = top ? 300 : 480;
         return (
           <React.Fragment key={effect}>
-            <Travel id={`n-${i}`} d={arcOf(640 + (right ? 112 : -112), top ? 372 : 412, cx, at, 0)} color={ACCENT} step={step} text={effect} size={19} tail={200} />
+            <Travel id={`n-${i}`} d={arcOf(fromX, fromY, cx, at, 0)} color={ACCENT} step={step} text={effect} size={19} tail={200} />
             <Rise at={step.to - 0.1} y={10}>
               <Note x={x} y={top ? at - 70 : at + 34} w={440} text={what} size={21} align="center" />
             </Rise>
