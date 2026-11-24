@@ -27,15 +27,16 @@
 (import doeff_cluster [env-key])
 (import doeff_cluster [RuntimeEnv])
 (import doeff_cluster [ENV-MARKER])
-(import doeff_cluster._worker.core.env_prepare [prepare-env volume-of-mountinfo])
+(import doeff_cluster._shared.intent.env_marker_model [BytecodeCounts])
+(import doeff_cluster._worker.core.env_prepare [bake-line prepare-env volume-of-mountinfo])
 (import doeff_cluster._shared.intent.runtime_env_model [EnvFailure])
 (import doeff_cluster [ReadVolume]
-        doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady VolumeKind])
+        doeff_cluster._worker.intent.env_prepare_model [PrepareNote PrepareRequest KnownRoot EnvReady VolumeKind])
 (import doeff_cluster [env-translation])
 (import doeff_cluster._worker.intent.worker_model [BootMarks])
 (import doeff_cluster._worker.core.boot_timing [read-boot-marks boot-stamps stamps-out-of-order BOOT-STARTED-VAR BOOT-EXEC-VAR])
 (import doeff_cluster [process-clock])
-(import doeff_cluster._sim.env_world [BAKE-CARRY-SECONDS env-world EnvWorld WorldCommit read-world-log world-files])
+(import doeff_cluster._sim.env_world [BAKE-CARRY-SECONDS BAKE-JOBS env-world EnvWorld WorldCommit read-world-log world-files])
 (import tests.env_fixtures [LOCK env-of base-world app-commit lib-commit])
 (import tests.link_rig [LinkRig])
 
@@ -109,9 +110,11 @@
   (assert (in "tree=" (get lines 0)) lines)
   (assert (in "app:expand=" (get lines 0)) lines)
   ;; 焼きの 1 行も文字で出る(Program のまま記すと `Call(<function bake_line …>)` になり数が読めない — 2026-11-15 の本番の log)。
-  (val baked-lines (lfor n log.notes :if (.startswith (str n) "焼き: ") n))
+  (assert (= (get baked "bakeJobs") BAKE-JOBS) baked)
+  (val baked-lines (lfor n log.notes :if (.startswith n "焼き: ") n))
   (assert (= (len baked-lines) 1) log.notes)
   (assert (in (.format "rebuilt={} stored={}" (get baked "rebuilt") (get baked "stored")) (get baked-lines 0)) baked-lines)
+  (assert (in (.format "bake_jobs={}" BAKE-JOBS) (get baked-lines 0)) baked-lines)
   (assert (in "compile_s=" (get baked-lines 0)) baked-lines)
   ;; 温い準備: 前の root の木から写し、変わった app/__init__.py だけ置き直す(lib は変わらないので置き直さない)。
   (<- second-env RuntimeEnv (env-of "app-2" "lib-1" LOCK))
@@ -139,8 +142,11 @@
                        (get warm-baked "carried") (get warm-baked "trusted") (get warm-baked "checked") BAKE-CARRY-SECONDS)
               (get carry-notes 0))
           carry-notes)
-  (val warm-bake-lines (lfor n warm-log.notes :if (.startswith (str n) "焼き: ") n))
+  (val warm-bake-lines (lfor n warm-log.notes :if (.startswith n "焼き: ") n))
   (assert (= (len warm-bake-lines) 2) warm-log.notes)
+  (assert (in (.format "rebuilt={} stored={}" (get warm-baked "rebuilt") (get warm-baked "stored")) (get warm-bake-lines 1)) warm-bake-lines)
+  (assert (in (.format "bake_jobs={}" BAKE-JOBS) (get warm-bake-lines 1)) warm-bake-lines)
+  (assert (in "compile_s=" (get warm-bake-lines 1)) warm-bake-lines)
   (assert (in (.format "carried={} trusted={} checked={} carry_s={:.2f}"
                        (get warm-baked "carried") (get warm-baked "trusted") (get warm-baked "checked") BAKE-CARRY-SECONDS)
               (get warm-bake-lines 1))
@@ -153,6 +159,25 @@
   (<- handlers list (env-world world))
   (<- ok bool ((state) ((sim-time-handler :clock (SimClock (datetime-of-epoch-ms NOW-MS))) (with-handlers handlers (timed-scenario)))))
   (assert ok))
+
+
+(deftest test-prepare-note-requires-a-string-and-rejects-an-unbound-bake-line
+  ;; 失敗ケース(2026-11-15 の本番の log): defk の bake-line を解かずに PrepareNote へ渡すと、log に `Call(<function bake_line …>)`
+  ;; が出て bake_jobs が読めなくなる。PrepareNote は非文字列を構成時に断り、解いた bake-line の文字列だけを通す。
+  (val counts (BytecodeCounts :rebuilt 2333 :stored 0 :fetched 0 :reused 0 :failed 0
+                              :compile-seconds 1639.0 :closure-seconds 1.25 :scan-seconds 0.5
+                              :trees #() :bake-jobs 1))
+  (try
+    (PrepareNote (bake-line counts))
+    (assert False "解いていない Program は PrepareNote で断るべき")
+    (except [TypeError]))
+  (<- line str (bake-line counts))
+  (val note (PrepareNote line))
+  (assert (isinstance note.text str) note)
+  (assert (and (.startswith note.text "焼き: rebuilt=2333 ")
+               (in "bake_jobs=1" note.text)
+               (in "compile_s=1639.00" note.text))
+          note.text))
 
 
 (deftest test-the-volume-is-the-deepest-mount-holding-the-path
