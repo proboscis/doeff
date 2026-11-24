@@ -147,10 +147,12 @@
      ;; 引き取った行が同じ約束で続けるための写し(worker は読まずに状態の報告へ添えて返す)。
      (if offer.rerun {"rerun" True "attempt" offer.attempt "losses" offer.losses} {})
      (if offer.notify {"notify" offer.notify} {})
-     ;; 置き方の優先と場所を譲る名乗り(2026-11-11 — worker の memory の見張りは急ぎの優先の task を後に止める。欄を読まない古い worker は
-     ;; 捨てる)。既定の値(優先 0・名乗らない)は欄を置かない。
+     ;; 置き方の優先と場所を譲る名乗り・線の内の借り(2026-11-11・2026-11-24 — worker の memory の見張りは急ぎの優先の task を後に止め、
+     ;; 借りの task が在る間は jobs の層の memory.max を借りの分だけ広げる ADR-DOE-CLUSTER-005 R13。欄を読まない古い worker は
+     ;; 捨てる)。既定の値(優先 0・名乗らない・借りない)は欄を置かない。
      (if offer.priority {"priority" offer.priority} {})
-     (if offer.preemptible {"preemptible" True} {})))
+     (if offer.preemptible {"preemptible" True} {})
+     (if offer.borrowed {"borrowed" True} {})))
 
 
 (defk heartbeat-reply-json [#^ HeartbeatReply reply]

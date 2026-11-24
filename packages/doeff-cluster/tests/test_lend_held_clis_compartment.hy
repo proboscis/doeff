@@ -18,8 +18,9 @@
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster [ClusterState ClusterTiming WorkerInfo]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion TaskUnplacedKind])
-(import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
-(import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
+(import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad StatusRow])
+(import doeff_cluster._coordinator.core.cluster_policy [tasks-placed tasks-for adopted-task])
+(import doeff_cluster._coordinator.protocol.replies [task-offer-json])
 (import doeff_cluster._shared.intent.compartment_model [Compartment MachineCompartments HeldCompartment])
 (import doeff_cluster._worker.core.memory_rules [MIB])
 (import doeff_cluster._worker.core.eviction_rules [CLI-TURN-BYTES CLIS-ROOM-SHARE clis-held-lend held-jobs-limit task-needs-of])
@@ -102,12 +103,26 @@
                                                 :hosted-lend-mib told)))
   (<- read MeasuredLoad (parse MeasuredLoad spelled))
   (assert (= read.hosted-lend-MiB LEND-MIB) spelled)
-  ;; 置き先が区画を埋める 4096 MiB の task と借りの 3072 MiB の task を置いた返事: jobs の層を 4096 + 3072 MiB に広げ、clis は区画のまま。
-  (<- needs tuple (task-needs-of #({"id" "t-plain" "memoryMiB" TASKS-MIB} {"id" "t-borrow" "memoryMiB" BORROW-MIB "borrowed" True})))
+  ;; 置き先が区画を埋める 4096 MiB の task と借りの 3072 MiB の task を置いた返事: coordinator の tasks-for → task-offer-json で組んだ行に
+  ;; borrowed が載り、worker の task-needs-of がその行から borrowed を読んで jobs の層を 4096 + 3072 MiB に広げ、clis は区画のまま。
+  (<- worker WorkerInfo (node-c LEND-MIB))
+  (<- rows dict (placed-rows worker {"t-plain" (running "t-plain") "t-borrow" (queued "t-borrow")}))
+  (<- offered tuple (offered-rows worker rows))
+  (val by-id (dfor row offered (get row "id") row))
+  (assert (not-in "borrowed" (get by-id "t-plain")) (get by-id "t-plain"))
+  (assert (is (.get (get by-id "t-borrow") "borrowed") True) (get by-id "t-borrow"))
+  (<- needs tuple (task-needs-of offered))
+  (val need-by-id (dfor n needs n.id n))
+  (assert (= #((. (get need-by-id "t-plain") borrowed) (. (get need-by-id "t-borrow") borrowed)) #(False True)) need-by-id)
   (setv cell.needs needs)
   (<- lent-files MemoryFiles (worker-round files cell))
   (<- lent tuple (limits-mib lent-files))
   (assert (= lent #(CLIS-MIB (+ TASKS-MIB BORROW-MIB))) lent)
+  ;; 状態を失った coordinator が、worker が報告へ写した task-offer-json の行から走っている task を引き取る時も borrowed を保つ。
+  (val adopted-borrow (adopted-task (ClusterState) "node-c" None (StatusRow :name "task/t-borrow" :phase "running" :task (get by-id "t-borrow")) NOW))
+  (val adopted-plain (adopted-task (ClusterState) "node-c" None (StatusRow :name "task/t-plain" :phase "running" :task (get by-id "t-plain")) NOW))
+  (assert (and (is-not adopted-borrow None) (is adopted-borrow.borrowed True)) adopted-borrow)
+  (assert (and (is-not adopted-plain None) (is adopted-plain.borrowed False)) adopted-plain)
   ;; 失敗ケース(直す前の形): 区画の持つ clis の層の貸しは数えず、jobs の層は区画の値のまま(借りの task が来ても広げない)。
   (val bare (EvictionCell))
   (setv bare.compartments #((get HELD 0)))
@@ -166,6 +181,19 @@
               :memory-mib memory-mib :rerun True :preemptible True :borrowed borrowed :phase "assigned" :worker "node-c" :started-ms 1000))
 
 
+(defk offered-rows [worker rows]
+  {:pre [(: worker WorkerInfo) (: rows dict)] :post [(: % tuple)] :tags {:context "doeff-cluster-test" :role "judgment"}}
+  "coordinator の tasks-for と task-offer-json で組んだ heartbeat の返事の task の行(JSON の dict の tuple)を得るため。"
+  (<- workers (table-from-rows {worker.name worker}))
+  (<- tasks (table-from-rows rows))
+  (val cluster (ClusterState :workers workers :tasks tasks :machine-compartments MACHINES))
+  (var out #())
+  (for [offer (tasks-for cluster worker.name)]
+    (<- spelled dict (task-offer-json offer))
+    (:= out (+ out #(spelled))))
+  out)
+
+
 (defk placed-rows [worker rows]
   {:pre [(: worker WorkerInfo) (: rows dict)] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "judgment"}}
   "worker 1 台と区画の宣言の状態で task の行 rows(id → 行を作る Program)を置き先に 1 拍回し、拍の後の全部の行(id → 行)を得るため。"
@@ -204,7 +232,11 @@
   ;; まま(受け手の読む空き 4 GiB は 1 本の要りを越える — ターンは待たない)、貸しは 8192 − 4096 − 2048 = 2048 MiB に縮む。
   (val cell (EvictionCell))
   (setv cell.compartments HELD)
-  (<- needs tuple (task-needs-of #({"id" "t-plain" "memoryMiB" TASKS-MIB} {"id" "t-borrow" "memoryMiB" BORROW-MIB "borrowed" True})))
+  (<- before-worker WorkerInfo (node-c LEND-MIB))
+  (<- plain-row TaskRecord (running "t-plain"))
+  (<- borrow-row TaskRecord (running "t-borrow" :borrowed True :memory-mib BORROW-MIB))
+  (<- before-offered tuple (offered-rows before-worker {"t-plain" plain-row "t-borrow" borrow-row}))
+  (<- needs tuple (task-needs-of before-offered))
   (setv cell.needs needs)
   (<- turned MemoryFiles (machine :clis (* 4 GIB) :jobs (* 6 GIB)))
   (<- files MemoryFiles (worker-round turned cell))
@@ -236,7 +268,8 @@
                                             "t-borrow" (running "t-borrow" :borrowed True :memory-mib BORROW-MIB)}))
     (assert (= (. (get kept "t-borrow") phase) "assigned") lend))
   ;; worker の模型の次の回: 借りの行が返事から外れた後、jobs の層の使いが 6 GiB 残る間は使いまで、退いた後は区画の 4096 MiB へ戻す。
-  (<- plain-needs tuple (task-needs-of #({"id" "t-plain" "memoryMiB" TASKS-MIB})))
+  (<- plain-offered tuple (offered-rows worker rows))
+  (<- plain-needs tuple (task-needs-of plain-offered))
   (setv cell.needs plain-needs)
   (<- leaving MemoryFiles (worker-round files cell))
   (<- leaving-limits tuple (limits-mib leaving))

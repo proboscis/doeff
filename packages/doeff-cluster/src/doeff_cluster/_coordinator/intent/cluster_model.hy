@@ -1560,7 +1560,9 @@
    引き取りのために運ぶ欄(切り離していなければ使わない)・runtime-env = 実行環境の宣言(無ければ None)・environ = 子の環境変数・
    memory-mib = memory の要り(引き取った行が置き先の予約を続けるため — 名乗らない task は None)・rerun / attempt / losses / notify = 走らせ
    直しの名乗りと試行の番号と上限に数えた消失の数と知らせ先(引き取った行も同じ約束で続けるため)・priority / preemptible = 置き方の優先と
-   場所を譲る名乗り(worker の memory の見張りが急ぎの task を後に止めるため・引き取った行も同じ約束で続けるため — 2026-11-11)。"
+   場所を譲る名乗り(worker の memory の見張りが急ぎの task を後に止めるため・引き取った行も同じ約束で続けるため — 2026-11-11)・
+   borrowed = 線の内の借りとして置いた印(TaskRecord.borrowed の写し — worker の jobs の層の広げ ADR-DOE-CLUSTER-005 R13 と
+   引き取った行のため)。"
   (#^ str id)
   (#^ str name)
   (#^ str revision)
@@ -1579,7 +1581,8 @@
   (setv #^ int losses 0)
   (setv #^ str notify "")
   (setv #^ int priority 0)
-  (setv #^ bool preemptible False))
+  (setv #^ bool preemptible False)
+  (setv #^ bool borrowed False))
 
 
 (defrecord WarmOffer

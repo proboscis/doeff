@@ -2348,7 +2348,7 @@
                           :detached task.detached :key task.key :lease-ms task.lease-ms :retain-ms task.retain-ms :needs task.needs
                           :runtime-env task.runtime-env :environ task.environ :memory-mib (run (offered-mib-of task state.claims))
                           :rerun task.rerun :attempt task.attempt :losses task.losses :notify task.notify
-                          :priority task.priority :preemptible task.preemptible))))
+                          :priority task.priority :preemptible task.preemptible :borrowed task.borrowed))))
 
 
 (defn #^ TaskRecord task-finished [#^ TaskRecord task #^ int now #^ str detail #^ (| str None) result]
@@ -3088,9 +3088,11 @@
               ;; 上限に数えた消失の数を運ばない写し(2026-11-05 の前の worker)は、前の試行を全部数えた。
               :losses (int-field echo "losses" (- (int-field echo "attempt" 1) 1))
               :notify (if (isinstance (.get echo "notify") str) (.get echo "notify") "")
-              ;; 置き方の優先と場所を譲る名乗り(2026-11-11 — 運ばない写しは優先 0・名乗らない。名乗りは走らせ直しの名乗りと組でだけ読む)。
+              ;; 置き方の優先と場所を譲る名乗り・線の内の借り(2026-11-11・2026-11-24 — 運ばない写しは優先 0・名乗らない・借りない。
+              ;; 譲る名乗りは走らせ直しと組で、借りは譲る名乗りと組でだけ読む)。
               :priority (int-field echo "priority" 0)
               :preemptible (and (is (.get echo "preemptible") True) (is (.get echo "rerun") True))
+              :borrowed (and (is (.get echo "borrowed") True) (is (.get echo "preemptible") True) (is (.get echo "rerun") True))
               :detail (.format "coordinator の置き場に行が無く、担い手 {} が走らせていた task を引き取った" worker)))
 
 
