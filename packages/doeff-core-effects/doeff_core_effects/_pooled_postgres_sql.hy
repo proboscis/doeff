@@ -19,7 +19,7 @@
 ;;;   - Permit load (the answer to ReadSqlPermitLoad): one snapshot per (connections, database) (SqlPermitLoad -- an immutable value) is kept in a single per-process store
 ;;;     PERMIT-LOADS (weak-reference key = the PostgresConnections), and replaced inside PERMIT-LOADS-LOCK when a task asks for a permit (waiting + 1), when it acquires one (waiting - 1,
 ;;;     held + 1, waited seconds = from asking to acquiring), when it gives up waiting (cancelled -- waiting - 1), and when it returns one (held - 1, held seconds = from acquiring to
-;;;     returning). Times come from time.monotonic on the scheduler's thread. Only the connection permits are counted (not the per-lock-key admission of serialized-lock-keys).
+;;;     returning). Times come from time.monotonic (the default clock of counted-permitted) on the scheduler's thread. Only the connection permits are counted (not the per-lock-key admission of serialized-lock-keys).
 ;;;   - Cancellation: when the waiting task is Cancelled, run-in-transaction runs ROLLBACK, returns the connection (and also rolls back on return if in the middle of a transaction),
 ;;;     returns the permit, and then lets the cancellation through. Pool jobs that have not started are removed, and an answer produced after the cancellation (a leased connection) is returned in the pool.
 ;;;     A running statement is not stopped (ROLLBACK waits on the driver's lock until the statement ends).
@@ -32,6 +32,7 @@
 ;;;     (offloaded-statement) and the transaction stage (offloaded-transaction) are in postgres_sql.hy - used together with postgres-sql-handler (#1215). What this file
 ;;;     holds is only the way of waiting for permits (the scheduler's semaphore) and the use of the caller's pool.
 (require doeff-hy.macros [defhandler defk deff <- val var])
+(import collections.abc [Callable])
 (import concurrent.futures [Executor])
 (import threading)
 (import time)
@@ -79,25 +80,25 @@
   None)
 
 
-(deff permit-asked [connections database]  ; cannot be a defk: reads the clock and writes the store outside the VM
-  {:pre [(: connections PostgresConnections) (: database str)] :post [(: % float)]}
-  "Count a task that starts waiting for a permit and answer the time it asked (time.monotonic)."
+(deff permit-asked [connections database [clock time.monotonic]]  ; cannot be a defk: reads the clock and writes the store outside the VM
+  {:pre [(: connections PostgresConnections) (: database str) (: clock (get Callable #([] float)))] :post [(: % float)]}
+  "Count a task that starts waiting for a permit and answer the time it asked (clock, default time.monotonic)."
   (shift-permit-load connections database 1 0 0 0.0 0 0.0)
-  (time.monotonic))
+  (clock))
 
 
-(deff permit-acquired [connections database asked]  ; cannot be a defk: reads the clock and writes the store outside the VM
-  {:pre [(: connections PostgresConnections) (: database str) (: asked float)] :post [(: % float)]}
+(deff permit-acquired [connections database asked [clock time.monotonic]]  ; cannot be a defk: reads the clock and writes the store outside the VM
+  {:pre [(: connections PostgresConnections) (: database str) (: asked float) (: clock (get Callable #([] float)))] :post [(: % float)]}
   "Move a waiting task to the holders with the seconds it waited, and answer the time it acquired."
-  (setv now (time.monotonic))
+  (setv now (clock))
   (shift-permit-load connections database -1 1 1 (max 0.0 (- now asked)) 0 0.0)
   now)
 
 
-(deff permit-returned [connections database acquired]  ; cannot be a defk: reads the clock and writes the store outside the VM
-  {:pre [(: connections PostgresConnections) (: database str) (: acquired float)] :post [(: % None)]}
+(deff permit-returned [connections database acquired [clock time.monotonic]]  ; cannot be a defk: reads the clock and writes the store outside the VM
+  {:pre [(: connections PostgresConnections) (: database str) (: acquired float) (: clock (get Callable #([] float)))] :post [(: % None)]}
   "Count a returned permit with the seconds it was held."
-  (shift-permit-load connections database 0 -1 0 0.0 1 (max 0.0 (- (time.monotonic) acquired)))
+  (shift-permit-load connections database 0 -1 0 0.0 1 (max 0.0 (- (clock) acquired)))
   None)
 
 
@@ -108,23 +109,25 @@
   None)
 
 
-(defk counted-permitted [connections database permit program]
-  {:pre [(: connections PostgresConnections) (: database str) (: permit "scheduler Semaphore") (: program Program)] :post [(: % "answer of program")]
+(defk counted-permitted [connections database permit program [clock time.monotonic]]
+  {:pre [(: connections PostgresConnections) (: database str) (: permit "scheduler Semaphore") (: program Program)
+         (: clock (get Callable #([] float)))]
+   :post [(: % "answer of program")]
    :tags {:context "sql" :role "foundation"}}
   "permitted for a connection permit, counting the wait and the hold in database's permit load (the header comment's permit load)."
-  (val asked (permit-asked connections database))
+  (val asked (permit-asked connections database clock))
   (try
     (<- (AcquireSemaphore permit))
     (except [BaseException]
       (permit-abandoned connections database)
       (raise)))
-  (val acquired (permit-acquired connections database asked))
+  (val acquired (permit-acquired connections database asked clock))
   (try
     (<- answer program)
     answer
     (finally
       (<- (ReleaseSemaphore permit))
-      (permit-returned connections database acquired))))
+      (permit-returned connections database acquired clock))))
 
 
 (defk permit-for [permits database size]
