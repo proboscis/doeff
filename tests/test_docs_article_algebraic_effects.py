@@ -292,6 +292,19 @@ def test_the_article_test_passes_beside_the_example_files(
     assert re.match(r"3 passed\b", done.stdout.splitlines()[-1]), done.stdout
 
 
+def test_the_tests_of_clocks_pass_in_the_example_dir(deadline_scale_factor: float) -> None:
+    # test_clocks.py needs doeff-time, so the core-only venv of tools/verify_core_install.py cannot run it: this is its runner.
+    done = _child(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "test_clocks.py"],
+        TOUR,
+        deadline_scale_factor,
+        PYTEST_DISABLE_PLUGIN_AUTOLOAD="1",
+        PYTEST_ADDOPTS=None,
+    )
+    assert done.returncode == 0, f"{done.stdout[-3000:]}\n{done.stderr[-3000:]}"
+    assert re.match(r"3 passed\b", done.stdout.splitlines()[-1]), done.stdout
+
+
 _CLAIMS = """
 from doeff import Pass, handler
 from spire import *

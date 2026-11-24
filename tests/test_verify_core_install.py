@@ -425,7 +425,7 @@ def test_the_tour_check_runs_the_files_whose_production_stack_the_article_shows(
 def test_the_tool_runs_every_test_file_of_the_tour_dir() -> None:
     # The tour dir is outside the daily populations (tests/test_daily_test_population.py EXCLUDED), so a test file the tool does not name has no runner.
     tour = ROOT / tool.TOUR_DIRECTORY
-    named = {*tool.TOUR_TEST_FILES, *(path.name for path in tool.SPIRE_TEST_FILES)}
+    named = {*tool.TOUR_TEST_FILES, *tool.TOUR_TEST_FILES_BEYOND_CORE, *(path.name for path in tool.SPIRE_TEST_FILES)}
     assert {path.name for path in tour.glob("test_*.py")} <= named
 
 
