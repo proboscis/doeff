@@ -661,10 +661,11 @@ const W1_STEPS = chain(after(W1), [
   ['card', 0.6],
 ]);
 const W2 = nextLine(heard(W1, 'w1'), W1_STEPS);
-const W2_STEPS = chain(after(W2), [
+// The line first says what the card does; the code comes in as it is said: the spawn, the loop, then its wait.
+const W2_STEPS = chain(W2 + 4.6, [
   ['spawn', 0.6],
   ['poison', 0.6],
-  ['loop', 0.5],
+  ['loop', 0.5, 1.5],
 ]);
 const W3 = nextLine(heard(W2, 'w2'), W2_STEPS);
 const W3_STEPS = chain(after(W3), [
@@ -672,9 +673,10 @@ const W3_STEPS = chain(after(W3), [
   ['wait', 0.9],
   ['promise', 0.5],
   ['keep', 0.5],
-  ['ends', 0.5],
-  ['back', 0.9],
-  ['hurt', 0.4],
+  // k stays kept while the line says so; the turn ends, k goes back and the poison hurts as the line says each.
+  ['ends', 0.5, 3.5],
+  ['back', 0.9, 1.5],
+  ['hurt', 0.4, 1.0],
 ]);
 const W4 = nextLine(heard(W3, 'w3'), W3_STEPS);
 const W4_STEPS = chain(after(W4), [
@@ -749,8 +751,8 @@ const FRAMES: [number, number, string][] = [
 // The second of the run the playhead is at, and the scene time it reaches a second of the run.
 const PLAYED = 1.03;
 const reached = (seconds: number) => W4_STEPS.play.from + (seconds / PLAYED) * (W4_STEPS.play.to - W4_STEPS.play.from);
-// Where the promise of turn 1 and the k that waits on it sit: on the end of the turn, on the turn clock's line.
-const BELL = {x: secondX(0.25), k: secondX(0.25) + 76};
+// Where the promise of turn 1 and the k that waits on it sit: on the turn clock's line, either side of the end of the turn.
+const BELL = {x: secondX(0.25) - 58, k: secondX(0.25) + 34};
 
 const Clocks: React.FC = () => {
   const frame = useSceneFrame();
@@ -830,7 +832,7 @@ const Clocks: React.FC = () => {
           doeff's scheduler keeps <span style={{fontFamily: CODE, fontWeight: 700, color: K}}>k</span>, the rest of poison, until the fight ends the turn.
         </div>
       </Rise>
-      <Ping x={BELL.x} y={TURN_Y} color={LOOK} at={W3_STEPS.ends.from} />
+      <Ping x={secondX(0.25)} y={TURN_Y} color={LOOK} at={W3_STEPS.ends.from} />
       <Travel id="c5-back" d={arcOf(BELL.k, TURN_Y, 340, codeMid(LOOP.y, LOOP.line, ACTS), -30)} color={K} step={W3_STEPS.back} text="k" until={W3_STEPS.hurt.from} size={18} leave />
       <Rise at={W3_STEPS.hurt.from} out={W4} y={0} scale={0.7} origin={[470, codeMid(LOOP.y, LOOP.line, ACTS)]}>
         <Capsule x={470} y={codeMid(LOOP.y, LOOP.line, ACTS)} text="enemy -3" color={FAIL} size={18} />
