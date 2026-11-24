@@ -67,11 +67,17 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
   `next_cursor`(`after_value`・`after_key` の keyset)を渡した読みはその組より大きい行から続ける。`descending_by` とは組みで使えない
   (`ValueError`)。PostgreSQL の置き場は `TableDecl.descending` / `descending_within` の並べる式の索引を逆に辿る(索引の宣言は増えない)。
   値の正負を入れ替えて向きを変える手は使わない。HTTP の口の本文の鍵は `ascendingBy`(使う読みの時だけ載る)。
+- `ListRows.join_tables`(表の名の tuple・既定 = 空・上限 `JOIN_TABLES_MAX = 16`・主の表自身と重複は `ValueError`)は、同じ鍵の別の表の行を
+  1 回の往復で添えて読む読み: `Page.rows` に載る行の鍵ごとに、名指した表の同じ鍵で生きている行(保持の期限を過ぎた終端の行は除く)を
+  `Page.joined[表の名]` に `Page.rows` の順で返す(行が無い鍵は省く — LEFT JOIN)。`fields` の射影は主の表の `Page.rows` にだけ効き、
+  添えた表の行は全部の欄(大きい欄 `bulk` を含む)を返す。1 回の読みが返す行の上限を守るため `limit * (1 + len(join_tables)) <= LIST_LIMIT_MAX`
+  を要する(`ValueError`)。PostgreSQL の置き場は主の表の頁の文を CTE で包んだ 1 文(`UNION ALL`)で読む。HTTP の口の要求の本文の鍵は
+  `joinTables`、答えの鍵は `joined`(`[{"table": 表の名, "rows": [...]}]`)で、どちらも `join_tables` を使う読みの時だけ載る。
 - `CountRows(table, where, where_any, at_least)` は行の件数を数える: `where`・`where_any` は `ListRows` と同じ絞り、`at_least = (欄の名, 下限)` は
   欄の値が整数で下限以上の行だけ(無ければ下限なし)。保持の期限を過ぎた終端の行は数えない。答え = `Count` | `Unreachable` | `NotIndexed`。
   HTTP の口の操作は `count-rows`(答えの kind は `count` | `notIndexed`)。
-- HTTP の口の本文(`list-rows`)は、`descendingBy` と `whereAny`(欄 → 値の組の配列)の鍵を使う読みの時だけ載せる — 使わない読みの本文は
-  鍵を足す前と同じ。古い記録の service は知らない鍵を 400 で断るので、鍵を使う client より先に service を新しい版で起こす。
+- HTTP の口の本文(`list-rows`)は、`descendingBy`・`ascendingBy`・`whereAny`(欄 → 値の組の配列)・`joinTables`(表の名の配列)の鍵を使う読みの時だけ
+  載せる — 使わない読みの本文は鍵を足す前と同じ。古い記録の service は知らない鍵を 400 で断るので、鍵を使う client より先に service を新しい版で起こす。
 - HTTP の口の答えの本文は鍵を足すだけ: client の読み(`_wire.hy` の `answer-object-of`)は答えの object の知らない鍵を読み捨てるので、
   service を先に新しい版で起こしても 1 版前の client は答えを読める(要求の本文の知らない鍵は前のとおり 400 で断る)。鍵を消す・綴りを
   変える・新しい鍵を必須にする変更はしない — `tests/test_wire_versions.hy` が凍らせた答えの見本(`tests/wire-answers/<日>.json`・足すだけ)で

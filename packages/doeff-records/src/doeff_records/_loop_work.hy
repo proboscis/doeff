@@ -52,7 +52,7 @@
   "答え 1 つの綴りを scheduler の thread の外で回すかを決めるため: 束の読みの答え(BATCH-READ-ANSWERS)で、行・変更・出来事を 1 つ以上
    運ぶ答えだけが外(空の束は綴る行が無い — 頭の註)。"
   (match answer
-    (Page :rows rows) (> (len rows) 0)
+    (Page :rows rows :joined joined) (or (> (len rows) 0) (any (gfor group (.values joined) (> (len group) 0))))
     (Changes :items items) (> (len items) 0)
     (Events :items items) (> (len items) 0)
     _ False))

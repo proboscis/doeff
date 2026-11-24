@@ -6,7 +6,7 @@
 (import doeff_hy._frozen [FrozenMap])
 (import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead Count WrittenAndAppended AppendRefused])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows PutRowsAppendEvents]
-        doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX])
+        doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX JOIN-TABLES-MAX])
 (import doeff_records [encode-request decode-request decode-answer]
         doeff_records._wire [WireRequest WireMalformed ANSWER-KINDS WATCH-MAX-SECONDS encode-answer answer-for-request])
 
@@ -28,6 +28,8 @@
    ;; 昇順の読み(ascending-by — 鍵 ascendingBy は付けた時だけ送る)と、その続き。
    (ListRows "parts" :where {"color" "red"} :limit 3 :ascending-by "note")
    (ListRows "parts" :limit 3 :ascending-by "note" :cursor (ListCursor 2 "[\"p1\"]" (** 10 30)))
+   ;; 同じ鍵の別の表を添える読み(join-tables — 鍵 joinTables は付けた時だけ送る)。
+   (ListRows "parts" :where {"color" "red"} :limit 5 :descending-by "note" :join-tables #("charters" "tickets"))
    ;; 件数(鍵 where・whereAny・atLeast は使う時だけ送る)。
    (CountRows "parts")
    (CountRows "parts" :where {"color" "red"} :where-any {"label" ["a" "b"]} :at-least #("note" -5))
@@ -68,6 +70,7 @@
    #("read-row" (Missing))
    #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9))
    #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]" 1760000000000) 1 9))
+   #("list-rows" (Page #(ROW) None 1 9 (FrozenMap {"charters" #(ROW) "tickets" #()})))
    #("list-rows" (Page #() None 2 0))
    #("list-rows" (Reset 3 0))
    #("list-rows" (NotIndexed #("note")))
@@ -180,6 +183,15 @@
                            #("list-rows" {"table" "parts" "whereAny" {"Color!" ["red"]}})
                            #("list-rows" {"table" "parts" "where" {"color" "red"} "whereAny" {"color" ["red"]}})
                            #("list-rows" {"table" "parts" "whereAny" {"color" (list (range (+ WHERE-ANY-LIMIT 1)))}})
+                           ;; 同じ鍵の別の表を添える読み(joinTables): 添えない時は鍵ごと無い(空の配列は綴りの外)・文字列の配列・表の名の形・
+                           ;; 重複・主の表自身・上限は断る。
+                           #("list-rows" {"table" "parts" "joinTables" []})
+                           #("list-rows" {"table" "parts" "joinTables" "charters"})
+                           #("list-rows" {"table" "parts" "joinTables" ["Charters!"]})
+                           #("list-rows" {"table" "parts" "joinTables" ["charters" "charters"]})
+                           #("list-rows" {"table" "parts" "joinTables" ["parts"]})
+                           #("list-rows" {"table" "parts" "joinTables" (lfor n (range (+ JOIN-TABLES-MAX 1)) (.format "t{}" n))})
+                           #("list-rows" {"table" "parts" "limit" (+ (// LIST-LIMIT-MAX 2) 1) "joinTables" ["charters"]})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version"}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" {} "expect" {"kind" "version" "version" 0}})
                            #("put-row" {"table" "parts" "key" ["p1"] "value" [] "expect" {"kind" "any"}})
@@ -262,6 +274,12 @@
                            #("put-row" {"kind" "written" "version" 1})
                            #("put-row" {"kind" "conflict" "current" {"kind" "refused" "reason" "x"}})
                            #("list-rows" {"kind" "page" "rows" {} "nextCursor" None "epoch" 1 "sequence" 0})
+                           #("list-rows" {"kind" "page" "rows" [] "nextCursor" None "epoch" 1 "sequence" 0 "joined" {}})
+                           #("list-rows" {"kind" "page" "rows" [] "nextCursor" None "epoch" 1 "sequence" 0 "joined" []})
+                           #("list-rows" {"kind" "page" "rows" [] "nextCursor" None "epoch" 1 "sequence" 0 "joined" [{"table" "charters"}]})
+                           #("list-rows" {"kind" "page" "rows" [] "nextCursor" None "epoch" 1 "sequence" 0 "joined" [{"table" "charters" "rows" "bad"}]})
+                           #("list-rows" {"kind" "page" "rows" [] "nextCursor" None "epoch" 1 "sequence" 0 "joined" [{"table" "charters" "rows" [{"kind" "missing"}]}]})
+                           #("list-rows" {"kind" "page" "rows" [] "nextCursor" None "epoch" 1 "sequence" 0 "joined" [{"table" "charters" "rows" []} {"table" "charters" "rows" []}]})
                            #("put-rows" {"kind" "written" "version" 1 "value" {}})
                            #("put-rows" {"kind" "writtenRows" "items" [{"kind" "missing"}]})
                            #("put-rows" {"kind" "rowsConflict" "index" 0 "table" "parts" "key" ["p1"]
@@ -409,4 +427,24 @@
     (try
       (run (decode-answer "read-event-by-key" {"kind" "event" "event" (| (get plain "event") {"position" position})}))
       (assert False (.format "形の違う出来事の位置を読んだ: {!r}" position))
+      (except [WireMalformed] None))))
+
+
+(deftest test-a-joined-page-answer-must-match-the-requested-join-tables
+  ;; 添えた表の答え: client は Page.joined の表が要求 ListRows.join-tables と一致する事を照らす(単独でも ReadBatch の中でも)。
+  (val ask (ListRows "parts" :join-tables #("charters" "tickets")))
+  (val fitting (Page #() None 1 0 (FrozenMap {"charters" #() "tickets" #()})))
+  (assert (= (run (answer-for-request ask fitting)) fitting))
+  (assert (= (run (answer-for-request (ReadBatch #(ask)) (BatchRead #(fitting)))) (BatchRead #(fitting))))
+  ;; 添えない要求の答えに joined が無い時は前の版と同じ綴り。
+  (val plain-page (run (encode-answer (Page #() None 1 0))))
+  (assert (not-in "joined" plain-page) plain-page)
+  (for [#(req ans) [#(ask (Page #() None 1 0))
+                    #(ask (Page #() None 1 0 (FrozenMap {"charters" #()})))
+                    #(ask (Page #() None 1 0 (FrozenMap {"charters" #() "tickets" #() "extra" #()})))
+                    #((ListRows "parts") (Page #() None 1 0 (FrozenMap {"charters" #()})))
+                    #((ReadBatch #(ask)) (BatchRead #((Page #() None 1 0))))]]
+    (try
+      (run (answer-for-request req ans))
+      (assert False (.format "join-tables と合わない答えを通した: {!r} / {!r}" req ans))
       (except [WireMalformed] None))))

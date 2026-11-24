@@ -2180,6 +2180,92 @@
   (+ transcript [loose loose-count]))
 
 
+;; --- 法 6d: ListRows.join-tables は頁の行と同じ鍵の別の表の行を頁の順に添える ----------------------------
+
+(defk law-joined-list-attaches-same-key-rows [harness]
+  {:pre [(: harness LawHarness)] :post [(: % (get list object))]
+   :tags {:context "records" :role "program"}}
+  "同じ鍵の別の表を添える ListRows(join-tables)の法: 頁の rows は join-tables なしの読みと同じで、Page.joined には名指した表ごとに
+   「その頁の rows と同じ鍵を持つ行」が頁の rows の順で載る(行の無い鍵・別の頁の行・続きの有無の +1 行・主の表に無い鍵は入らない・
+   fields は主の表だけに効き添えた表は全部の欄を返す)。鍵の順・descending-by・ascending-by・空の頁・複数の表・ReadBatch の中・Reset・
+   NotIndexed を 4 つの組で同じに確かめる。"
+  (val law "ListRows.join-tables は頁の行と同じ鍵の別の表の行を頁の順に添える")
+  (var transcript [])
+  ;; parts に 6 行(note は鍵の順と逆を含む)・charters にそのうち 3 つ(p01・p03・p05)と parts に無い p99。
+  (val part-seeds [#("p01" "red" 30) #("p02" "red" 10) #("p03" "blue" 50)
+                   #("p04" "red" 40) #("p05" "red" 20) #("p06" "blue" 60)])
+  (for [#(key color note) part-seeds]
+    (<- w (as-writer harness MAKER (PutRow "parts" #(key) (FrozenMap {"color" color "note" note}) (ExpectAbsent))))
+    (:= transcript (+ transcript [w])))
+  (for [#(key rule note) [#("p01" "r1" "n1") #("p03" "r3" "n3") #("p05" "r5" "n5") #("p99" "r99" "n99")]]
+    (<- w (as-writer harness OVERSEER (PutRow "charters" #(key) (FrozenMap {"rule" rule "note" note}) (ExpectAbsent))))
+    (:= transcript (+ transcript [w])))
+  ;; 1) 鍵の順の頁送り(limit 2 — 続きの +1 行は添えない): 3 頁を辿って鍵ごとに添えた行が揃う。
+  (var cursor None)
+  (var page-keys [])
+  (var page-joined-keys [])
+  (while True
+    (<- page (as-writer harness MAKER (ListRows "parts" :cursor cursor :limit 2 :join-tables #("charters"))))
+    (<- plain (as-writer harness MAKER (ListRows "parts" :cursor cursor :limit 2)))
+    (<- (require-law (and (isinstance page Page) (isinstance plain Page)
+                          (= page.rows plain.rows) (= page.next-cursor plain.next-cursor)
+                          (= (tuple (.keys page.joined)) #("charters")))
+                     law (.format "鍵の順の頁が join-tables なしと違う: {!r} / {!r}" page plain)))
+    (val keys-in-page (tuple (gfor row page.rows row.key)))
+    (val joined-keys (tuple (gfor row (get page.joined "charters") row.key)))
+    (val expected-joined (tuple (gfor k keys-in-page :if (in k #(#("p01") #("p03") #("p05"))) k)))
+    (<- (require-law (= joined-keys expected-joined) law
+                     (.format "鍵の順の頁の添えた行が頁の鍵と違う: {!r} / {!r}" joined-keys expected-joined)))
+    (.append page-keys keys-in-page)
+    (.append page-joined-keys joined-keys)
+    (:= transcript (+ transcript [page]))
+    (when (is page.next-cursor None) (break))
+    (:= cursor page.next-cursor))
+  (<- (require-law (= page-keys [#(#("p01") #("p02")) #(#("p03") #("p04")) #(#("p05") #("p06"))]) law
+                   (.format "鍵の順の頁の分け: {!r}" page-keys)))
+  ;; 2) descending-by + where + fields + 頁送り: 添えた行は descending-by の順で、fields は主の表だけに効く。
+  ;; color = "red" の note の大きい順: p04(40)・p01(30)・p05(20)・p02(10)。limit 2 で 2 頁: [p04, p01] → [p05, p02]。
+  (<- desc1 (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"color" "red"}) :fields #("color")
+                                               :descending-by "note" :limit 2 :join-tables #("charters"))))
+  (<- (require-law (and (isinstance desc1 Page) (= (tuple (gfor r desc1.rows r.key)) #(#("p04") #("p01")))
+                        (all (gfor r desc1.rows (= (set r.value) #{"id" "color"})))
+                        (= (tuple (gfor r (get desc1.joined "charters") r.key)) #(#("p01")))
+                        (= (get (. (get (get desc1.joined "charters") 0) value) "rule") "r1")
+                        (= (get (. (get (get desc1.joined "charters") 0) value) "note") "n1")
+                        (is-not desc1.next-cursor None))
+                   law (.format "上から読む 1 頁目と fields の絞り: {!r}" desc1)))
+  (<- desc2 (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"color" "red"}) :fields #("color")
+                                               :descending-by "note" :cursor desc1.next-cursor :limit 2 :join-tables #("charters"))))
+  (<- (require-law (and (isinstance desc2 Page) (= (tuple (gfor r desc2.rows r.key)) #(#("p05") #("p02")))
+                        (= (tuple (gfor r (get desc2.joined "charters") r.key)) #(#("p05")))
+                        (is desc2.next-cursor None))
+                   law (.format "上から読む 2 頁目: {!r}" desc2)))
+  ;; 3) ascending-by: 全件の note の小さい順 p02(10)・p05(20)・p01(30)・p04(40)・p03(50)・p06(60) のうち添えた行は p05・p01・p03 の順。
+  (<- asc (as-writer harness MAKER (ListRows "parts" :ascending-by "note" :limit 6 :join-tables #("charters" "tickets"))))
+  (<- (require-law (and (isinstance asc Page)
+                        (= (tuple (gfor r (get asc.joined "charters") r.key)) #(#("p05") #("p01") #("p03")))
+                        (= (get asc.joined "tickets") #()))
+                   law (.format "昇順と複数の添えた表: {!r}" asc)))
+  ;; 4) 空の頁: 鍵は名指した表の全部を持ち、値は空の tuple。
+  (<- empty (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"color" "none"}) :join-tables #("charters" "tickets"))))
+  (<- (require-law (and (isinstance empty Page) (= empty.rows #()) (= empty.joined (FrozenMap {"charters" #() "tickets" #()})))
+                   law (.format "空の頁の joined: {!r}" empty)))
+  ;; 5) ReadBatch の中: 単独の ListRows と同じ答え。
+  (<- batched (as-writer harness MAKER (ReadBatch #((ListRows "parts" :where (FrozenMap {"color" "red"}) :descending-by "note"
+                                                              :limit 4 :join-tables #("charters"))))))
+  (<- direct (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"color" "red"}) :descending-by "note"
+                                                :limit 4 :join-tables #("charters"))))
+  (<- (require-law (and (isinstance batched BatchRead) (= (get batched.items 0) direct))
+                   law (.format "ReadBatch の中の join-tables: {!r} / {!r}" batched direct)))
+  ;; 6) NotIndexed と Reset は添える表が在ってもそのまま返る。
+  (<- loose (as-writer harness MAKER (ListRows "parts" :where (FrozenMap {"note" 10}) :join-tables #("charters"))))
+  (<- (require-law (= loose (NotIndexed #("note"))) law (.format "NotIndexed: {!r}" loose)))
+  (<- epoch (as-writer harness MAKER (AdvanceStoreEpoch)))
+  (<- stale (as-writer harness MAKER (ListRows "parts" :cursor desc1.next-cursor :descending-by "note" :limit 2 :join-tables #("charters"))))
+  (<- (require-law (and (isinstance stale Reset) (= stale.epoch epoch)) law (.format "Reset: {!r}" stale)))
+  (+ transcript [desc1 desc2 asc empty batched direct loose epoch stale]))
+
+
 ;; 全部の法(名 → 法)。SHARED-LAWS = 時間を進めない法(仮想の時計を持たない組でも回せる・答えの比べに使う)。
 ;; law-put-rows-is-all-or-nothing・law-append-events-answer-like-appends-in-order・law-read-batch-answers-like-each-read と、PutRowsAppendEvents の
 ;; 法 3 つは SHARED-LAWS に
@@ -2195,6 +2281,7 @@
             "descending-pages-follow-the-sorted-scan" law-descending-pages-follow-the-sorted-scan
             "ascending-list-and-count-follow-the-scan" law-ascending-list-and-count-follow-the-scan
             "any-of-list-equals-the-union-of-equal-lists" law-any-of-list-equals-the-union-of-equal-lists
+            "joined-list-attaches-same-key-rows" law-joined-list-attaches-same-key-rows
             "append-is-idempotent" law-append-is-idempotent
             "append-events-answer-like-appends-in-order" law-append-events-answer-like-appends-in-order
             "read-batch-answers-like-each-read" law-read-batch-answers-like-each-read

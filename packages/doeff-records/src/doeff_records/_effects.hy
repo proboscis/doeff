@@ -44,8 +44,10 @@
 ;; 引数に展げるので、1 つの文の引数と綴りの大きさをこの数で縛る。呼び手は大きな組をこの数ごとに割って読む。
 (setv WHERE-ANY-LIMIT 1000)
 ;; ReadBatch 1 つに載せる読みの数の上限。束の読みは service の 1 要求なので、1 要求の計算の量を ListRows 1 回と同じ桁に縛る: 読みの数を
-;; この数・束の中の ListRows の limit の和を LIST-LIMIT-MAX まで(どちらも作る時に ValueError)。呼び手は大きな束を割って撃つ。
+;; この数・束の中の ListRows の limit × (1 + join-tables の数) の和を LIST-LIMIT-MAX まで(どちらも作る時に ValueError)。呼び手は大きな束を割って撃つ。
 (setv READ-BATCH-MAX 64)
+;; ListRows 1 回に同じ鍵で添えて読める別の表の数(join-tables)の上限。1 要求の行の数の上限も limit × (1 + 添える表の数) ≦ LIST-LIMIT-MAX で縛る。
+(setv JOIN-TABLES-MAX 16)
 
 
 (defn #^ (get tuple #(str ...)) checked-key [#^ object key #^ str what]
@@ -141,6 +143,18 @@
     (raise (ValueError (if ordered
                            "ListRows.descending_by / ascending_by の読みの cursor は after_value を持つ位置(並べて読む読みが返した next_cursor)"
                            "ListRows の鍵の順の読みの cursor は after_value の無い位置(並べて読む読みの位置を渡さない)"))))
+  (when (not (isinstance ask.join-tables tuple))
+    (raise (TypeError (.format "ListRows.join_tables は表の名の tuple: {!r}" ask.join-tables))))
+  (for [name ask.join-tables] (checked-table-name name "ListRows.join_tables の表"))
+  (when (!= (len ask.join-tables) (len (set ask.join-tables)))
+    (raise (ValueError (.format "ListRows.join_tables に同じ表が 2 度出る: {!r}" ask.join-tables))))
+  (when (in ask.table ask.join-tables)
+    (raise (ValueError (.format "ListRows.join_tables に主の表 {!r} 自身を含めない" ask.table))))
+  (when (> (len ask.join-tables) JOIN-TABLES-MAX)
+    (raise (ValueError (.format "ListRows.join_tables の表の数 {} が上限 {} を越える" (len ask.join-tables) JOIN-TABLES-MAX))))
+  (when (and ask.join-tables (> (* ask.limit (+ 1 (len ask.join-tables))) LIST-LIMIT-MAX))
+    (raise (ValueError (.format "ListRows の limit {} × (1 + join_tables の数 {}) が上限 {} を越える(limit を絞るか頁を割って読む)"
+                                ask.limit (len ask.join-tables) LIST-LIMIT-MAX))))
   True)
 
 
@@ -163,6 +177,10 @@
    大きい行から次の頁を読む。descending-by とは組みで使えない(作る時に ValueError)。値の正負を入れ替えて向きを変える手は使わない —
    昇順の読みは欄の値をそのまま並べる。PostgreSQL の置き場は、欄が表の descending / descending-within に在れば、その並べる式の索引を
    逆向きに辿る(昇順のための索引の宣言は要らない)。
+   join-tables = 頁の行と同じ鍵を持つ行を同じ 1 往復で添えて読む別の表の名の tuple(既定 = 空 = 添えない・同じ表の重複と主の表自身は
+   作る時に ValueError・表の数は JOIN-TABLES-MAX まで・limit × (1 + 表の数) は LIST-LIMIT-MAX まで)。答えの Page.joined に、名指した表ごと
+   に「頁の rows と同じ鍵を持ち、保持の期限を過ぎていない行」の tuple が頁の rows の順で載る(行の無い鍵は入らない・fields は主の表だけに効き、
+   添えた表の行は全部の欄を返す・続きの有無の +1 行は添えない)。
    答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): Page = 成功 / Reset = 値(位置の世代が置き場の版と違うという普通の答えで、
    呼び手が一覧の頭から読み直して続ける — 失敗にして Raise で飛ばさず、不在にして Absent で飛ばさない)/ Unreachable = 失敗(<- は
    Raise(Unreachable) を出す)/ NotIndexed = 失敗(<- は Raise(NotIndexed) を出す — 索引の無い欄で絞った誤りで、読み直しても同じ答えに
@@ -170,7 +188,7 @@
    4 つとも値で答える(R4)。"
   {:fields [(: table str) (: where FrozenMap (FrozenMap)) (: fields (| (get tuple #(str ...)) None) None) (: cursor (| ListCursor None) None)
             (: limit int DEFAULT-LIST-LIMIT) (: descending-by (| str None) None) (: where-any FrozenMap (FrozenMap))
-            (: ascending-by (| str None) None)]
+            (: ascending-by (| str None) None) (: join-tables (get tuple #(str ...)) #())]
    :pre [(checked-list-rows self)]
    :answer (| Page Reset Unreachable NotIndexed)
    :failure [Unreachable NotIndexed]
@@ -230,9 +248,9 @@
       (raise (TypeError (.format "ReadBatch.reads は ReadRow | ListRows の空でない tuple: {!r}" self.reads))))
     (when (> (len self.reads) READ-BATCH-MAX)
       (raise (ValueError (.format "ReadBatch.reads の読みの数 {} が上限 {} を越える(束を割って撃つ)" (len self.reads) READ-BATCH-MAX))))
-    (setv listed (sum (gfor one self.reads :if (isinstance one ListRows) one.limit)))
+    (setv listed (sum (gfor one self.reads :if (isinstance one ListRows) (* one.limit (+ 1 (len one.join-tables))))))
     (when (> listed LIST-LIMIT-MAX)
-      (raise (ValueError (.format "ReadBatch の ListRows の limit の和 {} が上限 {} を越える(束を割るか limit を絞る)" listed LIST-LIMIT-MAX))))))
+      (raise (ValueError (.format "ReadBatch の ListRows の行数上限の和 {} が上限 {} を越える(束を割るか limit を絞る)" listed LIST-LIMIT-MAX))))))
 
 
 (defn #^ bool checked-put-row [#^ object ask]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)

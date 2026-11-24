@@ -7,6 +7,7 @@
                             law-indexed-list-equals-filtered-scan law-descending-list-is-the-head-of-the-sorted-scan law-append-is-idempotent law-key-head-read-equals-filtered-scan
                             law-append-events-answer-like-appends-in-order law-read-batch-answers-like-each-read
                             law-any-of-list-equals-the-union-of-equal-lists law-descending-pages-follow-the-sorted-scan law-ascending-list-and-count-follow-the-scan
+                            law-joined-list-attaches-same-key-rows
                             law-watch-waits-for-a-change
                             law-watch-events-waits-for-an-append law-concurrent-writes-appear-in-number-order
                             law-none-removes-a-field law-maintenance-prunes-and-sweeps law-prune-stops-at-the-archived-seq law-change-log-reads-every-change
@@ -125,6 +126,13 @@
   {:interpreters ["memory" "pg" "pg-xact" "http-memory" "http-pg"]}
   (<- harness (LawSetup))
   (<- transcript (law-any-of-list-equals-the-union-of-equal-lists harness))
+  (assert transcript))
+
+(deftest test-joined-list-attaches-same-key-rows
+  ;; 同じ鍵の別の表を添える ListRows(join-tables): 頁の行と同じ鍵を持つ行を頁の順で 1 往復に添える(4 つの組で同じ)。
+  {:interpreters ["memory" "pg" "pg-xact" "http-memory" "http-pg"]}
+  (<- harness (LawSetup))
+  (<- transcript (law-joined-list-attaches-same-key-rows harness))
   (assert transcript))
 
 (deftest test-append-is-idempotent

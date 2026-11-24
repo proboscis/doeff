@@ -1340,6 +1340,9 @@
   ;; 写像の読みは同じ名の後ろの値を採る — 値を解く stored-value も答えを読む使い手も)。payload は鍵の欄を持つので空の写像にならない。
   ;; 空の写像の bulk("{}")は継がない。
   "(CASE WHEN bulk IS NULL THEN payload WHEN bulk = '{}' THEN payload ELSE left(bulk, -1) || ',' || substr(payload, 2) END)")
+;; ListRows.join-tables の添えた表の行(別名 j)の payload と bulk を合わせた綴り(主の頁の taken.payload と列名が重なるので別名 j を付ける)。
+(val JOINED-STORED-PAYLOAD
+  "(CASE WHEN j.bulk IS NULL THEN j.payload WHEN j.bulk = '{}' THEN j.payload ELSE left(j.bulk, -1) || ',' || substr(j.payload, 2) END)")
 
 
 (defk stored-payload-expression [with-bulk]
@@ -1462,6 +1465,46 @@
                        ORDER BY ({o})::text::numeric {d}, key COLLATE \"C\" {d} LIMIT :limit"
                             :p prefix :v payload :w (.join " AND " clauses) :u unexpired.text :o ordered-field :d sort-order)
              :params (+ (! (params-of pairs)) filter.params unexpired.params)))
+
+
+(defk joined-list-statement [prefix base-statement limit join-tables join-expiries]
+  {:pre [(: prefix str) (: base-statement Statement) (: limit int) (> limit 0)
+         (: join-tables (get tuple #(str ...))) (> (len join-tables) 0)
+         (: join-expiries tuple) (= (len join-tables) (len join-expiries))]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows.join-tables が在る読みの 1 文を組むため: 元の頁の文 base-statement(1 頁 + 1 行)を CTE page(MATERIALIZED)で 1 度だけ読み、
+   先頭 limit 行(CTE taken — 続きの有無の +1 行は添えない)と同じ鍵を持つ行を、添える表 join-tables ごとに主キー (ledger, key) で引いて
+   UNION ALL で返す(part 0 = 主の頁の行・part 1..k = join-tables の順の添えた行・ord = 主の頁の順)。添える表の保持の期限を過ぎた終端の行は
+   join-expiries の条件で除く(主の頁と同じ境)。添える表は大きい欄(bulk)も payload と合わせて読む。"
+  (var branches #("SELECT 0 AS part, ord, key, payload, version FROM page"))
+  (var params (+ base-statement.params (! (params-of #(#("page_limit" limit))))))
+  (for [#(index #(table expiry)) (enumerate (zip join-tables join-expiries :strict True))]
+    (val param-name (.format "j{}" index))
+    (:= params (+ params (! (params-of #(#(param-name table))))))
+    (var expiry-sql "")
+    (when (is-not expiry None)
+      (<- clause Clause (expired-row-part "j" (.format "jx{}" index) expiry))
+      (:= expiry-sql (.format " AND NOT {}" clause.text))
+      (:= params (+ params clause.params)))
+    (:= branches (+ branches #((.format "SELECT {part} AS part, t.ord, j.key, {v} AS payload, j.version
+                                          FROM taken AS t
+                                          JOIN {p}state_rows AS j ON j.ledger = :{j} AND j.key = t.key{u}"
+                                        :part (+ index 1) :v JOINED-STORED-PAYLOAD :p prefix :j param-name :u expiry-sql)))))
+  (val sql (.format "WITH page AS MATERIALIZED (
+                       SELECT key, payload, version, row_number() OVER () AS ord
+                       FROM ({base}) AS p
+                     ),
+                     taken AS (
+                       SELECT key, payload, version, ord
+                       FROM page
+                       WHERE ord <= :page_limit
+                     )
+                     {body}
+                     ORDER BY part, ord"
+                    :base base-statement.text
+                    :body (.join "\nUNION ALL\n" branches)))
+  (Statement :text sql :params params))
 
 
 (defk count-rows-statement [prefix table key-fields scoped at-least ordered where-json where-any-json expiry]

@@ -620,14 +620,15 @@
     (ReadRow :table table :key key)
       (WireRequest OP-READ-ROW {"table" table "key" (list key)})
     (ListRows :table table :where where :fields fields :cursor cursor :limit limit :descending_by descending-by :where_any where-any
-              :ascending_by ascending-by)
-      ;; 鍵 descendingBy は上から読む読みの時だけ・鍵 whereAny(欄 → 値の組の配列)は値の組で絞る時だけ送る(どちらも使わない読みは前の
-      ;; 形のまま。古い記録の service は知らない鍵を 400 で断るので、使う client より先に service を新しい版で起こす)。
+              :ascending_by ascending-by :join_tables join-tables)
+      ;; 鍵 descendingBy は上から読む読みの時だけ・鍵 whereAny(欄 → 値の組の配列)は値の組で絞る時だけ・鍵 joinTables は別の表を添える時だけ
+      ;; 送る(使わない読みは前の形のまま。古い記録の service は知らない鍵を 400 で断るので、使う client より先に service を新しい版で起こす)。
       (WireRequest OP-LIST-ROWS (| {"table" table "where" (thaw-json where) "fields" (if (is fields None) None (list fields))
                                     "cursor" (! (list-cursor-json cursor)) "limit" limit}
                                    (if (is descending-by None) {} {"descendingBy" descending-by})
                                    (if (is ascending-by None) {} {"ascendingBy" ascending-by})
-                                   (if where-any {"whereAny" (thaw-json where-any)} {})))
+                                   (if where-any {"whereAny" (thaw-json where-any)} {})
+                                   (if join-tables {"joinTables" (list join-tables)} {})))
     (CountRows :table table :where where :where_any where-any :at_least at-least)
       ;; 鍵 where・whereAny・atLeast は使う時だけ送る(絞りも下限も無い件数は鍵 table だけ)。
       (WireRequest OP-COUNT-ROWS (| {"table" table}
@@ -717,7 +718,7 @@
         (do (<- (object-of body "read-row の本文" #("table" "key") #()))
             (ReadRow (! (string-of (get body "table") "table")) (! (strings-of (get body "key") "key"))))
       "list-rows"
-        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy" "whereAny" "ascendingBy")))
+        (do (<- (object-of body "list-rows の本文" #("table") #("where" "fields" "cursor" "limit" "descendingBy" "whereAny" "ascendingBy" "joinTables")))
             (setv keywords {})
             (when (in "where" body) (setv (get keywords "where") (! (json-object-in (get body "where") "where"))))
             (when (in "fields" body)
@@ -735,6 +736,12 @@
               (<- any-of (json-object-in (get body "whereAny") "whereAny"))
               (when (not any-of) (raise (WireMalformed "list-rows の whereAny は空でない object(絞らない時は鍵ごと無い)")))
               (setv (get keywords "where_any") any-of))
+            ;; 鍵 joinTables は別の表を添える時だけ在る(encode-request は空の配列を送らない)— 空の配列は綴りの外として断る。表の名の形・
+            ;; 重複・主の表自身・上限は ListRows が作る時に断る(malformed に写る)。
+            (when (in "joinTables" body)
+              (<- joined (strings-of (get body "joinTables") "joinTables"))
+              (when (not joined) (raise (WireMalformed "list-rows の joinTables は空でない配列(添えない時は鍵ごと無い)")))
+              (setv (get keywords "join_tables") joined))
             (ListRows (! (string-of (get body "table") "table")) #** keywords))
       "count-rows"
         (do (<- (object-of body "count-rows の本文" #("table") #("where" "whereAny" "atLeast")))
@@ -817,7 +824,7 @@
   "公開 effect(ask)が名指す表と追記の列を返す(宣言に無い名を 404 で断るため)。"
   (match ask
     (ReadRow :table table) (NamedStores #(table) #())
-    (ListRows :table table) (NamedStores #(table) #())
+    (ListRows :table table :join_tables join-tables) (NamedStores (tuple (sorted (| #{table} (set join-tables)))) #())
     (CountRows :table table) (NamedStores #(table) #())
     (PutRow :table table) (NamedStores #(table) #())
     (WatchChanges :tables tables :streams streams) (NamedStores tables streams)
@@ -830,7 +837,8 @@
     (AppendEvents :appends appends) (NamedStores #() (tuple (sorted (sfor one appends one.stream))))
     (PutRowsAppendEvents :writes writes :appends appends)
       (NamedStores (tuple (sorted (sfor write writes write.table))) (tuple (sorted (sfor one appends one.stream))))
-    (ReadBatch :reads reads) (NamedStores (tuple (sorted (sfor one reads one.table))) #())))
+    (ReadBatch :reads reads)
+      (NamedStores (tuple (sorted (sfor one reads name (if (isinstance one ListRows) (+ #(one.table) one.join-tables) #(one.table)) name))) #())))
 
 
 ;; --- 宣言に無い名の断り(404 not-found)の理由の綴り---------------------------------------------------------
@@ -975,10 +983,18 @@
   (match answer
     (Row) (! (row-json answer value-of))
     (Missing) {"kind" "missing"}
-    (Page :rows rows :next_cursor next-cursor :epoch epoch :sequence sequence)
+    (Page :rows rows :next_cursor next-cursor :epoch epoch :sequence sequence :joined joined)
       (do (setv encoded [])
           (for [row rows] (.append encoded (! (row-json row value-of))))
-          {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence})
+          ;; 鍵 joined は別の表を添えた要求の時だけ出す(添えない要求の答えは前の形のまま — 1 版前の client を壊さない)。
+          ;; 配列の object({"table" 表の名 "rows" 行の列})で運ぶ(object ごとに知らない鍵を読み捨てる規約 test_wire_versions に合わせる)。
+          (setv joined-encoded [])
+          (for [#(table group) (.items joined)]
+            (setv items [])
+            (for [row group] (.append items (! (row-json row value-of))))
+            (.append joined-encoded {"table" table "rows" items}))
+          (| {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence}
+             (if joined-encoded {"joined" joined-encoded} {})))
     ;; 鍵 position は書きの変更の位置を持つ答えの時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。
     ;; 鍵 replayed は冪等キーの送り直しの答えの時だけ出す(省ける鍵 — 真の時だけ。1 版前の読み手は読み捨てる)。
     (Written :version version :value value :position position :replayed replayed)
@@ -1191,6 +1207,31 @@
                 (! (strings-of (get value "key") "rowsConflict.key")) current))
 
 
+(defk joined-rows-from [value]
+  {:pre [(: value dict)] :post [(: % (get FrozenMap (get tuple #(Row ...))))]}
+  "page の本文の鍵 joined(要求が join-tables を名指した時だけ在る)を、表の名 → 行の tuple の凍らせた写像にするため。鍵が無ければ空。
+   在るのに空の配列や同じ表の重複は綴りの外(encode-answer は空の joined を鍵ごと出さない)。名指した表と合うかは、要求を知る client が
+   answer-for-request で照らす。"
+  (when (not-in "joined" value)
+    (return (FrozenMap)))
+  (<- entries list (list-in (get value "joined") "page.joined"))
+  (when (not entries)
+    (raise (WireMalformed "page の joined は空でない配列(表を添えない要求の答えには鍵ごと無い)")))
+  (var out {})
+  (for [entry entries]
+    (<- body dict (answer-object-of entry "page.joined[]" #("table" "rows") #()))
+    (<- table str (string-of (get body "table") "page.joined[].table"))
+    (when (in table out)
+      (raise (WireMalformed (.format "page.joined に同じ表が 2 度: {!r}" table))))
+    (<- items list (list-in (get body "rows") (.format "page.joined[{!r}].rows" table)))
+    (var group #())
+    (for [item items]
+      (<- row Row (row-from item))
+      (:= group (+ group #(row))))
+    (:= out (| out {table group})))
+  (FrozenMap out))
+
+
 (defk answer-from [value]
   {:pre [(: value JsonValue)] :post [(: % WireAnswer)]}
   "200 の本文から答えの値を読む(kind で判別)。"
@@ -1199,11 +1240,13 @@
       {"kind" "row"} (! (row-from value))
       {"kind" "missing"} (do (<- (answer-object-of value "missing" #("kind") #())) (Missing))
       {"kind" "page"}
-        (do (<- (answer-object-of value "page" #("kind" "rows" "nextCursor" "epoch" "sequence") #()))
+        (do (<- (answer-object-of value "page" #("kind" "rows" "nextCursor" "epoch" "sequence") #("joined")))
             (setv rows [])
             (for [item (! (list-in (get value "rows") "page.rows"))] (.append rows (! (row-from item))))
+            (<- joined FrozenMap (joined-rows-from value))
             (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor" True))
-                  (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))))
+                  (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))
+                  joined))
       {"kind" "written"}
         (do (<- (answer-object-of value "written" #("kind" "version" "value") #("position" "replayed")))
             (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))
@@ -1287,6 +1330,11 @@
    名指して上げる(service の綴りの誤り)。ReadBatch の答え BatchRead は、束の読みと同じ数で、i 番目が i 番目の読みの答えの型(ReadRow =
    row | missing・ListRows = page | reset | notIndexed)。他の答えはそのまま返す。"
   (match #(ask answer)
+    #((ListRows :join_tables join-tables) (Page :joined joined))
+      (do (when (!= (frozenset (.keys joined)) (frozenset join-tables))
+            (raise (WireMalformed (.format "list-rows の答えの joined の表 {} が、要求が名指した表 {} と合わない"
+                                           (sorted (.keys joined)) (sorted join-tables)))))
+          answer)
     #((WatchChanges :streams streams) (Changes :tails tails))
       (do (val named (tuple (gfor tail tails tail.stream)))
           (when (!= named streams)
@@ -1298,7 +1346,9 @@
             (raise (WireMalformed (.format "read-batch の答えの項の数 {} が、要求の読みの数 {} と合わない" (len items) (len reads)))))
           (for [#(one item) (zip reads items)]
             (when (not (isinstance item (if (isinstance one ReadRow) #(Row Missing) #(Page Reset NotIndexed))))
-              (raise (WireMalformed (.format "read-batch の答えの項 {!r} が、読み {!r} の答えの型でない" item one)))))
+              (raise (WireMalformed (.format "read-batch の答えの項 {!r} が、読み {!r} の答えの型でない" item one))))
+            (when (and (isinstance one ListRows) (isinstance item Page))
+              (<- (answer-for-request one item))))
           answer)
     #((ReadBatch) _)
       (raise (WireMalformed (.format "read-batch の答えは batchRead: {!r}" answer)))

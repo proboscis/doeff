@@ -708,9 +708,26 @@
                 (+ ask.limit 1))))
 
 
+(defn #^ (get FrozenMap (get tuple #(Row ...))) memory-joined-rows [#^ MemoryStore store #^ (get tuple #(str ...)) join-tables
+                                                                    #^ (get list str) texts #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
+  "ListRows.join-tables の表ごとに、頁の行の鍵の綴り texts と同じ鍵を持ち刻 now-ms で保持の期限を過ぎていない行を、texts の順で集めるため
+   (行の無い鍵は入れない・join-tables が空なら空の写像)。"
+  (when (not join-tables)
+    (return (FrozenMap)))
+  (FrozenMap (dfor name join-tables
+                   :setv join-decl (store.schema.table name)
+                   :setv join-table (get store.rows name)
+                   name (tuple (gfor text texts
+                                     :setv stored (.get join-table text)
+                                     :if (and (is-not stored None) (not (stored-row-expired? join-decl stored now-ms)))
+                                     stored.row)))))
+
+
 (defn #^ object memory-list-rows [#^ MemoryStore store #^ ListRows ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ListRows に答えるため: 刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも頁に出さない(頁の上限の前に除く — 続きの位置がずれない)。"
   (setv decl (store.schema.table ask.table))
+  (for [name ask.join-tables]
+    (store.schema.table name))
   (when (and (is-not ask.cursor None) (!= ask.cursor.epoch store.epoch))
     (return (Reset store.epoch store.floor)))
   (setv refusal (where-refusal decl ask.where ask.where-any (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by)))
@@ -728,18 +745,21 @@
                                          (or (is past None) (if descending (< #(value text) past) (> #(value text) past))))
                                 #(value text))
                           :reverse descending)
-          top (cut ordered ask.limit))
-    (return (Page (tuple (gfor #(_ text) top (listed-row decl ask.fields (. (get table text) row))))
+          top (cut ordered ask.limit)
+          taken-texts (lfor #(_ text) top text))
+    (return (Page (tuple (gfor text taken-texts (listed-row decl ask.fields (. (get table text) row))))
                   (if (> (len ordered) ask.limit) (ListCursor store.epoch (get top -1 1) (get top -1 0)) None)
                   store.epoch
-                  store.head)))
+                  store.head
+                  (memory-joined-rows store ask.join-tables taken-texts now-ms))))
   (setv matching (memory-key-page-texts store decl ask now-ms))
   (setv taken (cut matching ask.limit)
         rows (tuple (gfor text taken (listed-row decl ask.fields (. (get table text) row)))))
   (Page rows
         (if (> (len matching) ask.limit) (ListCursor store.epoch (get taken -1)) None)
         store.epoch
-        store.head))
+        store.head
+        (memory-joined-rows store ask.join-tables taken now-ms)))
 
 
 (defn #^ (| Count NotIndexed) memory-count-rows [#^ MemoryStore store #^ CountRows ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
@@ -1446,12 +1466,13 @@
    次に読みごとの故障を、同じ読みを 1 つ撃った時と同じ探し方(fault-for — matching は束の中の ReadRow | ListRows を受ける)で探し、1 つでも
    当たれば束の全部が届かない(当たった最初の故障の Unreachable — 読みの答えに Refused は無いので、Refused を置いた故障も Unreachable に
    読む)・当たらなければ錠の内で束を読む(memory-read-batch)。当たった故障は束 1 つにつき 1 回ずつ使う。"
-  (val down (unreachable-for store (tuple (gfor one ask.reads one.table))))
+  (val down (unreachable-for store (tuple (gfor one ask.reads name (if (isinstance one ListRows) (+ #(one.table) one.join-tables) #(one.table)) name))))
   (when down
     (return down))
   (var faults #())
   (for [one ask.reads]
-    (<- fault (| StoreFault None) (fault-for store StoreOperation.READ #(one.table) one))
+    (val one-names (if (isinstance one ListRows) (+ #(one.table) one.join-tables) #(one.table)))
+    (<- fault (| StoreFault None) (fault-for store StoreOperation.READ one-names one))
     (:= faults (+ faults #(fault))))
   (for [fault (first-seen-faults faults)]
     (memory-spend-fault store fault))
@@ -1535,7 +1556,7 @@
     (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-read-row store effect now-ms)))))
     (resume answer))
   (ListRows [table where fields cursor limit]
-    (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-list-rows store effect now-ms)))))
+    (<- answer (answered store READ (+ #(table) effect.join-tables) effect (read-at-now store (fn [now-ms] (memory-list-rows store effect now-ms)))))
     (resume answer))
   (CountRows [table where where-any at-least]
     (<- answer (answered store READ #(table) effect (read-at-now store (fn [now-ms] (memory-count-rows store effect now-ms)))))

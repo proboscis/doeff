@@ -514,11 +514,20 @@
 
 (defclass [(dataclass :frozen True)] Page []
   "ListRows の 1 頁: rows = 鍵の綴りの順の Row の tuple / next-cursor = 次の頁の位置(None = 終わり)/
-   epoch・sequence = この頁を読んだ時の置き場の版と変更の番号(最初の頁の値から WatchChanges を始めると取りこぼしが無い)。"
+   epoch・sequence = この頁を読んだ時の置き場の版と変更の番号(最初の頁の値から WatchChanges を始めると取りこぼしが無い)/
+   joined = ListRows.join-tables で添えた表の名 → その頁の行と同じ鍵を持つ行の tuple(頁の行の順・行の無い鍵は入らない・
+   join-tables が空なら空の写像)の凍らせた写像。"
   (#^ (get tuple #(Row ...)) rows)
   (#^ (| ListCursor None) next-cursor)
   (#^ int epoch)
-  (#^ int sequence))
+  (#^ int sequence)
+  (setv #^ (get FrozenMap (get tuple #(Row ...))) joined (field :default-factory FrozenMap))
+  (defn #^ None __post_init__ [self]
+    (object.__setattr__ self "joined" (frozen-map-of self.joined "Page.joined"))
+    (for [#(name group) (.items self.joined)]
+      (checked-table-name name "Page.joined の表")
+      (when (not (and (isinstance group tuple) (all (gfor row group (isinstance row Row)))))
+        (raise (TypeError (.format "Page.joined[{!r}] は Row の tuple: {!r}" name group)))))))
 
 (defclass [(dataclass :frozen True)] Written []
   "PutRow が確定した: version = 新しい版・value = 確定した行の値(凍らせた写像)/ position = その書きが変更の列に積んだ変更の位置

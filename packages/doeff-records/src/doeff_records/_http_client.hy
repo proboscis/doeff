@@ -224,10 +224,10 @@
    どの読み手の往復かを、長い名の列を行に載せずに分けられる。"
   (val names (match ask
                (WatchChanges :tables tables) (tuple tables)
-               (ListRows :table table) #(table)
+               (ListRows :table table :join_tables join-tables) (! (first-seen (+ #(table) join-tables)))
                (CountRows :table table) #(table)
                (ReadRow :table table) #(table)
-               (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads one.table))))
+               (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads name (if (isinstance one ListRows) (+ #(one.table) one.join-tables) #(one.table)) name))))
                (WatchEvents :stream stream) #(stream)
                (ReadEvents :stream stream) #(stream)
                _ #()))
@@ -331,7 +331,7 @@
   "要求と答えの要求 ask が触る表と列の名前を知るため(戻りの問い AwaitRecordsBack に渡す — 置き場は名ごとに止まり得る)。"
   (match ask
     (ReadRow :table table) #(table)
-    (ListRows :table table) #(table)
+    (ListRows :table table :join_tables join-tables) (! (first-seen (+ #(table) join-tables)))
     (CountRows :table table) #(table)
     (PutRow :table table) #(table)
     (PutRows :writes writes) (! (first-seen (tuple (gfor write writes write.table))))
@@ -340,7 +340,7 @@
     (ReadEvents :stream stream) #(stream)
     (ReadStreamEnd :stream stream) #(stream)
     (ReadEventByKey :stream stream) #(stream)
-    (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads one.table))))
+    (ReadBatch :reads reads) (! (first-seen (tuple (gfor one reads name (if (isinstance one ListRows) (+ #(one.table) one.join-tables) #(one.table)) name))))
     (PutRowsAppendEvents :writes writes :appends appends)
       (! (first-seen (+ (tuple (gfor write writes write.table)) (tuple (gfor one appends one.stream)))))))
 
@@ -483,7 +483,7 @@
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ListRows [table where fields cursor limit]
-    :when (in table served)
+    :when (and (in table served) (all (gfor name effect.join-tables (in name served))))
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (CountRows [table where where-any at-least]
@@ -508,7 +508,7 @@
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer))
   (ReadBatch [reads]
-    ;; 読みの束も束の表が全部 served の中の時だけ答える(置き場をまたぐ束は 1 往復で読めない — 外側で断られる)。
-    :when (all (gfor one reads (in one.table served)))
+    ;; 読みの束も束の表(添える表を含む)が全部 served の中の時だけ答える(置き場をまたぐ束は 1 往復で読めない — 外側で断られる)。
+    :when (all (gfor one reads (and (in one.table served) (or (not (isinstance one ListRows)) (all (gfor name one.join-tables (in name served)))))))
     (<- answer (answered-riding-stall endpoint effect))
     (resume answer)))

@@ -146,7 +146,7 @@
                               analyze-statement retired-index? table-shaped-index?
                               index-lock-statement index-unlock-statement
                               store-head-statement watch-head-statement read-row-statement lock-row-statement list-rows-statement top-rows-statement
-                              ordered-rows-statement count-rows-statement
+                              ordered-rows-statement joined-list-statement count-rows-statement
                               terminal-rows-statement upsert-row-statement delete-row-statement append-change-statement
                               bulk-candidates-statement unmoved-count-statement move-bulk-statement
                               changes-statement change-log-statement advance-epoch-statement forget-changes-statement find-event-statement
@@ -1049,6 +1049,19 @@
   (tuple (gfor record records (listed-row decl fields (row-of record)))))
 
 
+(defk listed-with-joined-of [decl fields primary-records join-tables join-records]
+  {:pre [(: decl TableDecl) (: fields (| tuple None)) (: primary-records (| tuple list))
+         (: join-tables (get tuple #(str ...))) (: join-records tuple)]
+   :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows.join-tables が在る頁の行と添えた表の行を、1 回の Compute で組むため(listed-rows-of と同じ 1 点。添えた表の行は欄を絞らず
+   row-of で保存の綴りのまま返す — 答えの綴りで解き直さない)。答え = #(主の頁の Row の tuple  添えた表の名 → Row の tuple の FrozenMap)。"
+  (val rows (tuple (gfor record primary-records (listed-row decl fields (row-of record)))))
+  (val joined (FrozenMap (dfor #(name records) (zip join-tables join-records :strict True)
+                               name (tuple (gfor record records (row-of record))))))
+  #(rows joined))
+
+
 (defk changes-of [records]
   {:pre [(: records (| tuple list))] :post [(: % tuple)]
    :tags {:context "records" :role "foundation"}}
@@ -1378,14 +1391,15 @@
   (val ordered (cond (is-not ask.descending-by None) (+ "上から " ask.descending-by)
                      (is-not ask.ascending-by None) (+ "下から " ask.ascending-by)
                      True "鍵の順"))
-  (.format "読み ListRows 表 {}・等号の欄 [{}]・値の組の欄 [{}]・並べ {}・続きの位置 {}・頁 {} 行・返す欄 {}"
+  (.format "読み ListRows 表 {}・等号の欄 [{}]・値の組の欄 [{}]・並べ {}・続きの位置 {}・頁 {} 行・返す欄 {}{}"
            ask.table
            (.join "," (sorted ask.where))
            (.join "," (gfor #(name members) (sorted (.items ask.where-any)) (.format "{}×{}" name (len members))))
            ordered
            (if (is ask.cursor None) "無し" "有り")
            ask.limit
-           (if (is ask.fields None) "全部" (len ask.fields))))
+           (if (is ask.fields None) "全部" (len ask.fields))
+           (if ask.join-tables (.format "・添える表 [{}]" (.join "," ask.join-tables)) "")))
 
 
 (defk list-rows-plan [store ask now-ms]
@@ -1394,6 +1408,8 @@
   "ListRows の文を作るか、索引の無い欄の断り NotIndexed を返すため(1 つの読みの pg-list-rows-at と束の読みの pg-read-batch が同じ文を流す
    1 点 — 置き場の版の照らし Reset は頭を読んだ後に呼び手がする)。"
   (val decl (store.schema.table ask.table))
+  (for [name ask.join-tables]
+    (store.schema.table name))
   (val refusal (where-refusal decl ask.where ask.where-any (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by)))
   (when refusal (return refusal))
   (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
@@ -1407,21 +1423,52 @@
   ;; 返す欄 fields が表の大きい欄を 1 つも含まなければ、文は列 bulk を選ばない(大きい欄の本体を読まない — pg_sql の頭の註の state_rows)。
   ;; fields が無い読みと、大きい欄を含む読みは payload と bulk を合わせて読む。
   (val with-bulk (or (is ask.fields None) (any (gfor name ask.fields (in name decl.bulk)))))
-  (when (is-not ordered-by None)
-    ;; 並べて読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) を越えた行から 1 頁 + 1 行(続きの有無を知るため)。降順は位置より小さい
-    ;; 行・昇順は大きい行。表の上から読む欄は並べる式の索引の順に(昇順は逆に)辿る形(pg_sql の頭の註)。
-    (<- top-statement Statement (ordered-rows-statement store.prefix ask.table decl.key-fields scoped ordered-by
-                                                        (in ordered-by decl.descending) (is-not ask.ascending-by None) ask.cursor
-                                                        where-json where-any-json ask.limit expiry with-bulk))
-    (return top-statement))
-  (<- statement Statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
-                                               (if (is ask.cursor None) None ask.cursor.after-key)
-                                               where-json
-                                               where-any-json
-                                               ask.limit
-                                               expiry
-                                               with-bulk))
-  statement)
+  (var base None)
+  (if (is-not ordered-by None)
+      ;; 並べて読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) を越えた行から 1 頁 + 1 行(続きの有無を知るため)。降順は位置より小さい
+      ;; 行・昇順は大きい行。表の上から読む欄は並べる式の索引の順に(昇順は逆に)辿る形(pg_sql の頭の註)。
+      (do (<- top-statement Statement (ordered-rows-statement store.prefix ask.table decl.key-fields scoped ordered-by
+                                                              (in ordered-by decl.descending) (is-not ask.ascending-by None) ask.cursor
+                                                              where-json where-any-json ask.limit expiry with-bulk))
+          (:= base top-statement))
+      (do (<- key-statement Statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
+                                                           (if (is ask.cursor None) None ask.cursor.after-key)
+                                                           where-json
+                                                           where-any-json
+                                                           ask.limit
+                                                           expiry
+                                                           with-bulk))
+          (:= base key-statement)))
+  (when (not ask.join-tables)
+    (return base))
+  (var join-expiries #())
+  (for [name ask.join-tables]
+    (<- join-expiry (| RowExpiry None) (row-expiry (store.schema.table name) now-ms))
+    (:= join-expiries (+ join-expiries #(join-expiry))))
+  (<- joined-statement Statement (joined-list-statement store.prefix base ask.limit ask.join-tables join-expiries))
+  joined-statement)
+
+
+(defk joined-list-rows-page [decl ask top-records head ordered-by]
+  {:pre [(: decl TableDecl) (: ask ListRows) (: top-records tuple) (: head StoreHead) (: ordered-by (| str None))] :post [(: % Page)]
+   :tags {:context "records" :role "foundation"}}
+  "join-tables を持つ ListRows の答えの行(part 0 が主の表、part 1..k が添える表)から Page を組むため。"
+  (val primary (tuple (gfor record top-records :if (= (int (get record 0)) 0) #((get record 2) (get record 3) (get record 4)))))
+  (val join-records (tuple (gfor index (range 1 (+ (len ask.join-tables) 1))
+                                 (tuple (gfor record top-records :if (= (int (get record 0)) index)
+                                              #((get record 2) (get record 3) (get record 4)))))))
+  (val taken (cut primary ask.limit))
+  (var rows #())
+  (var joined (FrozenMap (dfor name ask.join-tables name #())))
+  (when taken
+    (<- decoded tuple (off-loop (listed-with-joined-of decl ask.fields taken ask.join-tables join-records)))
+    (:= rows (get decoded 0))
+    (:= joined (get decoded 1)))
+  (val cursor (cond (<= (len primary) ask.limit) None
+                    (is-not ordered-by None)
+                      (ListCursor head.epoch (get (get taken -1) 0) (get (. (row-of (get taken -1)) value) ordered-by))
+                    True (ListCursor head.epoch (get (get taken -1) 0))))
+  (Page rows cursor head.epoch head.head joined))
 
 
 (defk list-rows-page [store ask top-records head]
@@ -1431,6 +1478,9 @@
    (1 つの読みと束の読みが同じ頁を組む 1 点)。"
   (val decl (store.schema.table ask.table))
   (val ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
+  (when ask.join-tables
+    (<- joined-page Page (joined-list-rows-page decl ask top-records head ordered-by))
+    (return joined-page))
   (when (is-not ordered-by None)
     (val top-taken (cut top-records ask.limit))
     (<- top-rows (decoded-batch top-taken (fn [records-of-page] (listed-rows-of decl ask.fields records-of-page))))
