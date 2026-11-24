@@ -9,6 +9,7 @@
 ;;     回す時は要求 1 つあたり LOOP-ALLOWANCE-SECONDS 以下で、その場で回す時の差の 1/10 以下(置き場は SQL の答えの代役 — 頁の行を決まった
 ;;     綴りで答え、DB の往復を測りに入れない。その場で回す時の差が上限を越える事も確かめ、頁がこの検に足る大きさだと示す)
 (require doeff-hy.macros [deftest defeffect defhandler defk <- val var])
+(import dataclasses)
 (import json)
 (import time)
 (import collections.abc [Callable])
@@ -31,7 +32,8 @@
 (import doeff_records._admission [key-text])
 (import doeff_records._laws [LAW-SCHEMA MAKER])
 (import doeff_records [pg-records-handler]
-        doeff_records._pg [IndexBook PreparedStore drop-records-tables])
+        doeff_records._pg [IndexBook PreparedStore StoreHead drop-records-tables]
+        doeff_records._pg_sql [NUMBERING-LOCK])
 (import doeff_records._service [HttpAnswer HttpRequest RecordsService respond])
 (import tests.interpreters [pg-skip-reason ORIGIN-HOST postgres-connections fresh-prefix run-sql prepared-store])
 
@@ -129,11 +131,15 @@
 
 ;; --- scheduler の thread の CPU の秒は頁の行の数に依らない -------------------------------------------------------------------------
 
+;; 代役の置き場の頭(StoreHead の欄の順 = pg_sql.head-columns / head-of の 5 列と揃える — 列が変わればここで欠けが出る)。
+(val SCRIPTED-HEAD-ROW (dataclasses.astuple (StoreHead :epoch 1 :floor 0 :head 0 :numbering NUMBERING-LOCK :bound 0)))
+
+
 (defk scripted-rows [records statement]
   {:pre [(: records tuple) (: statement str)] :post [(: % SqlRows)] :tags {:context "records" :role "foundation"}}
-  "代役の置き場の文 1 つの答え: 置き場の頭の読み(store_epoch)には版 1・番号 0 を、ほかの読み(一覧の頁)には決まった頁の行 records を
+  "代役の置き場の文 1 つの答え: 置き場の頭の読み(store_epoch)には SCRIPTED-HEAD-ROW を、ほかの読み(一覧の頁)には決まった頁の行 records を
    返すため。"
-  (SqlRows :rows (if (in "store_epoch" statement) #(#(1 0 0)) records) :rowcount None))
+  (SqlRows :rows (if (in "store_epoch" statement) #(SCRIPTED-HEAD-ROW) records) :rowcount None))
 
 
 (defk scripted-flush [records flush]
