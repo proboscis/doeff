@@ -3,25 +3,29 @@
 ;; process を残さない(cgroup v2 は子に controller を掛けた cgroup に process を置けない)。終わった子は次の置きの前の掃きが io.stat を読んで
 ;; から消し、層の子へ io を掛け損ねていれば試し直す。cgroupfs の代わりは tmp の木 — rmdir は「cgroup.procs が空なら中の file ごと消える」
 ;; 本物の cgroupfs の振る舞いを PATH の先頭の偽の rmdir で真似る。
-(require doeff-hy.macros [deftest <- val])
+(require doeff-hy.macros [defhandler defk deftest <- val])
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 (import dataclasses)
 (import json)
 (import os)
 (import pathlib [Path])
 (import doeff [with-handlers])
-(import doeff_core_effects [os-file-handler subprocess-handler])
+(import doeff_core_effects [HttpRequest HttpResponse Spawn TaskPriority Wait os-file-handler subprocess-handler])
 (import doeff_core_effects [EnvEntry EnvMode ProcessOutcome RunProcess])
 (import doeff_cluster [JobSpec])
 (import doeff_cluster._worker.core.job_cgroup [SHARED-CGROUP SUBGROUP-NAME-MAX io-totals job-subgroup-name layer-subgroup-procs
                                                placed-argv swept-groups sweep-argv])
+(import doeff_cluster._worker.core.task_record [TaskRecordTarget])
 (import doeff_cluster._worker.core.warm_rules [warm-child-places])
-(import doeff_cluster._worker.intent.worker_model [WarmChildMark WarmChildView WarmMarkUnreadable WorldView])
+(import doeff_cluster._worker.intent.worker_model [ProcessView WarmChildMark WarmChildView WarmMarkUnreadable WorldView])
 (import doeff_cluster._worker.protocol.process_host [HostSettings shim-argv])
 (import doeff_cluster._worker.entry.main [job-shared-placed])
 (import tests.host_rig [host-settings job-ended run-on-host])
 
 (val SHIM-ARGV #("python" "-m" "doeff_cluster._worker.entry.shim" "--" "uv" "run" "hy"))
+(val TASK-RECORD-ENDPOINT "http://collector.test:4318/v1/logs")
+(val TASK-RECORD-TARGET (TaskRecordTarget :endpoint TASK-RECORD-ENDPOINT :node "node-a"
+                                          :resource #(#("service.name" "records.task-ends") #("host.name" "node-a"))))
 (val IO-STAT "8:16 rbytes=1024 wbytes=4096 rios=1 wios=2 dbytes=0 dios=0\n259:0 rbytes=10 wbytes=20 rios=1 wios=1 dbytes=0 dios=0\n")
 ;; 本物の cgroupfs の rmdir の代わり: process の居る子(cgroup.procs が空でない)は断り(EBUSY)、空の子は中の file ごと消える。
 (val FAKE-RMDIR "#!/bin/sh\n[ -s \"$1/cgroup.procs\" ] && exit 1\nrm -rf \"$1\"\n")
@@ -137,10 +141,41 @@
   (assert (= (! (swept-groups "task_t9\t\n")) #(#("task_t9" #())))))
 
 
+(defclass Collector []  ; class にする理由: 送り先の代役の答え手と検の本体が同じ入れ物を読み書きする
+  "送り先の代役の入れ物: posts = 受けた #(method url 本文) の並び。"
+  (defn #^ None __init__ [self]
+    (setv self.posts #())))
+
+
+(defhandler stand-in-collector [#^ Collector collector]
+  "OTLP/HTTP の logs の口の代役: 要求を受けて溜め、200 を返す(本物の network へ繋がない)。"
+  {:tags {:context "doeff-cluster-test" :role "foundation"}}
+  ;; 引数に残す理由: 受けた物を溜める入れ物は検ごとに決める値(Ask で読む設定ではない)。
+  (HttpRequest [method url body]
+    (setv collector.posts (+ collector.posts #(#(method url (json.loads (json.dumps body))))))
+    (resume (HttpResponse 200 {} b"{}" "{}" url 0.0))))
+
+
+(defk idle-noop []
+  {:pre [] :post [(: % None)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "拍の外の daemon task(NORMAL)が走り終えるまで scheduler に席を譲るための空の Program。"
+  None)
+
+
+(defk job-ended-and-settled [spec code-path deadline-seconds]
+  {:pre [(: spec JobSpec) (: code-path str) (: deadline-seconds (| int float))] :post [(: % ProcessView)]
+   :tags {:context "doeff-cluster-test" :role "program"}}
+  "job を起こして回収した後、回収が拍の外で起こした task-record 送りの daemon task が走り終えるまで scheduler の IDLE 順で待って返すため。"
+  (<- ended ProcessView (job-ended spec code-path deadline-seconds))
+  (<- settle (Spawn (idle-noop) :priority TaskPriority.IDLE))
+  (<- (Wait settle))
+  ended)
+
+
 (deftest test-a-task-runs-in-its-own-child-and-the-finished-one-is-logged [#^ Path tmp-path capfd monkeypatch]
   ;; 本物の process-host と shim: task は jobs/<job の名>/ へ移ってから走り、層そのものには何も書かない。前に終わった job の子は消され、
   ;; その読み書きの byte が記録に 1 行残る(機体の disk への書きを job の名で数える読みの元)。回収の時に task の子の CPU 秒と memory の山を
-  ;; 読み、task の名つきの終わりの行を日の file に足す(kernel の代わりに job 自身が子の cpu.stat と memory.peak を書く)。
+  ;; 読み、task の名つきの終わりの行を OTLP/HTTP で送り先へ 1 回 POST する(kernel の代わりに job 自身が子の cpu.stat と memory.peak を書く)。
   (val layer (jobs-layer tmp-path "cpu io memory"))
   (monkeypatch.setenv "PATH" (+ (str (/ tmp-path "bin")) ":" (get os.environ "PATH")))
   (group-dir layer "task_t0" "")
@@ -151,18 +186,26 @@
                            "(g / 'memory.peak').write_text('1610612736\\n')\nprint('ran')\n")
                         (str (/ layer "task_t1"))))
   (<- base HostSettings (host-settings tmp-path))
-  (val records (/ tmp-path "records"))
-  (val settings (dataclasses.replace base :job-procs (str (/ layer "cgroup.procs")) :task-record-dir (str records)))
-  (setv ended (! (run-on-host settings (job-ended (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True :task-name "probe one")
-                                                  (str tree) 30))))
+  (val collector (Collector))
+  (val settings (dataclasses.replace base :job-procs (str (/ layer "cgroup.procs")) :task-record TASK-RECORD-TARGET))
+  (setv ended (! (run-on-host settings
+                              (job-ended-and-settled (JobSpec "task/t1" "probe_entry" #() "rev-a" :once True :task-name "probe one")
+                                                     (str tree) 30)
+                              :around #((stand-in-collector collector)))))
   (assert (= (.strip (.read-text (/ layer "task_t1" "cgroup.procs"))) (str ended.pid)) "shim は job の名の子へ移る")
   (assert (= (.read-text (/ layer "cgroup.procs")) "") "層そのものには置かない")
   (assert (not (.exists (/ layer "task_t0"))) "終わった job の子は消す")
   (assert (= (.strip (.read-text (/ layer "cgroup.subtree_control"))) "+io +memory"))
-  (setv days (list (.iterdir records)))
-  (assert (= (len days) 1) days)
-  (setv row (json.loads (.read-text (get days 0))))
-  (assert (= #((get row "job") (get row "task") (get row "exitCode") (get row "cpuSeconds") (get row "memoryPeakMib"))
+  (assert (= (len collector.posts) 1) collector.posts)
+  (setv #(#(method url body)) collector.posts)
+  (assert (= #(method url) #("POST" TASK-RECORD-ENDPOINT)) #(method url))
+  (val records (tuple (gfor resource (get body "resourceLogs")
+                            scope (get resource "scopeLogs")
+                            record (get scope "logRecords")
+                            (json.loads (get (get record "body") "stringValue")))))
+  (assert (= (len records) 1) records)
+  (val row (get records 0))
+  (assert (= #((get row "ticket") (get row "kind") (get row "rc") (get row "cpu") (get row "peak_mib"))
              #("task/t1" "probe one" ended.exit-code 2.5 1536))
           row)
   (setv err (. (capfd.readouterr) err))
