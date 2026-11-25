@@ -175,7 +175,6 @@
     (DesiredJobs) (DeclarationRead :jobs read.jobs :warm read.warm)
     _ state.declaration))
   (<- jobs tuple (declared-jobs declaration))
-  (val desired (if stopping #() jobs))
   ;; 宣言に無い job を止める訳(#3713): worker の停止・途絶で宣言を絞った(返事の宣言の cut-off)・それ以外は宣言から外れた。
   (val absent (match read
     _ :if stopping (WorkerStopping)
@@ -183,8 +182,12 @@
     _ (Undeclared)))
   (<- world WorldView (ObserveWorld))
   (<- observed-mono float (GetMonotonic))
+  ;; 前の世代がまだ走っている間に起きた世代(overlaps-elder)は、最初の掃除(SweepEnvs)を 1 周回し切るまで前の世代から job を奪わない
+  ;; (掃除の例外で落ちても前の世代の job を止めない)。掃除へ渡す declaration には宣言の全部を残すので必要な root は消さない。
+  (val holding-for-sweep (and policy.overlaps-elder (not stopping) (is-not world.env-disk None) (not world.env-disk.swept)))
+  (val desired (if (or stopping holding-for-sweep) #() jobs))
   (<- warm-read tuple (declared-warm declaration))
-  (val warm (if stopping #() warm-read))
+  (val warm (if (or stopping holding-for-sweep) #() warm-read))
   (<- planned tuple (plan now desired world state.records policy :warm warm :absent absent))
   ;; 掃除は最後に読めた宣言で判じる(まだ読めていない拍は撃たない・止まる拍も宣言の root を消さない — #3731)。
   (<- sweeping tuple (sweep-actions declaration world))
@@ -226,7 +229,11 @@
   (<- held dict (held-records now records holds))
   (:= records held)
   (<- report tuple (statuses now desired after records policy))
-  (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "")))
+  (val swept (or (is after.env-disk None) after.env-disk.swept))
+  (val cycle-complete
+       (and (not stopping) (not holding-for-sweep) (isinstance read DesiredJobs)
+            (is read.cut-off None) (not read.superseded) swept))
+  (<- (PublishStatus report (if (isinstance read DesiredUnreadable) read.reason "") :cycle-complete cycle-complete))
   (<- ended-mono float (GetMonotonic))
   (val marks (TickMarks :began began-ms :env-reported env-reported-ms :desired-read (monotonic-ms-of desired-read-mono)
                         :observed (monotonic-ms-of observed-mono) :ended (monotonic-ms-of ended-mono)))
@@ -235,6 +242,7 @@
     (<- (slog TICK-LAG-LOG :level "info" :elapsed-ms lag.elapsed-ms :slowest lag.slowest :slowest-ms lag.slowest-ms)))
   ;; 時刻だけで計画の答えが変わる最初の刻(周の後の観測と記憶・周の判断の now — worker_due の頭の註)。
   (<- planned-due (| DueAt DueNever) (plan-due now after records policy))
+  (val just-swept (and holding-for-sweep (is-not after.env-disk None) after.env-disk.swept))
   #((WorkerState :declaration declaration :records records :last-marks marks :last-sent-mono-ms last-sent-mono-ms)
     ;; 停止を確認できない process は待ち続けない(状態表示に残す)。
     (len (lfor s report :if (in s.phase #(JobPhase.RUNNING JobPhase.STOPPING)) s))
@@ -243,7 +251,8 @@
       (DesiredJobs :changed changed) changed
       _ None)
     planned-due
-    (tuple (gfor action fired (. (type action) __name__)))
+    (+ (tuple (gfor action fired (. (type action) __name__)))
+       (if just-swept #("SweepSettled") #()))
     began
     began-ms))
 

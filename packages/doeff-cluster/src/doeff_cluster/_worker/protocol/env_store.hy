@@ -1544,13 +1544,15 @@
     (resume views))
   (ObserveEnvDisk []
     ;; 掃除の係が拍を求めているか(sweep-wanted)は最後の観測の完成した root の集合と最後の数えの結びと掃除の失敗の刻で判じる(#3732)。
+    ;; swept = 起動から最初の掃除を失敗無く 1 周回し切ったか(世代の入れ替えの確定点 committed の条件)。
     (<- free int (disk-free settings))
     (<- ready frozenset (ready-keys views))
     (<- now-ms int (now-epoch-ms))
     (val failed-ms (if (is sweep-failure None) None sweep-failure.at-ms))
     (<- wanted bool (sweep-wanted (is-not sweeping None) tally ready settings.roots-cap-bytes (< free settings.min-free-bytes)
                                   :failed-ms failed-ms :now-ms now-ms))
-    (resume (EnvDisk :free free :sweep-wanted (or wanted (and pins-dirty (is failed-ms None))) :pinned pinned-roots)))
+    (resume (EnvDisk :free free :sweep-wanted (or wanted (and pins-dirty (is failed-ms None))) :pinned pinned-roots
+                     :swept (and (> swept-ms 0) (is sweep-failure None)))))
   (EnvReport []
     ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件と
     ;; 掃除の失敗(形は env-report — sim の宿と同じ関数)。
