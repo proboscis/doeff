@@ -107,7 +107,7 @@ Follow the run of `budget(5)(research(TOPICS))` below: `k` is a value, and the h
 
 `battle` is a small deck-building fight in the spirit of the game Slay the Spire. It asks the outside world for four things, each with an effect: `Roll`, `Choose`, `Show` and `Played`. Nothing in it says where the random numbers come from, who picks the cards, whether there is a screen, or whether anyone is counting. In every layer below, `battle` is the same function.
 
-One card lasts longer than its turn. Poison deals 3 damage at the end of each of the next three turns, and it is written as what it is, a loop that waits. `battle` starts `poison` as a task of its own with `Spawn`, and `poison` waits for the end of each turn with one more effect, `TurnEnds`. Two handlers give it that time, and they are in every stack below: `turns()`, the game's turn clock, just outside `battle`, and `scheduled`, doeff's scheduler, outermost. [Time is a handler too](#time-is-a-handler-too-turns-and-seconds) shows the clock.
+One card lasts longer than its turn. Poison deals 3 damage at the end of each of the next three turns, and it is written as what it is, a loop that waits. `battle` hands `poison` to the game with one more effect, `Lasting`, and `poison` waits for the end of each turn with another, `TurnEnds`. The game's turn clock `turns()` gives them their meaning, and it is in every stack below, just outside `battle`. [Time is a handler too](#time-is-a-handler-too-turns-and-seconds) shows the clock.
 
 <details markdown="1">
 <summary>spire.py (excerpt): the effects, <code>poison</code> and <code>battle</code></summary>
@@ -118,7 +118,7 @@ import random
 import sys
 from dataclasses import dataclass, replace
 
-from doeff import CompletePromise, CreatePromise, EffectBase, Gather, Resume, Spawn, Wait, do, handler, run
+from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects import scheduled
 
 
@@ -154,6 +154,11 @@ class TurnEnds(EffectBase):  # a lasting card effect: "wait for the end of the t
 @dataclass(frozen=True)
 class Hurt(EffectBase):  # a lasting card effect deals damage to the enemy
     n: int
+
+
+@dataclass(frozen=True)
+class Lasting(EffectBase):  # the fight: "run this card effect over the next turns"
+    program: object
 
 
 @dataclass(frozen=True)
@@ -235,11 +240,11 @@ def battle(s: Fight = Fight()):
             s = replace(dealt.state, discard=dealt.state.discard + (card,))
             yield Played(card, dealt.damage)
             if card == "Poison":
-                yield Spawn(poison(3, turns=3), daemon=True)  # a task of its own: it outlives this turn
+                yield Lasting(poison(3, turns=3))  # it outlives this turn
             if s.enemy_hp <= 0:
                 return "win", s.turn
         s = replace(s, discard=s.discard + hand)
-        poisoned = yield EndTurn()  # every lasting effect that waits runs up to its next wait
+        poisoned = yield EndTurn()  # every card effect that waits runs up to its next wait
         if poisoned:
             s = replace(s, enemy_hp=s.enemy_hp - poisoned)
             yield Played("Poison", poisoned)
@@ -318,7 +323,7 @@ def quiet_stats(effect: Played, k):
 
 ~~~python
 moves = [0, 0, 0, None] * 20
-print(run(scheduled(quiet_stats(printed(dice(7)(scripted(moves)(turns()(battle()))))))))
+print(run(quiet_stats(printed(dice(7)(scripted(moves)(turns()(battle())))))))
 ~~~
 
 ~~~text
@@ -373,7 +378,7 @@ def random_bot(effect: Choose, k):
 ~~~
 
 ~~~python
-print(run(scheduled(quiet_stats(silent(dice(3)(random_bot(turns()(battle()))))))))
+print(run(quiet_stats(silent(dice(3)(random_bot(turns()(battle())))))))
 ~~~
 
 ~~~text
@@ -416,8 +421,8 @@ def replay(tape: list):
 
 ~~~python
 tape: list = []
-first = run(scheduled(quiet_stats(silent(dice(3)(random_bot(record(tape)(turns()(battle()))))))))
-again = run(scheduled(quiet_stats(silent(replay(tape)(turns()(battle()))))))
+first = run(quiet_stats(silent(dice(3)(random_bot(record(tape)(turns()(battle())))))))
+again = run(quiet_stats(silent(replay(tape)(turns()(battle())))))
 print(first, again, "same:", first == again, "tape:", len(tape), "answers")
 ~~~
 
@@ -461,7 +466,7 @@ def monte_carlo(playouts: int):
                 if s.enemy_hp <= 0:
                     wins += 1
                     continue
-                result, _ = run(scheduled(quiet_stats(silent(dice(n)(random_bot(turns()(battle(s))))))))
+                result, _ = run(quiet_stats(silent(dice(n)(random_bot(turns()(battle(s)))))))
                 wins += result == "win"
             if wins / playouts > best_score:
                 best, best_score = i, wins / playouts
@@ -473,7 +478,7 @@ PLAYOUTS = 3  # per candidate move; the 100 Monte Carlo fights take well under a
 ~~~
 
 ~~~python
-print(run(scheduled(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(turns()(battle()))))))))
+print(run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(turns()(battle())))))))
 ~~~
 
 ~~~text
@@ -490,7 +495,7 @@ print(run(scheduled(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(turns()(bat
 
 [The same video as an mp4 file (1:42)](../assets/videos/article-hundred-fights.mp4)
 
-`win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks take turns on one thread: `scheduled` switches only at an effect it answers itself, such as a `Spawn` or the end of a turn that a poison is waiting for. Between two of those a fight runs alone, so the hundred fights overlap and none of them needs a lock. On the same hundred seeds, the random bot wins 79 fights and the Monte Carlo bot wins all 100.
+`win_rate` yields `Spawn` once per seed and then `Gather`, and each task carries its own stack. The tasks share one thread, and `scheduled`, doeff's scheduler, switches between them only at an effect it answers itself, such as `Spawn` or `Gather`. A fight yields neither, so each one runs alone to its end, and none of them needs a lock. Its turns stay its own: the turn clock inside each task keeps the poison of that fight. On the same hundred seeds, the random bot wins 79 fights and the Monte Carlo bot wins all 100.
 
 <details markdown="1">
 <summary><code>win_rate</code>, the runs and what they print</summary>
@@ -574,7 +579,7 @@ def play() -> None:
     """A fight against the enemy, played by a person; the dice are seeded by the system."""
     seed = random.SystemRandom().randrange(10**6)
     print(f"seed {seed}")
-    print("->", run(scheduled(quiet_stats(printed(dice(seed)(human(turns()(battle()))))))))
+    print("->", run(quiet_stats(printed(dice(seed)(human(turns()(battle())))))))
 ~~~
 
 ~~~bash
@@ -585,7 +590,7 @@ python spire.py play
 
 ### The stacks side by side
 
-`battle` is the same function in every stack, and some of them replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot: keep the answer, yield an effect of their own, hold the paused fight as `k`. Every stack also has the turn clock `turns()` innermost and `scheduled` outermost, which the table leaves out.
+`battle` is the same function in every stack, and some of them replace an input, such as the dice or the player. The others do things an object passed in as an argument cannot: keep the answer, yield an effect of their own, hold the paused fight as `k`. Every stack also has the turn clock `turns()` innermost, which the table leaves out.
 
 | Run | Layers around `battle`, from the inside out | What changes |
 |---|---|---|
@@ -600,7 +605,7 @@ python spire.py play
 
 ## One mechanism under all of it
 
-Every handler in this post is a function of `(effect, k)`. `Spawn`, `Gather`, `Wait` and the promise effects come from doeff's packages, and `scheduled` is a reference handler for them, written in the same form as `dice`. Nothing makes these effects special: any handler can answer them instead.
+Every handler in this post is a function of `(effect, k)`. `Spawn` and `Gather` come from doeff's packages, and `scheduled` is a reference handler for them, written in the same form as `dice`. Nothing makes these effects special: any handler can answer them instead.
 
 | The program yields | Handlers in this post |
 |---|---|
@@ -608,8 +613,8 @@ Every handler in this post is a function of `(effect, k)`. `Spawn`, `Gather`, `W
 | `Choose(state, hand, energy)` | `scripted(moves)`, `random_bot`, `monte_carlo(PLAYOUTS)`, `human`, and the same `record(tape)` and `replay(tape)` |
 | `Show(text)` | `printed`, `silent` |
 | `Played(card, damage)` | `quiet_stats`, `damage_stats(totals)` |
-| `TurnEnds()`, `Hurt(n)`, `EndTurn()` | `turns()`, which waits on a promise of `scheduled` |
-| `Spawn(program)`, `Gather(*tasks)`, `Wait(future)`, `CreatePromise()`, `CompletePromise(promise, value)` | `scheduled` |
+| `Lasting(program)`, `TurnEnds()`, `Hurt(n)`, `EndTurn()` | `turns()`, which keeps the `k` of each card effect until the turn ends |
+| `Spawn(program)`, `Gather(*tasks)` | `scheduled` |
 
 The other effects that doeff's packages define work the same way, and you can install your own handler instead:
 
@@ -643,73 +648,105 @@ def rising(text: str):  # an animation: the number rises for four frames, 0.1 s 
         yield Delay(0.1)
 ~~~
 
-`TurnEnds` is an effect of the game, and its handler is the game's own turn clock. The clock does not keep `k` itself. It waits on a promise, so `scheduled` keeps the task of the card effect. When the fight says that the turn has ended, the clock completes the promise, and every card effect that waits runs up to its next wait:
+`TurnEnds` is an effect of the game, and its handler is the game's own turn clock. `battle` hands each card effect to the clock with `Lasting`, and the clock runs it inside one more handler, `lasting`, up to its first `TurnEnds`. There `lasting` keeps `k`, the rest of the card effect, and the fight goes on. When the fight says that the turn has ended, the clock resumes each kept `k` in the order the cards were played, and every card effect runs up to its next wait. No scheduler takes part: the order within a turn is a rule of the game, and the clock is where it is written.
 
 ~~~python
 # spire.py (excerpt)
 def turns():
-    bell, dealt = None, 0  # the promise of the turn that is on, and what the lasting effects dealt
+    waiting, dealt = (), 0  # the k of each card effect that waits for the end of the turn, and what they dealt
 
     @handler
-    def turn_clock(effect: TurnEnds | Hurt | EndTurn, k):
-        nonlocal bell, dealt
-        if isinstance(effect, TurnEnds):
-            if bell is None:
-                bell = yield CreatePromise()
-            yield Wait(bell.future)  # the scheduler keeps this task until the fight ends the turn
-            return (yield Resume(k, None))
+    def lasting(effect: TurnEnds | Hurt, k):  # around each card effect
+        nonlocal waiting, dealt
         if isinstance(effect, Hurt):
             dealt += effect.n
             return (yield Resume(k, None))
-        over, bell = bell, None
-        if over is not None:
-            yield CompletePromise(over, None)  # every task that waits runs up to its next wait
+        waiting = (*waiting, k)  # it waits for the end of the turn: keep its k, and go back to the fight
+
+    @handler
+    @do(non_tail=True)  # it goes on after each card effect it resumes
+    def turn_clock(effect: Lasting | EndTurn, k):
+        nonlocal waiting, dealt
+        if isinstance(effect, Lasting):
+            yield lasting(effect.program)  # the card effect runs up to its first wait
+            return (yield Resume(k, None))
+        ready, waiting, dealt = waiting, (), 0
+        for card_effect in ready:  # the turn ends: each card effect runs up to its next wait
+            yield Resume(card_effect, None)
         total, dealt = dealt, 0
         return (yield Resume(k, total))
 
     return turn_clock
 ~~~
 
-`Delay` comes from the package doeff-time. Its `sim_time_handler` is a virtual clock: each animation is a task, and the clock moves on to the next wake-up when every task waits. `clocks.py` is a smaller fight with the same `poison` and the same turn clock, where each hit has a number that rises on seconds. The two clocks are stacked around it:
+The seconds are another clock, and they come in from the outside. `Delay` comes from the package doeff-time, and its `sim_time_handler` is a virtual clock. `clocks.py` runs the `battle` of this post in real time: the player thinks for 0.25 s before each card, and each hit starts a number that rises on its own. Each rising number is a task of `scheduled`, so it goes on while the player thinks, and the virtual clock moves on to the next wake-up when every task waits. The turn clock stays inside, where it was, and the screen and its seconds are stacked outside it:
 
 ~~~python
 # clocks.py (excerpt)
-    fight = turns()(battle())
-    return run(scheduled(sim_time_handler(start_time=START)(printed(player(plays, seconds)(fight)))))
+    fight = dice(seed)(scripted(moves)(thinking(seconds)(turns()(battle()))))
+    return run(scheduled(sim_time_handler(start_time=START)(screen(animated(fight)))))
 ~~~
 
-The player takes 0.25 s to pick a card. The poison of turn 1 hurts at the end of turns 1, 2 and 3, and its number is still rising when the Strike of turn 2 lands:
+The script plays the Poison on turn 2. It deals 3 at the end of turns 2, 3 and 4, and at 1.25 s it lands while the 9 of the last Strike of turn 2 is still rising. The fight ends on turn 5, as it does with no screen and no seconds.
+
+<details markdown="1">
+<summary>What <code>python clocks.py</code> prints</summary>
 
 ~~~text
-0.25s  turn 1: Poison, enemy 27
-0.25s                          -3
-0.35s                          -3^
-0.45s                          -3^^
-0.50s                          -6
-0.50s  turn 2: Strike, enemy 18
-0.50s                          -3
-0.55s                          -3^^^
-0.60s                          -6^
-0.60s                          -3^
-0.70s                          -6^^
-0.70s                          -3^^
-0.75s                          -6
-0.75s  turn 3: Strike, enemy 9
-0.75s                          -3
-0.80s                          -6^^^
-0.80s                          -3^^^
-0.85s                          -6^
-0.85s                          -3^
-0.95s                          -6^^
-0.95s                          -3^^
-1.00s                          -6
-1.00s  turn 4: Strike, enemy 0
-the enemy is down on turn 4
+0.00s  T1 you 40 (0 block) | enemy 44 | 3 energy | Defend Strike Bash Defend Strike
+0.25s                                -6
+0.25s  T1 you 40 (0 block) | enemy 38 | 2 energy | Defend Bash Defend Strike
+0.35s                                -6^
+0.45s                                -6^^
+0.50s                                -8
+0.50s     enemy hits for 11, you take 11
+0.50s  T2 you 29 (0 block) | enemy 30 | 3 energy | Poison Strike Defend Strike Defend
+0.55s                                -6^^^
+0.60s                                -8^
+0.70s                                -8^^
+0.75s  T2 you 29 (0 block) | enemy 30 | 2 energy | Strike Defend Strike Defend
+0.80s                                -8^^^
+1.00s                                -9
+1.00s  T2 you 29 (0 block) | enemy 21 | 1 energy | Defend Strike Defend
+1.10s                                -9^
+1.20s                                -9^^
+1.25s                                -3
+1.25s     poison deals 3
+1.25s     enemy hits for 11, you take 6
+1.25s  T3 you 23 (0 block) | enemy 18 | 3 energy | Bash Defend Strike Strike Defend
+1.30s                                -9^^^
+1.35s                                -3^
+1.45s                                -3^^
+1.50s                                -8
+1.50s  T3 you 23 (0 block) | enemy 10 | 1 energy | Defend Strike Strike Defend
+1.55s                                -3^^^
+1.60s                                -8^
+1.70s                                -8^^
+1.75s                                -3
+1.75s     poison deals 3
+1.75s     enemy hits for 11, you take 6
+1.75s  T4 you 17 (0 block) | enemy 7 | 3 energy | Defend Strike Defend Strike Poison
+1.80s                                -8^^^
+1.85s                                -3^
+1.95s                                -3^^
+2.00s                                -3
+2.00s     poison deals 3
+2.00s     enemy bellows
+2.00s  T5 you 17 (0 block) | enemy 4 | 3 energy | Poison Bash Defend Defend Strike
+2.05s                                -3^^^
+2.10s                                -3^
+2.20s                                -3^^
+2.25s  T5 you 17 (0 block) | enemy 4 | 2 energy | Bash Defend Defend Strike
+2.30s                                -3^^^
+2.50s                                -8
+-> ('win', 5)
 ~~~
 
-The whole fight prints at once, and the same on every run, because no handler waits for real time. `poison` and `rising` do not know which clock they are on, and neither holds a lock or an event.
+</details>
 
-With asyncio, the seconds are the event loop's, and a turn has to be an object of its own. `clocks_asyncio.py` in the examples is the same game written that way: an `asyncio.Condition` is handed to every card effect, two `asyncio.sleep(0)` keep the order of the tasks, and each run takes one real second. A handler for another kind of time is written the way `turns()` is: one that waits for a click in a UI, or for a fill in a trading strategy.
+The whole fight prints at once, and the same on every run, because no handler waits for real time. `poison` and `rising` do not know which clock they are on, and neither holds a lock or an event. `battle` and `turns()` are the same in the stacks with and without a screen: the screen, the seconds and the scheduler are handlers outside them.
+
+With asyncio, the seconds are the event loop's, and a turn has to be an object of its own. `clocks_asyncio.py` in the examples writes a small fight of this kind that way: an `asyncio.Condition` is handed to every card effect, two `asyncio.sleep(0)` keep the order of the tasks, and each run takes one real second. A handler for another kind of time is written the way `turns()` is: one that waits for a click in a UI, or for a fill in a trading strategy.
 
 ## Tests are one of the stacks
 
@@ -721,7 +758,6 @@ Layer 1 is already a test: with a scripted player and seeded dice, the fight is 
 ~~~python
 # test_spire.py
 from doeff import Resume, handler, run
-from doeff_core_effects import scheduled
 
 from spire import Fight, Played, battle, dice, quiet_stats, scripted, silent, turns
 
@@ -735,14 +771,14 @@ def played_in(fight):
         played.append((effect.card, effect.damage))
         return (yield Resume(k, None))
 
-    run(scheduled(log(silent(dice(7)(fight)))))
+    run(log(silent(dice(7)(fight))))
     return played
 
 
 def test_a_strike_finishes_an_enemy_on_6_hit_points():
     # seed 7 deals Defend Strike Bash Defend Strike, and the script plays the Strike
     fight = scripted([1])(turns()(battle(Fight(enemy_hp=6))))
-    assert run(scheduled(quiet_stats(silent(dice(7)(fight))))) == ("win", 1)
+    assert run(quiet_stats(silent(dice(7)(fight)))) == ("win", 1)
 
 
 def test_bash_makes_the_next_strike_hit_harder():
@@ -762,24 +798,23 @@ def test_a_poison_deals_3_at_the_end_of_each_of_the_next_3_turns():
 Leave out a handler and the run stops at the `yield` nobody answered, as below. [examples/testing_without_mocks](https://github.com/proboscis/doeff/tree/main/examples/testing_without_mocks) puts a `mock.patch` test and a handler test side by side.
 
 ~~~python
-run(scheduled(silent(dice(7)(scripted(moves)(turns()(battle()))))))
+run(silent(dice(7)(scripted(moves)(turns()(battle())))))
 ~~~
 
 ~~~text
 doeff Traceback (most recent call last):
 
-  battle()  spire.py:134
+  battle()  spire.py:139
     yield Played(card, dealt.damage)
     handlers:
       turns ↗
       scripted ↗
       dice ↗
       silent ↗
-      scheduled ↗
 
 UnhandledEffect: no handler found for effect: Played (Played(card='Defend', damage=0))
-  handlers in scope (innermost→outermost): turns → scripted → dice → silent → scheduled
-  skipped by annotation: turns (effect: TurnEnds | Hurt | EndTurn), scripted (effect: Choose), dice (effect: Roll), silent (effect: Show) — a handler only sees the effects its effect parameter is annotated with
+  handlers in scope (innermost→outermost): turns → scripted → dice → silent
+  skipped by annotation: turns (effect: Lasting | EndTurn), scripted (effect: Choose), dice (effect: Roll), silent (effect: Show) — a handler only sees the effects its effect parameter is annotated with
   hint: install a handler for Played: run(fn(prog)), where fn is a def (effect: Played, k) marked with @handler that returns (yield Resume(k, value))
 ~~~
 
