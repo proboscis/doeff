@@ -6,8 +6,9 @@
 (import doeff_cluster [JobSpec])
 (import doeff_cluster._shared.intent.hosted_model [HostedLaunch HostedProcess HostedRefused LaunchHosted ListHosted StopHosted])
 (import doeff_cluster._worker.intent.worker_model [ProcessView])
-(import doeff_cluster._worker.core.hosted_rules [HostedRecord hosted-id-of hosted-id? hosted-layer-procs hosted-orphans hosted-owners
-                                                 hosted-place-of hosted-root-of hosted-socket-of])
+(import doeff_cluster._worker.core.hosted_rules [HostedRecord UNPLACED-CODE UNPLACED-MARK hosted-id-of hosted-id? hosted-layer-procs
+                                                 hosted-orphans hosted-owners hosted-place-of hosted-root-of hosted-socket-of
+                                                 hosted-subgroup-procs inner-node-refusal unplaced-detail])
 (import doeff_cluster._worker.protocol.hosted_host [HostedAsk hosted-answer-of hosted-answer-text hosted-request-of hosted-request-text
                                                    record-of record-text])
 
@@ -114,3 +115,50 @@
   (<- text str (record-text record))
   (<- back (record-of text))
   (assert (= back record) back))
+
+
+(deftest test-a-subgroup-names-a-child-of-the-layer-and-odd-names-are-refused
+  (val procs "/cg/clis/cgroup.procs")
+  (<- same (| str HostedRefused) (hosted-subgroup-procs procs None))
+  (assert (= same procs) same)
+  (<- child (| str HostedRefused) (hosted-subgroup-procs procs "c-01ABC_x"))
+  (assert (= child "/cg/clis/c-01ABC_x/cgroup.procs") child)
+  (for [odd ["../up" "a/b" "" "x.procs" (* "a" 121)]]
+    (<- refused (| str HostedRefused) (hosted-subgroup-procs procs odd))
+    (assert (isinstance refused HostedRefused) #(odd refused))))
+
+
+(deftest test-a-cgroup-that-hands-controllers-to-children-is-refused-with-its-path
+  (<- refused (| HostedRefused None) (inner-node-refusal "/cg/clis/cgroup.procs" "cpu\n"))
+  (assert (isinstance refused HostedRefused) refused)
+  (assert (in "/cg/clis" refused.detail) refused)
+  (assert (in "EBUSY" refused.detail) refused)
+  (<- leaf (| HostedRefused None) (inner-node-refusal "/cg/clis/c-1/cgroup.procs" "\n"))
+  (assert (is leaf None) leaf))
+
+
+(deftest test-the-unplaced-line-is-read-only-from-the-unplaced-exit
+  (val output (+ "x\n" UNPLACED-MARK " tee: /cg/clis/cgroup.procs: Device or resource busy\n"))
+  (<- detail (| str None) (unplaced-detail UNPLACED-CODE output))
+  (assert (= detail "tee: /cg/clis/cgroup.procs: Device or resource busy") detail)
+  (<- other (| str None) (unplaced-detail 1 output))
+  (assert (is other None) other)
+  (<- silent (| str None) (unplaced-detail UNPLACED-CODE "no mark\n"))
+  (assert (is silent None) silent))
+
+
+(deftest test-the-subgroup-and-the-detail-round-trip-on-the-socket-line-and-the-record
+  (<- asked str (hosted-request-text (LaunchHosted (HostedLaunch :argv #("a") :owner "turn-host" :layer "clis" :subgroup "c-1"))))
+  (<- ask (| HostedAsk HostedRefused) (hosted-request-of asked))
+  (assert (= ask.launch.subgroup "c-1") ask)
+  (val process (HostedProcess :id "h-0001020304050607" :pid 7 :owner "turn-host" :layer "clis" :place "/p" :started-ms 1 :ended True
+                              :exit-code UNPLACED-CODE :subgroup "c-1" :detail "tee: /cg: busy"))
+  (<- text str (hosted-answer-text process))
+  (<- back (| HostedProcess HostedRefused tuple) (hosted-answer-of text False))
+  (assert (= back process) back)
+  (<- record HostedRecord (record-of-owner "h-0001020304050607" "turn-host"))
+  (val placed (HostedRecord :id record.id :pid 10 :start-ticks 5 :owner "turn-host" :layer "clis" :place record.place :started-ms 1
+                            :generation "0123456789ab" :subgroup "c-1"))
+  (<- body str (record-text placed))
+  (<- read (record-of body))
+  (assert (= read placed) read))

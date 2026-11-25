@@ -36,7 +36,7 @@
   (val number (len log.launches))
   (val id (.format "h-{:016x}" (+ number 1)))
   (val view (HostedProcess :id id :pid (+ FIRST-PID number) :owner launch.owner :layer launch.layer :place (.format "{}/{}" PLACE-ROOT id)
-                           :started-ms log.started-ms))
+                           :started-ms log.started-ms :subgroup launch.subgroup))
   (setv log.launches (+ log.launches #(launch))
         log.held (| log.held {id view}))
   view)
