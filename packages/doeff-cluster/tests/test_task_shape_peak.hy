@@ -142,7 +142,8 @@
   (<- placed (get Table TaskRecord) (placed-with grown SHAPE))
   (<- no-memory str (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL))
   (val next (.row placed "next"))
-  (assert (= #(next.phase next.detail) #("queued" no-memory)) next)
+  (assert (= next.phase "queued") next)
+  (assert (in no-memory next.detail) next)
   ;; 形を名乗らない task と、まだ測っていない初めての形の task は名乗り 3,584 MiB のまま置く(山を知らない仕事は名乗りを信じる —
   ;; 名乗りより伸びた分は worker が jobs の層の上限で止める)。
   (<- unshaped (get Table TaskRecord) (placed-with grown ""))

@@ -297,7 +297,8 @@
              [#("assigned" "node-h") #("assigned" "node-h")])
           after.tasks)
   (val waiting (.row after.tasks "t3"))
-  (assert (= #(waiting.phase waiting.worker waiting.detail) #("queued" None (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)))) waiting)
+  (assert (= #(waiting.phase waiting.worker) #("queued" None)) waiting)
+  (assert (in (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)) waiting.detail) waiting)
   (val load (load-of after after.placements))
   (assert (= #((! (memory-room-of (.row after.workers "node-h") load)) (! (task-room-of (.row after.workers "node-h") load))) #(-50 0)) load))
 

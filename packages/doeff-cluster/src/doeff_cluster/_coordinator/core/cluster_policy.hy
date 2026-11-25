@@ -1412,6 +1412,11 @@
 
 ;; 申告の和の無い値(置いた task も取っておきも無い worker)。
 (val NOTHING-CLAIMED (ClaimedSum :memory-mib 0 :cpu-millis 0))
+;; 区画が満ちて置けない task の detail に載せる、置いた task の組ごとの内訳の最大件数と、当たった worker の最大台数。
+(val COMPARTMENT-FULL-TOP-GROUPS 3)
+(val COMPARTMENT-FULL-TOP-WORKERS 3)
+;; 組を名乗らない置いた task を組ごとの内訳で呼ぶ名。
+(val UNGROUPED-TASK-LABEL "組なし")
 
 
 (defk claimed-plus [total memory cpu]
@@ -1420,18 +1425,64 @@
   (ClaimedSum :memory-mib (+ total.memory-mib memory) :cpu-millis (+ total.cpu-millis cpu)))
 
 
-(defk claimed-sums [state compartments peaks]
-  {:pre [(: state ClusterState) (: compartments dict) (: peaks dict)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
-  "worker ごとの、置いた task(PLACED-PHASES)の申告の和(ADR-DOE-CLUSTER-005 R5 — worker の名 → ClaimedSum)を知るため。申告は表 claims の
-   行(task_claims.claim-mib-of・claim-cpu-of — 行の無い置いた task は上限 compartment-clamp での今の決め方)。compartments =
-   tasks-compartments-of の答え。測った負荷は読まない。"
+(defk task-group-label [limits]
+  {:pre [(: limits (get tuple #(TaskLimit ...)))] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "置いた task が名乗る組 limits(TaskLimit の tuple)から、区画を埋めている組ごとの内訳の鍵(1 本につき 1 つ — 二重に数えない)を知るため:
+   名乗った組の名(part を除く)の重複を除いて名の順に + でつないだ文。組を名乗らなければ UNGROUPED-TASK-LABEL。"
+  (val names (sorted (sfor l limits l.group)))
+  (if names (.join "+" names) UNGROUPED-TASK-LABEL))
+
+
+(defk group-claims-plus [groups label delta-count memory cpu]
+  {:pre [(: groups dict) (: label str) (: delta-count int) (: memory int) (: cpu int)] :post [(: % dict)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "worker 1 台の置いた task の組ごとの本数と申告の和 groups(組の名 → #(本数 memoryMiB cpuMillis))に、task 1 本分を足し引きした新しい dict を
+   知るため(置く・止めるたびに claimed-plus と同じ値で進める)。本数が 0 以下になった組は落とす。"
+  (val cur (.get groups label #(0 0 0)))
+  (val next-count (+ (get cur 0) delta-count))
+  (if (<= next-count 0)
+      (dfor #(k v) (.items groups) :if (!= k label) k v)
+      (| groups {label #(next-count (+ (get cur 1) memory) (+ (get cur 2) cpu))})))
+
+
+(defk claimed-totals-and-groups [state compartments peaks]
+  {:pre [(: state ClusterState) (: compartments dict) (: peaks dict)] :post [(: % tuple)] :tags {:context "coordinator" :role "judgment"}}
+  "worker ごとの、置いた task(PLACED-PHASES)の申告の和(worker の名 → ClaimedSum)と、同じ 1 回の走査・同じ申告の値から集めた組ごとの本数と申告の和
+   (worker の名 → {組の名: #(本数 memoryMiB cpuMillis)})の組 #(sums group-sums) を知るため(ADR-DOE-CLUSTER-005 R5)。申告は表 claims の行
+   (task_claims.claim-mib-of・claim-cpu-of)を task 1 本につき 1 回だけ読み、測った負荷は読まない。"
   (var sums (dfor name (.keys state.workers) name NOTHING-CLAIMED))
+  (var group-sums (dfor name (.keys state.workers) name {}))
   (for [t (scan-rows state.tasks) :if (and (in t.phase PLACED-PHASES) (in t.worker sums))]
     (<- memory int (claim-mib-of t state.claims (compartment-clamp state compartments t.needs) peaks))
     (<- cpu int (claim-cpu-of t state.claims state.group-limits))
     (<- added ClaimedSum (claimed-plus (get sums t.worker) memory cpu))
-    (:= sums (| sums {t.worker added})))
-  sums)
+    (:= sums (| sums {t.worker added}))
+    (<- label str (task-group-label t.limits))
+    (<- grouped dict (group-claims-plus (get group-sums t.worker) label 1 memory cpu))
+    (:= group-sums (| group-sums {t.worker grouped})))
+  #(sums group-sums))
+
+
+(defk claimed-sums [state compartments peaks]
+  {:pre [(: state ClusterState) (: compartments dict) (: peaks dict)] :post [(: % dict)] :tags {:context "coordinator" :role "judgment"}}
+  "worker ごとの、置いた task(PLACED-PHASES)の申告の和(ADR-DOE-CLUSTER-005 R5 — worker の名 → ClaimedSum)を知るため。claimed-totals-and-groups
+   の和の側をそのまま返す。"
+  (<- pair tuple (claimed-totals-and-groups state compartments peaks))
+  (get pair 0))
+
+
+(defk memory-overflow? [held used kept need]
+  {:pre [(: held HeldCompartment) (: used ClaimedSum) (: kept ClaimedSum) (: need int)] :post [(: % bool)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "tasks 区画 held の memory 宣言値(memoryMiB)を、置いた task の和 used + 取っておき kept + この task の申告 need が越えるかを知るため。"
+  (> (+ used.memory-mib kept.memory-mib need) held.memory-mib))
+
+
+(defk cpu-overflow? [held used kept cpu]
+  {:pre [(: held HeldCompartment) (: used ClaimedSum) (: kept ClaimedSum) (: cpu int)] :post [(: % bool)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "tasks 区画 held の CPU 宣言値(cpuMillis)を、置いた task の和 used + 取っておき kept + この task の申告 cpu が越えるかを知るため。"
+  (> (+ used.cpu-millis kept.cpu-millis cpu) held.cpu-millis))
 
 
 (defk compartment-misfit [held used kept need cpu]
@@ -1441,12 +1492,67 @@
    held = その worker の tasks 区画(None = 持たない → TASK-NO-COMPARTMENT)・used = 置いた task の申告の和・kept = この拍に先の task へ
    取っておいた申告(R6 の取っておき — 門の外の task は NOTHING-CLAIMED を渡す)。memory の和 + need が memoryMiB を、または CPU の和 +
    cpu が cpuMillis を越える → TASK-COMPARTMENT-FULL。測った負荷・床・予約は読まない。"
-  (cond
-    (is held None) TaskUnplacedKind.TASK-NO-COMPARTMENT
-    (or (> (+ used.memory-mib kept.memory-mib need) held.memory-mib)
-        (> (+ used.cpu-millis kept.cpu-millis cpu) held.cpu-millis))
-      TaskUnplacedKind.TASK-COMPARTMENT-FULL
-    True None))
+  (when (is held None)
+    (return TaskUnplacedKind.TASK-NO-COMPARTMENT))
+  (<- mem-over bool (memory-overflow? held used kept need))
+  (<- cpu-over bool (cpu-overflow? held used kept cpu))
+  (if (or mem-over cpu-over) TaskUnplacedKind.TASK-COMPARTMENT-FULL None))
+
+
+(defk top-group-clauses [groups value-index unit]
+  {:pre [(: groups dict) (: value-index int) (: unit str)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "worker 1 台の置いた task の組ごとの本数と申告の和 groups({組: #(本数 memoryMiB cpuMillis)})を、越えた申告の種類(value-index = 1 が memory・
+   2 が CPU)の大きい順・本数の多い順・組の名の順に COMPARTMENT-FULL-TOP-GROUPS 件まで綴るため(0 件なら「置かれた task なし」)。"
+  (when (not groups)
+    (return "置かれた task なし"))
+  (val ranked (sorted (.items groups)
+                      :key (fn [item]
+                             #((- (get (get item 1) value-index)) (- (get (get item 1) 0)) (get item 0)))))
+  (val shown (lfor #(label row) (cut ranked 0 COMPARTMENT-FULL-TOP-GROUPS)
+                   (.format "{} {}本 {}{}" label (get row 0) (get row value-index) unit)))
+  (val rest (- (len ranked) (len shown)))
+  (val parts (if (> rest 0) [#* shown (.format "ほか {} 組" rest)] shown))
+  (.format "組: {}" (.join "・" parts)))
+
+
+(defk overflow-clause [label used-val kept-val task-val limit-val unit groups value-index]
+  {:pre [(: label str) (: used-val int) (: kept-val int) (: task-val int) (: limit-val int) (: unit str) (: groups dict) (: value-index int)]
+   :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "越えた申告の種類 1 つ(memory か CPU)の宣言値・申告和・(在れば取っておき)・この task の申告と、組ごとの内訳を 1 句に綴るため。"
+  (val kept-part (if (> kept-val 0) (.format " + 取っておき {}{}" kept-val unit) ""))
+  (<- group-part str (top-group-clauses groups value-index unit))
+  (.format "{} 申告和 {}{}{} + この task {}{} > 宣言 {}{} ({})"
+           label used-val unit kept-part task-val unit limit-val unit group-part))
+
+
+(defk compartment-full-text [hits group-sums need cpu]
+  {:pre [(: hits tuple) (: group-sums dict) (: need int) (: cpu int)] :post [(: % str)] :tags {:context "coordinator" :role "judgment"}}
+  "TASK-COMPARTMENT-FULL で待つ task の detail を綴るため: 固定の文(task-unplaced-text)の後ろに、置く前の check(compartment-misfit)で
+   当たった worker ごと(#(worker名 held used kept) の tuple — 名の順で決定的)の越えた申告の種類・宣言値と申告和・置いた task の組ごとの
+   本数と申告和(多い順に 3 つまで)を 1 行で添える。置いた task の数え直しはせず、check で使った値と group-sums だけを読む。"
+  (<- base str (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL))
+  (when (not hits)
+    (return base))
+  (val ordered (sorted hits :key (fn [item] (get item 0))))
+  (var worker-parts #())
+  (for [#(w-name held used kept-used) (cut ordered 0 COMPARTMENT-FULL-TOP-WORKERS)]
+    (<- mem-over bool (memory-overflow? held used kept-used need))
+    (<- cpu-over bool (cpu-overflow? held used kept-used cpu))
+    (val w-groups (.get group-sums w-name {}))
+    (var res-parts #())
+    (when mem-over
+      (<- mem-clause str (overflow-clause "memory" used.memory-mib kept-used.memory-mib need held.memory-mib " MiB" w-groups 1))
+      (:= res-parts #(#* res-parts mem-clause)))
+    (when cpu-over
+      (<- cpu-clause str (overflow-clause "CPU" used.cpu-millis kept-used.cpu-millis cpu held.cpu-millis "m" w-groups 2))
+      (:= res-parts #(#* res-parts cpu-clause)))
+    (when res-parts
+      (:= worker-parts #(#* worker-parts (.format "{}: {}" w-name (.join "・" res-parts))))))
+  (when (not worker-parts)
+    (return base))
+  (val rest (- (len ordered) (len worker-parts)))
+  (val shown (if (> rest 0) #(#* worker-parts (.format "ほか {} 台" rest)) worker-parts))
+  (.format "{} [{}]" base (.join "; " shown)))
 
 
 (defk compartment-shortfall [held used need cpu]
@@ -2091,7 +2197,9 @@
   ;; 置く判断はこの 2 つと組の上限だけを読み、測った負荷(CPU の使い・memory の空き・PSI・task ごとの使い)・床・予約を読まない
   ;; (law placement-reads-claims-not-measurements)。
   (val compartments (tasks-compartments-of placed))
-  (<- sums dict (claimed-sums placed compartments peaks))
+  (<- claimed-pair tuple (claimed-totals-and-groups placed compartments peaks))
+  (val sums (get claimed-pair 0))
+  (val group-sums (get claimed-pair 1))
   ;; 取っておき(R6 — worker の名 → この拍に先の門の内の task へ取っておいた申告の和)。門の外の task は読まない。
   (setv kept (dfor name (.keys state.workers) name NOTHING-CLAIMED)
         unkept (dfor name (.keys state.workers) name NOTHING-CLAIMED))
@@ -2105,8 +2213,8 @@
   (for [#(id task) (.items queue)]
     (<- queued-class PlacementClass (placement-class task worker-rows now))
     (setv (get classes id) queued-class))
-  ;; 置けないと判じた入力の答え(入力 → 置けない訳の種類 — 文は task-unplaced-text で作る・None = 文を書かずに待つ)。この拍に task を置いた・取っておいた・場所を譲らせた時に
-  ;; 捨てる(区画の和・組の升・取っておきが変わる)。同じ入力の後ろの task は、捨てるまで worker ごとの和と理由を数え直さずに同じ文で待つ
+  ;; 置けないと判じた入力の答え(入力 → #(置けない訳の種類 理由の文) — None = 文を書かずに待つ)。この拍に task を置いた・取っておいた・場所を譲らせた時に
+  ;; 捨てる(区画の和・組の升・取っておきが変わる)。同じ入力の後ろの task は、捨てるまで worker ごとの和と理由を数え直さずに同じ種類と文で待つ
   ;; (2026-11-12 — 置けない task が数百本溜まると、要求ごとの調停が待っている task の数 × worker の数の数えで主 thread を埋めた)。
   ;; 急ぎの優先の task は場所の譲りの候補(taken)を読むので借りない。
   (val unplaced-verdicts {})
@@ -2120,9 +2228,11 @@
     (when (and (not urgent) (in task-class unplaced-verdicts))
       (val known (get unplaced-verdicts task-class))
       (when (is-not known None)
-        (val known-text (waiting-detail task (! (task-unplaced-text known))))
-        (when (or (!= task.detail known-text) (is-not task.unplaced-kind known))
-          (setv (get writes id) (replace task :detail known-text :unplaced-kind known))))
+        (val known-kind (get known 0))
+        (val known-reason (get known 1))
+        (val known-text (waiting-detail task known-reason))
+        (when (or (!= task.detail known-text) (is-not task.unplaced-kind known-kind))
+          (setv (get writes id) (replace task :detail known-text :unplaced-kind known-kind))))
       (continue))
     (when (= task.phase "queued")
       ;; drain 中の worker には新しい task を置かない(置ける先が他に無ければ、drain が解けるまで待つ — 失敗にはしない)。
@@ -2134,22 +2244,28 @@
       (<- cpu int (task-cpu-of task.limits state.group-limits))
       ;; 門の外の task(ungated)は取っておきを見ない(R6)。
       (val seen-kept (if task.ungated unkept kept))
-      ;; 入る worker(fits)と、入らない worker の理由(misfits)。門の外の task は組の上限の外の worker を、区画の有無によらず和を越えて
-      ;; 置く候補(over)にも数える。
+      ;; 入る worker(fits)と、入らない worker の理由(misfits)。区画の和の越えに当たった worker の check 値(full-hits)は
+      ;; compartment-misfit の呼びの直前の値のまま保持する(下の取っておきの書きで kept が増える前)。門の外の task は組の上限の外の
+      ;; worker を、区画の有無によらず和を越えて置く候補(over)にも数える。
       (var fits #())
       (var over #())
       (var unlimited [])
       (var misfits [])
+      (var full-hits #())
       (for [w able-now]
         (<- by-limits (| TaskUnplacedKind None) (limits-misfit task.limits w.name held state.group-limits))
         (if (is-not by-limits None)
             (:= misfits [#* misfits by-limits])
             (do (:= unlimited [#* unlimited w])
-                (<- misfit (| TaskUnplacedKind None) (compartment-misfit (get compartments w.name) (get sums w.name) (get seen-kept w.name)
-                                                                         need cpu))
+                (val w-held (get compartments w.name))
+                (val w-used (get sums w.name))
+                (val w-kept (get seen-kept w.name))
+                (<- misfit (| TaskUnplacedKind None) (compartment-misfit w-held w-used w-kept need cpu))
                 (cond
                   (is misfit None) (:= fits #(#* fits w))
                   True (do (:= misfits [#* misfits misfit])
+                           (when (is misfit TaskUnplacedKind.TASK-COMPARTMENT-FULL)
+                             (:= full-hits #(#* full-hits #(w.name w-held w-used w-kept))))
                            (when task.ungated (:= over #(#* over w))))))))
       ;; 入る worker の順(R5): 実行環境を準備済みの worker が先(準備を task の待ちに入れない・2026-09-26)、次に宣言の残りの大きい順、
       ;; 同じなら名の順。
@@ -2173,7 +2289,10 @@
                   (get writes next-row.id) next-row)
             (:= taken (| taken (frozenset #(v.task.id))))
             (<- freed ClaimedSum (claimed-plus (get sums yield-worker.name) (- v.memory-mib) (- v.cpu-millis)))
-            (setv (get sums yield-worker.name) freed))
+            (setv (get sums yield-worker.name) freed)
+            (<- v-label str (task-group-label v.task.limits))
+            (<- fewer-groups dict (group-claims-plus (get group-sums yield-worker.name) v-label -1 (- v.memory-mib) (- v.cpu-millis)))
+            (setv (get group-sums yield-worker.name) fewer-groups))
           (:= free [yield-worker])))
       ;; 門の外の task は待たない(R6・law ungated-work-never-waits-for-room): 入る区画も譲らせる先も無ければ、組の上限の外の worker のうち
       ;; 足りなさ(compartment-shortfall — 区画を持たない worker は申告の全部)の最も小さい worker に和を越えて置く。越えた分は GET /state の
@@ -2219,6 +2338,9 @@
                                  "preparing" "assigned"))
                  (<- added ClaimedSum (claimed-plus (get sums chosen.name) need cpu))
                  (setv (get sums chosen.name) added)
+                 (<- t-label str (task-group-label task.limits))
+                 (<- more-groups dict (group-claims-plus (get group-sums chosen.name) t-label 1 need cpu))
+                 (setv (get group-sums chosen.name) more-groups)
                  (<- after-hold dict (hold-limits held task.limits chosen.name state.group-limits))
                  (:= held after-hold)
                  ;; 和と組の升が変わった(場所を譲らせた分も)— 置けないと判じた答えは、後ろの task に貸さない。
@@ -2247,16 +2369,19 @@
                                           (replace task :phase phase :worker chosen.name :started-ms now :unplaced-kind None
                                                    :placed-memory-available-mib seen-available :placed-measured-at-ms seen-at))))
         ;; 置ける worker(drain 中でも disk 尽きでもない)は在るが、どれにも今置けない(区画の和・区画の無さ・組の上限): 失敗にせず待つ。
-        ;; 理由は閉じた語(misfit-reason)の種類と、その固定の文(task-unplaced-text)。種類は文と同じ所で一緒に行へ書く(GET /state の
-        ;; unplacedKind)。既に同じ種類と文なら書き換えない(調停が拍ごとに保存して版を進めない)。
+        ;; 理由は閉じた語(misfit-reason)の種類と文(TASK-COMPARTMENT-FULL は check で使った値から当たった worker・越えた種類・和と宣言・
+        ;; 置いた組の内訳を添える)。種類は文と同じ所で一緒に行へ書く(GET /state の unplacedKind)。既に同じ種類と文なら書き換えない
+        ;; (調停が拍ごとに保存して版を進めない)。
         ;; drain 中・disk 尽きで置ける先が 1 つも無い(able-now が空)時は、今までどおり理由を書かずに待つ(空きの話ではない)。
         able-now
           (let [kind (! (misfit-reason misfits))
-                reason (! (task-unplaced-text kind))
+                reason (if (is kind TaskUnplacedKind.TASK-COMPARTMENT-FULL)
+                           (! (compartment-full-text full-hits group-sums need cpu))
+                           (! (task-unplaced-text kind)))
                 text (waiting-detail task (if (is keeper None) reason (! (kept-text reason keeper.name))))]
             ;; 取っておかずに待つ答えは、同じ入力の後ろの task に貸す(取っておいた時は上で答えを捨てた)。
             (when (and (not urgent) (is keeper None))
-              (setv (get unplaced-verdicts task-class) kind))
+              (setv (get unplaced-verdicts task-class) #(kind reason)))
             (when (or (!= task.detail text) (is-not task.unplaced-kind kind))
               (setv (get writes id) (replace task :detail text :unplaced-kind kind))))
         ;; 準備の一時の失敗の後に、置き直せる別の worker が無い: 最後の失敗で終える。

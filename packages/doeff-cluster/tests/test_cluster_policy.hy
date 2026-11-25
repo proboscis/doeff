@@ -694,12 +694,15 @@
   (val waits (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)))
   (val none (! (room-beside-jobs 0)))
   (val six (! (room-beside-jobs 6)))
-  (assert (= none #(0 3 ["assigned" "assigned" "assigned" "queued"] waits)) none)
-  (assert (= six #(6 3 ["assigned" "assigned" "assigned" "queued"] waits)) six))
+  (assert (= (cut none 0 3) #(0 3 ["assigned" "assigned" "assigned" "queued"])) none)
+  (assert (in waits (get none 3)) none)
+  (assert (= (cut six 0 3) #(6 3 ["assigned" "assigned" "assigned" "queued"])) six)
+  (assert (in waits (get six 3)) six)
+  (assert (= (get none 3) (get six 3)) #(none six)))
 
 (deftest test-a-task-without-room-waits-with-the-same-reason-on-every-reconcile
   ;; 失敗ケース(直す前の形では理由が空のまま待つ): 能力と版の合う生きた worker は在るが、測った空きが 0 で task の空きが 0(常駐の
-  ;; job は空きを使わない)。task は queued のまま、detail に TASK-COMPARTMENT-FULL の固定の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに
+  ;; job は空きを使わない)。task は queued のまま、detail に TASK-COMPARTMENT-FULL の文。次の調停でも同じ文で、状態も版も進めない(拍ごとに
   ;; 保存しない)。
   (val full (! (with-rooms (ClusterState #((! (job "a")) (! (job "b"))) (! (table-from-rows {"mac" (! (reserved "mac" 0 0 0))}))
                                          (! (table-from-rows {"a" (Placement "a" "mac" 1 0) "b" (Placement "b" "mac" 1 0)}))
@@ -707,7 +710,7 @@
   (val once (! (tick full 1000 T)))
   (val waiting (.row once.tasks "t1"))
   (assert (= #(waiting.phase waiting.worker) #("queued" None)) waiting)
-  (assert (= waiting.detail (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL))) waiting.detail)
+  (assert (in (! (task-unplaced-text TaskUnplacedKind.TASK-COMPARTMENT-FULL)) waiting.detail) waiting.detail)
   (val twice (! (tick once 2000 T)))
   (assert (is (.row twice.tasks "t1") waiting) (.row twice.tasks "t1"))
   (assert (= twice.revision once.revision) #(once.revision twice.revision))
