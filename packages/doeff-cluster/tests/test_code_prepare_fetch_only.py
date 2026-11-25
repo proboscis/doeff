@@ -329,14 +329,14 @@ def _seed_via_normal_bake(tmp_path: Path, rig: _Rig, store: Path, share_url: str
 # --- 効果の層: BakeSources 0 回・bytecode_pool 起動 0 回を答え手が数える -------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class _CallLog:
     """取るだけの形の実行で、焼きの効果(BakeSources)と子 process(RunProcess / bytecode_pool)と報告の行を数える記録。"""
 
-    bake_calls: int = 0
-    process_calls: int = 0
-    pool_launches: int = 0
-    notes: list[str] = field(default_factory=list)
+    bake_calls: int
+    process_calls: int
+    pool_launches: int
+    notes: tuple[str, ...]
 
 
 class _OutcomeView(Protocol):
@@ -349,12 +349,18 @@ class _OutcomeView(Protocol):
     problem: str | None
 
 
+@dataclass(frozen=True)
+class _EffectRun:
+    outcomes: tuple[_OutcomeView, ...]
+    log: _CallLog
+
+
 def _run_prepare_fetch_only(
     tree: Path,
     store: Path,
     share_file: Path | None,
     monkeypatch: pytest.MonkeyPatch,
-) -> tuple[tuple[_OutcomeView, ...], _CallLog]:
+) -> _EffectRun:
     """prepare_trees(..., fetch_only=True) を本物の store_fetcher と、BakeSources・RunProcess を数える答え手で回す。"""
     for mod in ("mac", "mac.macros", "use", "use.user", "imp", "imp.importer", "other", "other.plain"):
         monkeypatch.delitem(sys.modules, mod, raising=False)
@@ -363,21 +369,24 @@ def _run_prepare_fetch_only(
     else:
         monkeypatch.setenv("DOEFF_HY_CODE_SHARE", str(share_file))
 
-    log = _CallLog()
+    bakes: list[int] = []
+    processes: list[int] = []
+    pools: list[int] = []
+    notes: list[str] = []
 
     @handler
     def counting_bake(effect: object, k: K) -> object:
         if isinstance(effect, cp.BakeSources):
-            log.bake_calls += 1
+            bakes.append(1)
             return (yield Resume(k, cp.plan.BakeAnswer(failed=(), stored=(), reused=(), unstored=())))
         yield Pass(effect, k)
 
     @handler
     def counting_process(effect: object, k: K) -> object:
         if isinstance(effect, RunProcess):
-            log.process_calls += 1
+            processes.append(1)
             if any("bytecode_pool" in str(part) for part in effect.argv):
-                log.pool_launches += 1
+                pools.append(1)
             out = yield effect
             return (yield Resume(k, out))
         yield Pass(effect, k)
@@ -385,7 +394,7 @@ def _run_prepare_fetch_only(
     @handler
     def collect_slog(effect: object, k: K) -> object:
         if isinstance(effect, Slog):
-            log.notes.append(str(effect.msg))
+            notes.append(str(effect.msg))
             return (yield Resume(k, None))
         yield Pass(effect, k)
 
@@ -416,7 +425,10 @@ def _run_prepare_fetch_only(
     )
     assert isinstance(result, tuple), result
     outcomes: tuple[_OutcomeView, ...] = result
-    return outcomes, log
+    return _EffectRun(
+        outcomes=outcomes,
+        log=_CallLog(bake_calls=len(bakes), process_calls=len(processes), pool_launches=len(pools), notes=tuple(notes)),
+    )
 
 
 def test_a_effect_fetch_only_all_present_calls_zero_bakes_and_zero_pool_launches(
@@ -428,7 +440,8 @@ def test_a_effect_fetch_only_all_present_calls_zero_bakes_and_zero_pool_launches
     _write_four(tree, tmp_path.name)
     share_file = _write_share_file(tmp_path / "share.cfg", share.url, rig.keys)
 
-    outcomes, log = _run_prepare_fetch_only(tree, store, share_file, monkeypatch)
+    ran = _run_prepare_fetch_only(tree, store, share_file, monkeypatch)
+    outcomes, log = ran.outcomes, ran.log
 
     assert log.bake_calls == 0, f"BakeSources was called {log.bake_calls} times"
     assert log.pool_launches == 0, log.pool_launches
@@ -453,7 +466,8 @@ def test_b_effect_fetch_only_missing_file_calls_zero_bakes_and_zero_pool_launche
     tree = tmp_path / "target" / "app"
     _write_four(tree, tmp_path.name, importer=99, plain=88)
 
-    outcomes, log = _run_prepare_fetch_only(tree, store, None, monkeypatch)
+    ran = _run_prepare_fetch_only(tree, store, None, monkeypatch)
+    outcomes, log = ran.outcomes, ran.log
 
     assert log.bake_calls == 0, f"BakeSources was called {log.bake_calls} times"
     assert log.pool_launches == 0, log.pool_launches
@@ -477,7 +491,8 @@ def test_c_effect_fetch_only_share_unusable_calls_zero_bakes_and_zero_pool_launc
     _write_four(tree, tmp_path.name)
     share_file = _write_share_file(tmp_path / "share.cfg", share.url, rig.keys)
 
-    outcomes, log = _run_prepare_fetch_only(tree, store, share_file, monkeypatch)
+    ran = _run_prepare_fetch_only(tree, store, share_file, monkeypatch)
+    outcomes, log = ran.outcomes, ran.log
 
     assert log.bake_calls == 0, f"BakeSources was called {log.bake_calls} times"
     assert log.pool_launches == 0, log.pool_launches
