@@ -27,12 +27,14 @@
 (import doeff [Program])
 (import doeff_core_effects [ReadText FileFailed])
 (import doeff_core_effects [ProcRow ReadProcTable SignalPid])
-(import doeff_cluster._worker.core.memory_rules [JobRoot MIB])
+(import doeff_cluster._worker.core.memory_rules [JobRoot MIB TASK-PREFIX])
 (import doeff_cluster._worker.protocol.observations [ObserveJobRoots])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings])
 
 ;; 群れの子 process の pid の始まり(sim の job の pid — NextPid の 1 から — と重ならない大きさ)。
 (val FLOOD-BASE-PID 10000000)
+;; guard を真で回す模擬の見張りが task の根の下に置く子 process の pid の始まり(本番の shim の下の task 本体の代役)。
+(val TASK-CHILD-BASE-PID 5000000)
 
 
 (defrecord SimProcFlood
@@ -49,25 +51,30 @@
   "SimWorker の memory-watch(頭の註): floods = 子 process の群れ(SimProcFlood の列)・sample-seconds = 読みの間隔(仮想の秒・本番の
    MemoryWatchSettings の既定と同じ 5 秒)・cpu-limit-seconds = 1 回の読みの CPU の上限(越えた読みは切って、終わらない読みとして
    unfinished-stall-seconds の間 worker を止める)・stall-floor-seconds = 止まりに換える手間の下限(未満の手間は記録だけ — 仮想の時計を
-   CPU の揺れで揺らさない)・unfinished-stall-seconds = 上限を越えた読みに載せる止まり(本番の何十分に当たる — 既定 1 時間)。"
+   CPU の揺れで揺らさない)・unfinished-stall-seconds = 上限を越えた読みに載せる止まり(本番の何十分に当たる — 既定 1 時間)・
+   guard = DANGER で止めるか(既定 False = 群れの読みの手間の検のため止めない。True = task の根の下に子を置き、DANGER で SignalPid を
+   送った task を止めて記録する)。"
   {:check [(> sample-seconds 0) (> cpu-limit-seconds 0) (>= stall-floor-seconds 0) (> unfinished-stall-seconds 0)]}
   (setv #^ (get tuple #(SimProcFlood ...)) floods #())
   (setv #^ float sample-seconds 5.0)
   (setv #^ float cpu-limit-seconds 10.0)
   (setv #^ float stall-floor-seconds 1.0)
-  (setv #^ float unfinished-stall-seconds 3600.0))
+  (setv #^ float unfinished-stall-seconds 3600.0)
+  (setv #^ bool guard False))
 
 
 (defrecord SimMemoryRead
   "模擬の見張りの 1 回の読みの記録(頭の註): worker・boot = 世代・at = 読んだ刻(epoch ms)・rows = 表の行数・cpu-seconds = 1 回の CPU の
-   秒(上限を越えた読みは切った所までの秒)・finished = 上限の内で終わったか・stalled-ms = worker の処理の止まりに載せた ms(0 = 載せない)。"
+   秒(上限を越えた読みは切った所までの秒)・finished = 上限の内で終わったか・stalled-ms = worker の処理の止まりに載せた ms(0 = 載せない)・
+   killed = その回に見張りが DANGER で止めた job の名の列(guard が偽なら空)。"
   (#^ str worker)
   (#^ str boot)
   (#^ int at)
   (#^ int rows)
   (#^ float cpu-seconds)
   (#^ bool finished)
-  (#^ int stalled-ms))
+  (#^ int stalled-ms)
+  (setv #^ (get tuple #(str ...)) killed #()))
 
 
 (defclass ReadOverLimit [BaseException]  ; class にする理由: 上限の信号で純な計算を切る例外の型(見張りの loop の except Exception に捕まらない — 欄も状態も足さない)
@@ -76,18 +83,30 @@
 
 (defk sim-watch-settings [watch]
   {:pre [(: watch SimMemoryWatch)] :post [(: % MemoryWatchSettings)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "模擬の見張りの設定(頭の註の本番との差): 本番の既定のまま、読みの間隔を watch に合わせ、止めない(guard を偽)。"
-  (MemoryWatchSettings :sample-seconds watch.sample-seconds :guard False))
+  "模擬の見張りの設定: 本番の既定(MemoryLimits の danger-available を含む)のまま、読みの間隔と guard を watch に合わせる。"
+  (MemoryWatchSettings :sample-seconds watch.sample-seconds :guard watch.guard))
 
 
-(defk sim-proc-rows [roots task-rss-bytes floods]
-  {:pre [(: roots tuple) (: task-rss-bytes int) (: floods tuple)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk sim-proc-rows [roots task-rss-bytes floods * [task-children False]]
+  {:pre [(: roots tuple) (: task-rss-bytes int) (: floods tuple) (: task-children bool)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "judgment"}}
   "process の表(ProcRow の列・pid の昇順)を作るため: 生きている job の根 roots(JobRoot の列 — 表の頭・rss は task-rss-bytes)・群れ
-   floods の子(その job の根の直下 — 根が無い群れは出さない。job の根が 2 つ在れば最初の根に置く)。container の頭(本番の tini)は
-   置かない — sim の job の pid は 1 から振られ、頭の pid 1 と重なると木が自分を親に持つ輪になる。"
+   floods の子(その job の根の直下 — 根が無い群れは出さない。job の根が 2 つ在れば最初の根に置く)。task-children が真の時は task の根の
+   直下に子 process(pid = TASK-CHILD-BASE-PID + 根の pid・rss = task-rss-bytes、根自身は 0)を置き、本番の shim + task 本体の木と同じく
+   units-of-job が TASK の止める単位を拾える形にする。container の頭(本番の tini)は置かない — sim の job の pid は 1 から振られ、
+   頭の pid 1 と重なると木が自分を親に持つ輪になる。"
   (val heads (dict (gfor root (reversed roots) #(root.name root.pid))))
-  (val base (tuple (sorted (gfor root roots (ProcRow :pid root.pid :ppid 0 :start-ticks root.pid :rss-bytes task-rss-bytes :comm "python"))
+  (val base (tuple (sorted (gfor root roots
+                                 (ProcRow :pid root.pid :ppid 0 :start-ticks root.pid
+                                          :rss-bytes (if (and task-children (.startswith root.name TASK-PREFIX)) 0 task-rss-bytes)
+                                          :comm "python"))
                            :key (fn [row] row.pid))))
+  (val children (if task-children
+                    (tuple (sorted (gfor root roots :if (.startswith root.name TASK-PREFIX)
+                                         (ProcRow :pid (+ TASK-CHILD-BASE-PID root.pid) :ppid root.pid
+                                                  :start-ticks (+ TASK-CHILD-BASE-PID root.pid)
+                                                  :rss-bytes task-rss-bytes :comm "python"))
+                                   :key (fn [row] row.pid)))
+                    #()))
   (var next-pid FLOOD-BASE-PID)
   (var flooded [])
   (for [flood floods]
@@ -97,7 +116,7 @@
                              (ProcRow :pid (+ next-pid n) :ppid head :start-ticks (+ next-pid n) :rss-bytes flood.child-rss-bytes
                                       :comm flood.comm)))
       (:= next-pid (+ next-pid flood.children))))
-  (+ base (tuple flooded)))
+  (+ base children (tuple flooded)))
 
 
 (defk sim-meminfo-text [total-mib available-mib]
@@ -106,11 +125,11 @@
   (.format "MemTotal:       {} kB\nMemFree:        {} kB\nMemAvailable:   {} kB\n" (* total-mib 1024) (* available-mib 1024) (* available-mib 1024)))
 
 
-(defhandler sim-watch-answers [#^ MemoryWatchSettings settings #^ str meminfo #^ tuple roots #^ tuple rows]
+(defhandler sim-watch-answers [#^ MemoryWatchSettings settings #^ str meminfo #^ tuple roots #^ tuple rows #^ (| list None) [killed None]]
   {:tags {:context "doeff-cluster" :role "foundation"}}
   ;; 引数に残す理由: 表と file は読みごとに宿の真実から作る値(読み 1 回の世界そのもの)で、Ask で読む設定ではない。
   ;; 見張りの 1 回の effect に答える(頭の註): /proc/meminfo は meminfo・PSI と container の cgroup の file は無い・job の根は roots・表は rows。
-  ;; 止め(SignalPid)は模擬の見張りに無い(guard を偽で回す — 届けば設定の壊れなので名指して断る)。
+  ;; guard が偽(killed が None)の時は SignalPid を設定の壊れとして断り、guard が真(killed が list)の時は送られた pid を記録して True を返す。
   (ReadText [path]
     (resume (if (= path settings.meminfo-path)
                 meminfo
@@ -120,7 +139,10 @@
   (ObserveJobRoots []
     (resume roots))
   (SignalPid [pid start-ticks signal]
-    (raise (RuntimeError (.format "模擬の見張りは止めない(guard を偽で回す)のに SignalPid が届いた: pid {}" pid)))))
+    (if (is killed None)
+        (raise (RuntimeError (.format "模擬の見張りは止めない(guard を偽で回す)のに SignalPid が届いた: pid {}" pid)))
+        (do (.append killed pid)
+            (resume True)))))
 
 
 (defk limited-cpu-seconds [body cpu-limit-seconds]

@@ -11,7 +11,7 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed preempted-detached])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._coordinator.protocol.replies [task-summary])
 (import doeff_hy._table [Table table-of])
@@ -24,7 +24,7 @@
 (val NOW 100000)
 ;; 測りの刻は置く拍より前(heartbeat の後に置き先が回る)。
 (val MEASURED-AT 98500)
-(val AVAILABLE-MIB (+ MEMORY-FLOOR-MIB 20000))
+(val AVAILABLE-MIB (+ (memory-floor-mib 128000) 20000))
 
 
 ;; 測った空きが床の上 20000 MiB の node-a(CPU は空き)。

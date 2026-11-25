@@ -22,7 +22,7 @@
 (import dataclasses [replace])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad StatusRow])
 (import doeff_cluster._coordinator.intent.cluster_model [WorkerReport ClusterObservations])
-(import doeff_cluster._coordinator.core.measured_room [measured-room memory-room-mib reserve-of task-cap-of unseen-since TASK-RAMP-MS
+(import doeff_cluster._coordinator.core.measured_room [measured-room memory-room-mib memory-floor-mib reserve-of task-cap-of unseen-since TASK-RAMP-MS
                                                         layer-floor-of])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text state-view load-of])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
@@ -76,16 +76,17 @@
 
 
 (deftest test-the-room-is-the-smallest-of-the-measured-cpu-memory-slots-and-cap
-  ;; CPU 16 個・使い 0.25 → 空いた CPU 12 − 残す 1 = 11・memory の空き 7168 − 1536 − 予約 0 = 5632 MiB → 枠 5・上限 16 − 置いた 3 = 13。
+  ;; CPU 16 個・使い 0.25 → 空いた CPU 12 − 残す 1 = 11・memory の空き (床 + 5632) − 床(65536 の DANGER の線 6554) − 予約 0 = 5632 MiB → 枠 5・上限 16 − 置いた 3 = 13。
   ;; 測りにまだ出ていない 1 本は CPU の空きからだけ引く(memory はその task の要りを予約が引いている)→ 5(memory が決める)。
-  (<- by-memory-slots int (measured-room (! (load 16 0.25 7168)) 3 1 0))
-  (<- left int (memory-room-mib (! (load 16 0.25 7168)) 0))
+  (val available-five (+ (memory-floor-mib 65536) 5632))
+  (<- by-memory-slots int (measured-room (! (load 16 0.25 available-five)) 3 1 0))
+  (<- left int (memory-room-mib (! (load 16 0.25 available-five)) 0))
   (assert (= #(by-memory-slots left) #(5 5632)))
   ;; memory が広ければ CPU が決める: 11 − 1 = 10。
   (<- by-cpu int (measured-room (! (load 16 0.25 60000)) 3 1 0))
   (assert (= by-cpu 10))
   ;; 置いた task の予約(まだ伸びる分)が memory の空きを食い尽くした機体は、CPU が空いていても 0。
-  (<- by-memory int (measured-room (! (load 16 0.25 7168)) 3 1 5632))
+  (<- by-memory int (measured-room (! (load 16 0.25 available-five)) 3 1 5632))
   (assert (= by-memory 0))
   ;; 空いた機体でも CPU の数より多くは置かない: CPU 4 個・使い 0 → CPU の空き 3 だが、上限 4 − 置いた 3 = 1。
   (<- by-cap int (measured-room (! (load 4 0.0 60000)) 3 0 0))

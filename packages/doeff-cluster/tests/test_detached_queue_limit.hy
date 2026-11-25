@@ -18,7 +18,7 @@
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad TaskBody])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-lapse-at submit-task])
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached outbox-noted])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB CPU-PRESSURE-STOP])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib CPU-PRESSURE-STOP])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._shared.core.detached_rules [task-queue-limit-refusal task-queue-limit-json])
 (import doeff_hy._table [table-of])
@@ -45,7 +45,7 @@
   "刻 now に生きていて、測った空きが 0 の node-a を作るため(門の内の task はここで queued のまま待つ)。"
   (WorkerInfo "node-a" #("host-node-a") now :versions PY3
               :measured (MeasuredLoad :at-ms now :cpus 8 :cpu-busy 1.0 :memory-total-MiB 16384
-                                      :memory-available-MiB (- MEMORY-FLOOR-MIB 512)
+                                      :memory-available-MiB (- (memory-floor-mib 16384) 512)
                                       :cpu-some-avg10 (+ CPU-PRESSURE-STOP 50.0) :memory-some-avg10 60.0)))
 
 

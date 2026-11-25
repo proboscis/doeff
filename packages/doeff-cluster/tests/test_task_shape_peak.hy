@@ -17,7 +17,7 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion TaskUnplacedKind])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text task-peaks-noted shape-peaks-of PEAK-STEP-MIB])
-(import doeff_cluster._coordinator.core.measured_room [learned-need ShapePeak MEMORY-FLOOR-MIB SHAPE-PEAK-MARGIN])
+(import doeff_cluster._coordinator.core.measured_room [learned-need ShapePeak memory-floor-mib SHAPE-PEAK-MARGIN])
 (import math [ceil])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._shared.core.detached_rules [task-shape-refusal task-placing-json TASK-SHAPE-MAX-LENGTH])
@@ -55,13 +55,13 @@
   "node-h に伸びた task grown(None = 無い)が居て、node-h の名乗る空きが NODE-H-ROOM-MIB の時に、node-h でしか走れない形 queued-shape の task next を
    1 拍で置いた task の表を知るため。"
   (val uses (if (is grown None) {} {grown.id GROWN-MIB}))
-  (val node-h (WorkerInfo "node-h" #("host-node-h") 0 :versions PY3 :measured (! (measured (+ NODE-H-ROOM-MIB MEMORY-FLOOR-MIB) uses))))
+  (val node-h (WorkerInfo "node-h" #("host-node-h") 0 :versions PY3 :measured (! (measured (+ NODE-H-ROOM-MIB (memory-floor-mib NODE-H-LINE-MIB)) uses))))
   (<- workers (table-from-rows {"node-h" node-h}))
   (<- next TaskRecord (task-of "next" #("host-node-h") queued-shape))
   (<- rows (table-from-rows (| {"next" next} (if (is grown None) {} {grown.id grown}))))
   (<- none (table-from-rows {}))
   ;; node-h の tasks 区画は、伸びた task の分と名乗る空きの和(区画の和は伸びた task の申告を数える — ADR-DOE-CLUSTER-005 R5)。
-  (<- compartments Table (compartments-like-rooms {"node-h" (replace node-h :measured (! (measured (+ NODE-H-ROOM-MIB GROWN-MIB MEMORY-FLOOR-MIB) {})))}))
+  (<- compartments Table (compartments-like-rooms {"node-h" (replace node-h :measured (! (measured (+ NODE-H-ROOM-MIB GROWN-MIB (memory-floor-mib NODE-H-LINE-MIB)) {})))}))
   (val state (ClusterState #() workers none rows :machine-compartments compartments))
   (! (tasks-placed 1000 state state.placements T)))
 
@@ -179,7 +179,7 @@
   (val done (replace base :phase "finished" :worker "node-h" :started-ms 0 :finished-ms 500 :retain-ms 86400000 :peak-mib 882))
   (<- next TaskRecord (task-of "next" #("host-node-h") SHAPE))
   (val big (replace next :memory-mib 12000))
-  (val node-h (WorkerInfo "node-h" #("host-node-h") 0 :versions PY3 :measured (! (measured (+ NODE-H-ROOM-MIB MEMORY-FLOOR-MIB) {}))))
+  (val node-h (WorkerInfo "node-h" #("host-node-h") 0 :versions PY3 :measured (! (measured (+ NODE-H-ROOM-MIB (memory-floor-mib NODE-H-LINE-MIB)) {}))))
   (<- workers (table-from-rows {"node-h" node-h}))
   (<- rows (table-from-rows {"done" done "next" big}))
   (<- none (table-from-rows {}))

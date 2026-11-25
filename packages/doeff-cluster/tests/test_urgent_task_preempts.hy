@@ -17,7 +17,7 @@
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad TaskBody])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB KEEP-NOW-PRIORITY])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib KEEP-NOW-PRIORITY])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._shared.core.detached_rules [task-preemptible-refusal task-preemptible-json])
 (import doeff_cluster._worker.core.memory_rules [KillUnit JobUse MemoryLimits MIB UnitKind URGENT-PRIORITY victim-of])
@@ -44,7 +44,7 @@
   "memory の空きが床の上 ROOM-MIB の node-a を作るため(CPU は空き・PSI は低い)。uses = 測りの名乗る task ごとの今の使い(MiB)。"
   (WorkerInfo "node-a" #("host-node-a") NOW :versions PY3
               :measured (MeasuredLoad :at-ms NOW :cpus 8 :cpu-busy 0.1 :memory-total-MiB 16384
-                                      :memory-available-MiB (+ MEMORY-FLOOR-MIB ROOM-MIB) :task-memory-MiB uses)))
+                                      :memory-available-MiB (+ (memory-floor-mib 16384) ROOM-MIB) :task-memory-MiB uses)))
 
 
 (defk queued [id priority * [memory-mib None] [ungated False] [limits #()]]

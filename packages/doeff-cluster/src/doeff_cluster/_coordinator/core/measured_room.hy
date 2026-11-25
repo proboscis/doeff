@@ -11,7 +11,7 @@
 ;;;   普通の使い     = cpu-busy − cpu-nice(nice > 0 の process の分を除いた CPU の使い — normal-busy-of)
 ;;;   memory の枠    = ⌊memory の空き / MEMORY-SLOT-MIB⌋(予約の半分ずつの守りが数で読むための単位 — task の大きさの見込みではない)
 ;;;   上限           = ⌊cpus / TASK-CORES⌋(task-cap-of — 測りが遅れても CPU の数より多くは置かない)
-;;;   memory の空き  = min(memory-available − MEMORY-FLOOR-MIB, jobs の層の空き − JOBS-ROOM-FLOOR-MIB)
+;;;   memory の空き  = min(memory-available − memory-floor-mib, jobs の層の空き − JOBS-ROOM-FLOOR-MIB)
 ;;;                    − Σ 置いた task の max(0, 要り − 今の使い)(MiB — memory-room-mib。jobs の層の空きを名乗らない worker は前の項だけ)
 ;;;   まだ測りに出ていない task = 置いた task のうち、測った空きを載せた同じ heartbeat の状態の報告で動いていない物と、測った刻 −
 ;;;                               TASK-RAMP-MS より後に置いた物(置いた直後・走り出した直後の task は CPU をまだ使いきっていない —
@@ -114,7 +114,7 @@
 ;;; 急ぎでない task が queued のまま待った。同じ形の急ぎの task も同じに待つ)。線が空きを縮めている間、worker は線を外して追い出しの線
 ;;; だけで数えた空き(urgent-memory-available-MiB・urgent-jobs-room-MiB)も名乗る。優先 KEEP-NOW-PRIORITY 以上の task の memory の空きは
 ;;; その値で数え(memory-room-mib の urgent)、ほかの task は今までどおり線の上の空きで数える。名乗らない worker(線が縮めていない・前の版)は
-;;; 急ぎの task も平常の空きで数える。追い出しの線の手前の余裕(MEMORY-FLOOR-MIB・JOBS-ROOM-FLOOR-MIB)はどちらにも掛ける。
+;;; 急ぎの task も平常の空きで数える。追い出しの線の手前の余裕(memory-floor-mib・JOBS-ROOM-FLOOR-MIB)はどちらにも掛ける。
 ;;;
 ;;; 測った空きの門の外の task(2026-11-11): 版の入れ替えのような、混んだ時ほど要る task は、機体の空きを待つと
 ;;; 混みが解けるまで当たらない(急ぎの優先と取っておきでも、空きの判じそのものは残る — 線を外した空きも、要りが入るまで置かない。
@@ -164,7 +164,7 @@
 ;;;
 ;;; 優先 0 以上の task と背景の仕事(負の優先の task)の取り分の守り(cluster_policy.task-misfit)は、予約(reserve-of = 上限 /
 ;;; RESERVE-SHARE)を半分ずつに分けて読む。RESERVE-SHARE は、36 core の機体の予約が手で書いていた 6(半分ずつ 3)と同じになる値。
-(require doeff-hy.macros [defk val])
+(require doeff-hy.macros [defk deff val])
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [dataclass])  ; defrecord の展開が名指す
@@ -172,6 +172,8 @@
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 ;; 形ごとの測った山の型は task の表の索引と分け合う(task_table — 索引が形ごとの山を書きのたびに持ち続ける)。
 (import doeff_cluster._coordinator.intent.task_table [ShapePeak])
+;; memory の床は worker の見張りの DANGER の線(線の大きさ × danger-available)の 1 か所から導く(固定の写しを持たない)。
+(import doeff_cluster._shared.core.memory_limits [danger-line-mib])
 
 ;; task 1 本に見込む CPU の数。会話の test や build の 1 本は、混んでいない機体で CPU 1 つ前後を使う。
 (val TASK-CORES 1)
@@ -181,11 +183,9 @@
 ;; 数の空きの memory の単位(MiB)。予約の半分ずつの守り(cluster_policy.task-misfit)は空きを数で読むので、memory の空き(要りの予約を
 ;; 引いた MiB)もこの単位で数に写す。task を置けるかは要りと memory の空きの MiB で比べる(この単位で task の大きさを見込まない)。
 (val MEMORY-SLOT-MIB 1024)
-;; 機体に残す空いた CPU と memory。CPU は常駐の job の揺れと、測りの間の増えの分。memory はその 512 MiB に、worker が jobs の層の上限で
-;; 追い出しの線の手前に残す余裕 1024 MiB(worker/core/eviction_rules の EVICTION-MARGIN-BYTES — 宣言の無い機体の余裕で、task を受ける
-;; 機体の宣言の値の最大〔node-a〕。task は追い出しまでの空きからこの余裕を引いた分までしか使えない)を足した値。
+;; 機体に残す空いた CPU。常駐の job の揺れと、測りの間の増えの分。
+;; memory の床は固定の数を置かず、下の memory-floor-mib で worker の見張りの DANGER の線(線の大きさ × danger-available)から導く。
 (val CPU-FLOOR-CORES 1)
-(val MEMORY-FLOOR-MIB 1536)
 ;; jobs の層の空きに残す量(MiB — 頭の註の jobs の層の空き)。worker は層の上限を 5 秒ごとに掛け直し、ほかの層や Pod の伸びで上限は回ごとに
 ;; 数百 MiB 動く(node-a の 11-08 14:09〜14:15 は 3298 → 2852 → 1962 MiB)。置いた直後の task の伸びが次の回の縮みと重なっても層に収まる分。
 (val JOBS-ROOM-FLOOR-MIB 512)
@@ -311,10 +311,18 @@
   (max 0 (- need (or use 0))))
 
 
+(deff memory-floor-mib [#^ int total-mib]  ; cannot be a defk: sim の区画の宣言と検の fixture(Program の外)が coordinator と同じ床を読む
+  {:pre [(: total-mib int) (>= total-mib 0)] :post [(: % int) (>= % 0)]
+   :tags {:context "coordinator" :role "judgment"}}
+  "worker の線の大きさ total-mib(MiB)から、機体に残す memory の床(MiB)を導くため: worker の見張りの DANGER の線
+   (danger-line-mib = ⌈total-mib × danger-available⌉)。固定の数の写しを持たず、worker の MemoryLimits の 1 か所から読む。"
+  (danger-line-mib total-mib))
+
+
 (defk memory-room-mib [measured reserved * [urgent False] [lend False]]
   {:pre [(: measured (| MeasuredLoad None)) (: reserved int) (: urgent bool) (: lend bool)] :post [(: % int)]
    :tags {:context "coordinator" :role "judgment"}}
-  "worker に新しく置ける task の要りの最大(MiB)を知るため: min(測った memory の空き − MEMORY-FLOOR-MIB, jobs の層の空き −
+  "worker に新しく置ける task の要りの最大(MiB)を知るため: min(測った memory の空き − memory-floor-mib, jobs の層の空き −
    JOBS-ROOM-FLOOR-MIB)− reserved(置いた task の reserved-mib-of の和)。jobs の層の空きを名乗らない worker は前の項だけ(頭の註の
    jobs の層の空き)。urgent = 急ぎの優先の task の空きか(urgent-priority? — 頭の註の急ぎの task の空き): 真なら、worker が上に載る系の
    残す線を外して名乗った 2 つの空き(名乗らない欄は平常の空き)で数える。lend = 借りの空きか(頭の註の線の内の貸し): 真なら、worker が
@@ -330,7 +338,7 @@
                    (and urgent (is-not measured.urgent-jobs-room-MiB None)) measured.urgent-jobs-room-MiB
                    (and lend (is-not measured.lend-jobs-room-MiB None)) measured.lend-jobs-room-MiB
                    True measured.jobs-room-MiB))
-  (val line-room (- available MEMORY-FLOOR-MIB))
+  (val line-room (- available (memory-floor-mib measured.memory-total-MiB)))
   (val room (if (is jobs-room None) line-room (min line-room (- jobs-room JOBS-ROOM-FLOOR-MIB))))
   (- room reserved))
 
@@ -349,8 +357,8 @@
 (defk memory-line-mib [measured]
   {:pre [(: measured (| MeasuredLoad None))] :post [(: % (| int None))] :tags {:context "coordinator" :role "judgment"}}
   "worker が空いた時に受けうる task の要りの最大(MiB)を知るため: 名乗った memory の総量(kubelet の下の worker は追い出しの線の大きさ)
-   − MEMORY-FLOOR-MIB。測りの無い worker は None(判じない)。積む時の断り(detached_policy の memory-need-refusal)が読む。"
-  (if (is measured None) None (- measured.memory-total-MiB MEMORY-FLOOR-MIB)))
+   − memory-floor-mib。測りの無い worker は None(判じない)。積む時の断り(detached_policy の memory-need-refusal)が読む。"
+  (if (is measured None) None (- measured.memory-total-MiB (memory-floor-mib measured.memory-total-MiB))))
 
 
 (defk measured-room [measured placed unseen reserved * [urgent False] [lend False]]

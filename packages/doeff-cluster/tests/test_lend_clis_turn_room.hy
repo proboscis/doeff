@@ -16,7 +16,7 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB JOBS-ROOM-FLOOR-MIB])
+(import doeff_cluster._coordinator.core.measured_room [JOBS-ROOM-FLOOR-MIB])
 (import doeff_cluster._worker.core.memory_rules [MIB JobUse])
 (import doeff_cluster._worker.core.eviction_rules [CLI-TURN-BYTES CLIS-ROOM-SHARE clis-limit clis-lend-limit clis-reclaim task-needs-of])
 (import doeff_cluster._worker.core.load_rules [clis-room-lend])

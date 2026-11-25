@@ -186,7 +186,7 @@
 (import doeff_cluster._shared.intent.process_model [AwaitProcessEnded ProcessEnded ProcessWaitExpired])
 (import doeff_cluster._coordinator.core.cluster_policy [fresh-task-prefix])
 (import doeff_cluster._shared.intent.compartment_model [Compartment MachineCompartments])
-(import doeff_cluster._coordinator.core.measured_room [CPU-FLOOR-CORES MEMORY-FLOOR-MIB])
+(import doeff_cluster._coordinator.core.measured_room [CPU-FLOOR-CORES memory-floor-mib])
 (import doeff_hy._table [Table TableWrite table-of])
 (import doeff_cluster._coordinator.core.program [run-coordinator])
 (import doeff_cluster._coordinator.entry.main [load-state with-running-commit])
@@ -227,7 +227,7 @@
 (import doeff_cluster._worker.protocol.drain_requests [drain-request])
 (import doeff_cluster._worker.core.memory_rules [JobRoot JobMeter MIB])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-step])
-(import doeff_cluster._sim.memory_watch_world [SimMemoryWatch SimMemoryRead sim-watch-settings sim-proc-rows sim-meminfo-text sim-watch-answers
+(import doeff_cluster._sim.memory_watch_world [SimMemoryWatch SimMemoryRead TASK-CHILD-BASE-PID sim-watch-settings sim-proc-rows sim-meminfo-text sim-watch-answers
                                               limited-cpu-seconds])
 (import doeff_cluster._worker.protocol.declared [DeclaredReply declared-reply-of-json declared-job-specs task-specs] doeff_cluster._worker.protocol.heartbeat [heartbeat-body status-report env-report env-heartbeat-part] doeff_cluster._worker.core.heartbeat_rules [desired-when-unreachable warm-env-of-row])
 (import doeff_cluster._worker.core.beat_policy [WatchKind WatchReading beat-interval-ms heartbeat-due watch-reading reply-revision
@@ -2854,17 +2854,25 @@
                  (:= meminfo text)
                  (:= task-bytes (* machine.task-mib MIB)))
                ;; 表は上限の時計の外で作る(手間に数えるのは見張りの 1 回だけ — 本番の /proc の読みは os_proc_table の答え手の手間)。
-               (<- rows tuple (sim-proc-rows roots task-bytes watch.floods))
-               (<- spent tuple (limited-cpu-seconds (with-handlers [(sim-watch-answers settings meminfo roots rows) slog-discard-handler]
+               (<- rows tuple (sim-proc-rows roots task-bytes watch.floods :task-children watch.guard))
+               (val killed-pids (if watch.guard [] None))
+               (<- spent tuple (limited-cpu-seconds (with-handlers [(sim-watch-answers settings meminfo roots rows killed-pids) slog-discard-handler]
                                                        (memory-watch-step settings cell))
                                                      watch.cpu-limit-seconds))
+               (val killed-set (if (is killed-pids None) (frozenset) (frozenset killed-pids)))
+               (val killed-roots (tuple (gfor root roots :if (or (in root.pid killed-set) (in (+ TASK-CHILD-BASE-PID root.pid) killed-set)) root)))
+               (for [root killed-roots]
+                 (<- handle (| Task None) (HandleOf root.pid))
+                 (when (is-not handle None)
+                   (<- (Cancel handle))))
+               (val killed-jobs (tuple (gfor root killed-roots root.name)))
                (val seconds (get spent 0))
                (val finished (get spent 1))
                (val stall-seconds (cond (not finished) watch.unfinished-stall-seconds
                                         (>= seconds watch.stall-floor-seconds) seconds
                                         True 0.0))
                (<- (NoteMemoryRead (SimMemoryRead :worker worker.name :boot boot :at now :rows (len rows) :cpu-seconds seconds
-                                                  :finished finished :stalled-ms (int (* 1000 stall-seconds)))))
+                                                  :finished finished :stalled-ms (int (* 1000 stall-seconds)) :killed killed-jobs)))
                (<- (Delay watch.sample-seconds)))))
   boot)
 
@@ -3054,13 +3062,13 @@
   {:pre [(: workers tuple)] :post [(: % Table)] :tags {:context "doeff-cluster" :role "judgment"}}
   "sim の worker が載る機体の区画の宣言(資源 MachineCompartments の表 — ADR-DOE-CLUSTER-005 R1)を、本番の site の宣言の代役として
    作るため: 機体(SimMachine)の在る worker ごとに tasks 区画 1 つ(層 jobs・memoryMiB = 機体の memory − task の外の memory −
-   MEMORY-FLOOR-MIB・cpuMillis = ⌊機体の CPU − task の外の CPU − CPU-FLOOR-CORES⌋ core — 機体の残りは worker と system の分で、測った空きで
-   置いていた頃の床と同じ値。筋書きが前と同じ数の task を並べて置く)。行の名は worker の node(無ければ worker の名)で、同じ node の worker は 1 行に並べる。機体の
+   memory-floor-mib・cpuMillis = ⌊機体の CPU − task の外の CPU − CPU-FLOOR-CORES⌋ core — 機体の残りは worker と system と見張りの
+   DANGER の線の分で、区画の和が見張りの DANGER の線の内に収まる)。行の名は worker の node(無ければ worker の名)で、同じ node の worker は 1 行に並べる。機体の
    無い worker(測りを名乗らない前の版の代役)は区画を持たない(門の内の task を受けない — R2)。"
   (var rows {})
   (for [w workers :if (is-not w.machine None)]
     (val m w.machine)
-    (val memory (max 0 (- m.memory-mib m.base-mib MEMORY-FLOOR-MIB)))
+    (val memory (max 0 (- m.memory-mib m.base-mib (memory-floor-mib m.memory-mib))))
     (val compartment (Compartment :use "tasks" :worker w.name :layer "jobs" :memory-mib memory :memory-limit-mib memory
                                   :cpu-millis (* 1000 (max 0 (int (- m.cpus m.base-cores CPU-FLOOR-CORES))))))
     (val machine (or w.node w.name))

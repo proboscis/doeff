@@ -14,7 +14,7 @@
 (import doeff_cluster [WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion TaskUnplacedKind])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB JOBS-ROOM-FLOOR-MIB memory-room-mib])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib JOBS-ROOM-FLOOR-MIB memory-room-mib])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text register-heartbeat state-view])
 (import doeff_cluster._coordinator.protocol.replies [state-view-json])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine LineKind])
@@ -65,7 +65,7 @@
 
 
 (deftest test-the-memory-room-is-the-smaller-of-the-line-and-the-jobs-layer-less-the-reservations
-  (val line-room (- EVICTION-ROOM-MIB MEMORY-FLOOR-MIB))
+  (val line-room (- EVICTION-ROOM-MIB (memory-floor-mib LINE-MIB)))
   ;; 層の空きを名乗らない worker は追い出しまでの空きだけで数える(前の版の worker と同じ)。
   (<- unnamed int (memory-room-mib (! (node-a-measured None)) 700))
   (assert (= unnamed (- line-room 700)) unnamed)

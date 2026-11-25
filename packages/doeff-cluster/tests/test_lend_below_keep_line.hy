@@ -14,7 +14,7 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
 (import doeff_cluster._worker.core.load_rules [machine-load-of RECLAIM-FRESH-MS])
 (import doeff_cluster._worker.core.room_rules [room-of-text RoomState])
@@ -37,9 +37,9 @@
    reclaim = 取り返す量(MiB — None = 上に載る系が待っていない)・uses = 測りの名乗る task ごとの今の使い(MiB)。"
   (WorkerInfo "node-h" #("host-node-h") NOW :versions PY3
               :measured (MeasuredLoad :at-ms NOW :cpus 32 :cpu-busy 0.1 :memory-total-MiB 128000
-                                      :memory-available-MiB (if (is reclaim None) (+ MEMORY-FLOOR-MIB ROOM-MIB) 0)
+                                      :memory-available-MiB (if (is reclaim None) (+ (memory-floor-mib 128000) ROOM-MIB) 0)
                                       ;; 前の版の worker が両方を名乗っても、取り返す量を名乗る worker には貸さない(置き先の守り)。
-                                      :lend-memory-available-MiB (if lend (+ MEMORY-FLOOR-MIB LEND-ROOM-MIB) None)
+                                      :lend-memory-available-MiB (if lend (+ (memory-floor-mib 128000) LEND-ROOM-MIB) None)
                                       :reclaim-MiB reclaim :task-memory-MiB uses)))
 
 

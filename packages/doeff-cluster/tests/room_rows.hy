@@ -20,11 +20,11 @@
 ;; 測った空きの読みに当たる tasks 区画の宣言(ADR-DOE-CLUSTER-005 R1 — 置き方は測った空きを読まず、区画の申告の和で置く)。
 ;; compartments-like-rooms は worker の名 → WorkerInfo の dict から、測りを名乗る worker ごとに tasks 区画 1 つ(層 jobs)を宣言した表を作る:
 ;; cpuMillis = ⌊CPU の数 × (1 − 使い)− 1⌋ core(以前の数の空きの CPU の項 — ROOM-LOADS の n 番目は n core)・memoryMiB = memory の空き −
-;; MEMORY-FLOOR-MIB(以前の memory の空き)。機体の行の名は worker の名。測りを名乗らない worker は区画を持たない。検が以前の測った空きと
+;; memory-floor-mib(以前の memory の空き)。機体の行の名は worker の名。測りを名乗らない worker は区画を持たない。検が以前の測った空きと
 ;; 同じ置かれ方を区画の和で作るため。
 (import math [floor])
 (import doeff_cluster._shared.intent.compartment_model [Compartment MachineCompartments])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib])
 (import doeff_hy._table [Table TableWrite table-of])
 
 
@@ -35,7 +35,7 @@
                          :if (is-not w.measured None)
                          :setv m w.measured
                          :setv cores (max 0 (floor (- (* m.cpus (- 1 (or m.cpu-busy 0.0))) 1)))
-                         :setv memory (max 0 (- m.memory-available-MiB MEMORY-FLOOR-MIB))
+                         :setv memory (max 0 (- m.memory-available-MiB (memory-floor-mib m.memory-total-MiB)))
                          (TableWrite name (MachineCompartments :machine name
                                                                :compartments #((Compartment :use "tasks" :worker name :layer "jobs"
                                                                                             :memory-mib memory :memory-limit-mib memory
@@ -49,6 +49,6 @@
   (table-of (tuple (gfor name (sorted names)
                          (TableWrite name (MachineCompartments :machine name
                                                                :compartments #((Compartment :use "tasks" :worker name :layer "jobs"
-                                                                                            :memory-mib (- 262144 MEMORY-FLOOR-MIB)
-                                                                                            :memory-limit-mib (- 262144 MEMORY-FLOOR-MIB)
+                                                                                            :memory-mib (- 262144 (memory-floor-mib 262144))
+                                                                                            :memory-limit-mib (- 262144 (memory-floor-mib 262144))
                                                                                             :cpu-millis (* 1000 rooms)))))))))

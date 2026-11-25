@@ -17,7 +17,7 @@
 (import doeff_cluster [WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB JOBS-ROOM-FLOOR-MIB STARVE-WAIT-MS KEEP-NOW-PRIORITY drained-room-mib keeps-room?])
+(import doeff_cluster._coordinator.core.measured_room [JOBS-ROOM-FLOOR-MIB STARVE-WAIT-MS KEEP-NOW-PRIORITY drained-room-mib keeps-room?])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
 (import doeff_hy._table [table-of])
 (import tests.program_rows [SAMPLE-TASK-PROGRAM])

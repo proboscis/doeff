@@ -17,7 +17,7 @@
 (import doeff_cluster [WorkerInfo ClusterState]
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion TaskUnplacedKind WorkerReport])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad StatusRow TaskBody])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB memory-room-mib])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib memory-room-mib])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed task-unplaced-text state-view load-of])
 (import doeff_cluster._coordinator.core.detached_policy [submit-detached])
 (import doeff_cluster._coordinator.protocol.cluster_json [task-record-to-json task-record-from-json])
@@ -152,7 +152,7 @@
   (<- state ClusterState (world-at {"heavy" (replace heavy :phase "assigned" :worker "node-a" :started-ms 0)} 60000))
   (val view (! (state-view-json (! (state-view state 60000 T)))))
   (assert (= (get (get view "tasks") 0 "memoryMiB") HEAVY-NEED) (get view "tasks"))
-  (assert (= (get view "workers" "node-a" "taskMemoryRoomMiB") (- LINE-MIB BASE-MIB HEAVY-EARLY MEMORY-FLOOR-MIB (- HEAVY-NEED HEAVY-EARLY)))
+  (assert (= (get view "workers" "node-a" "taskMemoryRoomMiB") (- LINE-MIB BASE-MIB HEAVY-EARLY (memory-floor-mib LINE-MIB) (- HEAVY-NEED HEAVY-EARLY)))
           (get view "workers" "node-a")))
 
 
@@ -177,4 +177,4 @@
   (val counted (load-of (replace told :workers only-seen) state.placements))
   (assert (= (. (get counted "node-a") reserved-mib) (+ (- HEAVY-NEED HEAVY-EARLY) LIGHT-NEED)) (get counted "node-a"))
   (<- left int (memory-room-mib node-a.measured (. (get counted "node-a") reserved-mib)))
-  (assert (= left (- LINE-MIB BASE-MIB HEAVY-EARLY MEMORY-FLOOR-MIB (- HEAVY-NEED HEAVY-EARLY) LIGHT-NEED)) left))
+  (assert (= left (- LINE-MIB BASE-MIB HEAVY-EARLY (memory-floor-mib LINE-MIB) (- HEAVY-NEED HEAVY-EARLY) LIGHT-NEED)) left))

@@ -36,7 +36,7 @@
                                                   quantity-bytes pods-memory-of root-working-set-of eviction-line line-memory jobs-limit
                                                   layer-memory-max pods-dir-of kept-line fresh-keep-room KEEP-ROOM-FRESH-MS])
 (import doeff_cluster._worker.core.load_rules [LINE-FRESH-MS fresh-line machine-load-of])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB])
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib])
 (import doeff_cluster._worker.protocol.eviction_line [EvictionSettings JOBS-SQUEEZE-LOG EVICTION-LINE-LOG EVICTION-UNREAD-LOG])
 (import doeff_cluster._worker.protocol.memory_watch [MemoryWatchSettings MemoryCell memory-watch-loop MEMORY-LEVEL-LOG])
 
@@ -169,9 +169,10 @@
   (assert (= #(named.load.memory-total-mib named.load.memory-available-mib) #((// ALLOCATABLE MIB) (* 3 1024))) named)
   (<- machine (machine-load-of stat meminfo None None None 0 stale))
   (assert (= #(machine.load.memory-total-mib machine.load.memory-available-mib) #((// CAPACITY MIB) (// (int (* 9.68 GIB)) MIB))) machine)
-  ;; coordinator が置き先を数える memory の床は、worker が jobs の層の上限で線の手前に残す余裕と、常駐の job の揺れの 512 MiB を覆う
-  ;; (task が使えるのは追い出しまでの空きから余裕を引いた分まで)。
-  (assert (>= (* MEMORY-FLOOR-MIB MIB) (+ EVICTION-MARGIN-BYTES (* 512 MIB))) MEMORY-FLOOR-MIB))
+  ;; coordinator が置き先を数える memory の床は、worker の見張りの DANGER の線から導かれ、node-a の線(ALLOCATABLE)では
+  ;; worker が jobs の層の上限で線の手前に残す余裕と、常駐の job の揺れの 512 MiB を覆う。
+  (val floor-mib (memory-floor-mib (// ALLOCATABLE MIB)))
+  (assert (>= (* floor-mib MIB) (+ EVICTION-MARGIN-BYTES (* 512 MIB))) floor-mib))
 
 
 ;; --- 模擬の機体 -----------------------------------------------------------------------------------------------------------------------

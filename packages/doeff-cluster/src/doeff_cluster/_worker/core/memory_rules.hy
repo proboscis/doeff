@@ -56,9 +56,7 @@
 (import itertools [accumulate chain groupby islice repeat takewhile])
 (import doeff_traverse [sequence])
 (import doeff_core_effects [ProcRow])
-
-;; byte の単位(log の値は MiB)。
-(val MIB (* 1024 1024))
+(import doeff_cluster._shared.core.memory_limits [MIB MemoryLimits danger-line-mib compartments-ceiling-mib])
 
 
 ;; 機体の memory の様子(閉じた型): CALM = 余裕がある・TIGHT = 逼迫(log だけ — 次の段の重い task の見送りの印)・DANGER = 尽きかけ
@@ -81,27 +79,6 @@
 ;; 急ぎの優先の下限(頭の註の急ぎの task — coordinator の measured_room.KEEP-NOW-PRIORITY と同じ値。置き先が heartbeat の返事の task の行の
 ;; priority で運ぶ優先がこの値以上の task を、見張りはほかの候補が残る間は止めない)。
 (val URGENT-PRIORITY 1)
-
-
-(defrecord MemoryLimits
-  "見張りの閾(空き / 総量 — kubelet の下の機体は追い出しまでの空き / 線の大きさ・それ以外は MemAvailable / MemTotal。見張りが
-   worker/core/eviction_rules の line-memory で NodeMemory にして渡す): danger-available = 空き / 総量 がこれ未満なら DANGER・danger-pressured-available と danger-full-avg10 =
-   空き / 総量 がこれ未満で、memory の PSI の full avg10(%)がこれ以上でも DANGER(reclaim で全 process が止まり始めた)・
-   tight-available と tight-full-avg10 = どちらかを越えたら TIGHT・min-victim-bytes = これより小さい単位は止めない(食った物が job の外の
-   時に、小さい job を次々に止めない)・steady-ratio = 常駐の job の今の memory が平常の大きさのこの倍以上の時だけ、その job の単位を
-   止める候補にする(頭の註)。既定の値の根拠: node-a の 3 回は空き 1.5〜2.5 GiB / 28.3 GiB(5〜9%)・node-h は 7 GB / 125 GiB(5.6%)
-   で止まり、ふだんの最低は node-a 6.2 GiB(22%)・node-h 52 GiB(41%)。swarm-share = 群れの止め(頭の註)を掛ける job の木の、機体の全量に
-   占める割合の最低(既定 0.25 — node-h の 10-23 の CLI を並べる job の木は約 64 GB / 128 GB)。"
-  {:check [(< 0 danger-available danger-pressured-available 1) (< 0 danger-available tight-available 1) (> danger-full-avg10 0)
-           (> tight-full-avg10 0) (>= min-victim-bytes 0) (> steady-ratio 1) (< 0 swarm-share 1)]}
-  (setv #^ float danger-available 0.10)
-  (setv #^ float danger-pressured-available 0.20)
-  (setv #^ float danger-full-avg10 25.0)
-  (setv #^ float tight-available 0.20)
-  (setv #^ float tight-full-avg10 10.0)
-  (setv #^ int min-victim-bytes (* 512 MIB))
-  (setv #^ float steady-ratio 1.5)
-  (setv #^ float swarm-share 0.25))
 
 
 (defrecord NodeMemory

@@ -13,7 +13,7 @@
         doeff_cluster._coordinator.intent.cluster_model [TaskRecord ComponentVersion])
 (import doeff_cluster._coordinator.intent.request_bodies [MeasuredLoad HeartbeatBody])
 (import doeff_cluster._coordinator.core.cluster_policy [tasks-placed])
-(import doeff_cluster._coordinator.core.measured_room [MEMORY-FLOOR-MIB JOBS-ROOM-FLOOR-MIB KEEP-NOW-PRIORITY memory-room-mib
+(import doeff_cluster._coordinator.core.measured_room [memory-floor-mib JOBS-ROOM-FLOOR-MIB KEEP-NOW-PRIORITY memory-room-mib
                                                        urgent-priority?])
 (import doeff_cluster._worker.core.eviction_rules [EvictionLine LineKind])
 (import doeff_cluster._worker.core.load_rules [LoadReading machine-load-of])
@@ -89,7 +89,8 @@
 
 
 (deftest test-the-urgent-memory-room-counts-the-urgent-jobs-room-with-the-same-floors
-  (val measured (MeasuredLoad :at-ms 0 :cpus 8 :cpu-busy 0.1 :memory-total-MiB 100000 :memory-available-MiB 4000
+  (val measured (MeasuredLoad :at-ms 0 :cpus 8 :cpu-busy 0.1 :memory-total-MiB 100000
+                              :memory-available-MiB (+ (memory-floor-mib 100000) 4000)
                               :jobs-room-MiB 1000 :urgent-memory-available-MiB 40000 :urgent-jobs-room-MiB 20000))
   (<- plain int (memory-room-mib measured 0))
   (<- urgent int (memory-room-mib measured 0 :urgent True))
@@ -99,4 +100,4 @@
   (<- half int (memory-room-mib (replace measured :urgent-jobs-room-MiB None) 0 :urgent True))
   (assert (= half (- 1000 JOBS-ROOM-FLOOR-MIB)) half)
   (assert (= (! (memory-room-mib (replace measured :jobs-room-MiB None :urgent-jobs-room-MiB None) 0 :urgent True))
-             (- 40000 MEMORY-FLOOR-MIB))))
+             (- 40000 (memory-floor-mib 100000)))))
