@@ -20,6 +20,9 @@
 ;;;   2026-11-15 に足した: doeff_worker_tasks_claimed_mib{worker}(置いた task の memory の申告の和 — tasks 区画の和・ADR-DOE-CLUSTER-005 R5)・
 ;;;   doeff_worker_tasks_used_mib{worker}(同じ task の測った今の使いの和 — task の使いを測れた worker だけ)。申告の和が使いの和から
 ;;;   離れた事を外の見張りの警報が読む(式と閾は見張りの設定が持つ — GET /state の claimedMiB・usedMiB と同じ値)。
+;;;   2026-11-26 に足した: doeff_worker_service_failures{service}(置き先の担い手が報告した続けて落ちた回数 — Service の status.failures と同じ値・
+;;;   安定して動けば 0)。k8s の Pod なら kube_pod_container_status_restarts_total と CrashLoopBackOff で落ち続けを読むが、worker の子 process の
+;;;   job は Pod の再起動にならないので、上に載る系の見張りの警報がこの値を読む(式と閾は見張りの設定が持つ)。
 (require doeff-hy.macros [defk val <-])
 (val MODULE-TAGS {:context "coordinator" :role "judgment"})
 (import dataclasses [replace])
@@ -30,7 +33,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState PLACED-PHASES MetricsReport ReportOrigin])
 (import doeff_cluster._coordinator.intent.request_bodies [MetricsBody MetricsPayload])
 (import doeff_cluster._coordinator.core.resource_policy [refuse running-process current-report keep-report placed-senders report-origin service-readiness
-                                                        handover-of])
+                                                        handover-of job-status-row])
 (import doeff_cluster._coordinator.core.cluster_policy [unplaced-jobs board-usage scan-rows claimed-sums placed-uses])
 (import doeff_cluster._coordinator.core.task_claims [shape-peaks-of tasks-compartments-of])
 
@@ -193,7 +196,14 @@
     (setv age (last-metrics-age state name now))
     (when (and (> job.replicas 0) (is-not age None))
       (add-sample families "doeff_worker_service_last_metrics_age_seconds" "gauge"
-                  "doeff_worker_service_last_metrics_age_seconds" labels age)))
+                  "doeff_worker_service_last_metrics_age_seconds" labels age))
+    ;; 続けて落ちた回数(2026-11-26 — 頭の註)。service-row の status.failures と同じ担い手の行を読む。置き先の無い・担い手の行の無い・回数を
+    ;; 報告していない Service は出さない(0 と読ませない)。
+    (setv placement (.row state.placements name)
+          carrier (if (and placement (> job.replicas 0)) (job-status-row state placement.worker name) None))
+    (when (and (is-not carrier None) (is-not carrier.failures None))
+      (add-sample families "doeff_worker_service_failures" "gauge" "doeff_worker_service_failures" labels
+                  (float carrier.failures))))
   ;; worker ごとの最後の heartbeat の古さ(2026-09-24・coordinator 自身の alert の材料)。heartbeat は worker から coordinator への唯一の
   ;; 連絡なので、「coordinator がこの worker の heartbeat を受けていない」=「worker から見て coordinator に届かない」。label は
   ;; worker の名だけ(以前の kind は worker の label から写していた — 能力の名乗りに置き換えた 2026-09-27 に外した)。忘れた worker(DELETE /resources/Worker)は出さない。
