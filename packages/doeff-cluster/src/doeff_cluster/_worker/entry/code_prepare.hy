@@ -78,16 +78,20 @@
 ;;; 古い版では道具が見つからない — 2026-09-23 に node-a の版 8d7181f が bytecode 0 のまま完成品になった原因)。
 (require doeff-hy.macros [defk deff defhandler val var <-])
 (val MODULE-TAGS {:context "worker" :role "main"})
+(import _thread)
 (import argparse)
 (import concurrent.futures [ThreadPoolExecutor])
 (import hy)
 (import importlib.machinery)
 (import importlib.util)
 (import json)
+(import marshal)
 (import os)
 
 (import posixpath)
 (import sys)
+(import threading)
+(import time)
 (import dataclasses [dataclass])  ; dataclass は効果の型が使う
 (import pathlib [Path])
 (import types [ModuleType])
@@ -135,6 +139,8 @@
 ;; 純粋な判断と record(worker/core/bake_plan.hy — 名は plan.<名> で引く)と、保存先の入口(code_store — 名は store.<名> で引く)。
 (val plan (run (module-at BAKE-PLAN-MODULE BAKE-PLAN)))
 (val store (run (module-at CODE-STORE-MODULE CODE-STORE)))
+;; 取るだけの形(--fetch-only)で取れない file が在るか分け合う保存先が読めない時の終了 code(呼び手と検が引く定数)。
+(val FETCH-ONLY-EXIT-CODE plan.FETCH-ONLY-EXIT-CODE)
 
 
 ;; --- 焼きの並列数 -----------------------------------------------------------------------------
@@ -177,6 +183,19 @@
   (#^ tuple paths)
   (#^ (| str None) code-store)
   ;; 写し元の木(#(木の path 写し元の木の path) の列)と、写し元から変わった module 名(ADR-DOE-BUILD-002 R3c — 空 = 引き継がない)。
+  (setv #^ tuple inherits #())
+  (setv #^ frozenset changed (frozenset)))
+
+
+(defclass [(dataclass :frozen True)] FetchSources [EffectBase]
+  "取るだけの形(--fetch-only)で、用意する物を機体の保存先と分け合う保存先から取り寄せて .pyc を置く(焼かない — BakeSources を呼ばず
+   bytecode_pool も起こさない)。items = #(木の path 相対 path module 名) の列・jobs = 取り寄せの並列数の上限・paths = import の路の
+   先頭に足す dir(前が先)・code-store = 保存先の dir(None = 保存先を使わない)・inherits = 写し元の木(#(木の path 写し元の木の path) の列)・
+   changed = 写し元から変わった module 名。答え = bake_plan の FetchAnswer。"
+  (#^ tuple items)
+  (#^ int jobs)
+  (#^ tuple paths)
+  (#^ (| str None) code-store)
   (setv #^ tuple inherits #())
   (setv #^ frozenset changed (frozenset)))
 
@@ -462,15 +481,75 @@
                             :changed changed))))
 
 
-(defk prepare-trees [trees revision jobs entries code-store hy-version * [prefix None] [inherit-prefix None]]
+(defk prepare-trees-fetch-only [trees revision jobs entries code-store hy-version prefix started scanned-at closed
+                                scopes plans walk order paths inherits]
   {:pre [(: trees tuple) (: revision str) (: jobs int) (: entries tuple) (: code-store (| str None)) (: hy-version str)
-         (: prefix (| str None)) (: inherit-prefix (| str None))]
+         (: prefix (| str None)) (: started float) (: scanned-at float) (: closed float)
+         (: scopes tuple) (: plans tuple) (: walk plan.ClosureWalk) (: order tuple) (: paths tuple) (: inherits tuple)]
+   :post [(: % tuple)]
+   :tags {:context "worker" :role "main"}}
+  "取るだけの形(--fetch-only)で全部の木を仕上げる: BakeSources を呼ばずに FetchSources だけで保存先と分け合う保存先から .pyc を置き、
+   取れない file か分け合う保存先の障害が在れば 1 行の理由を問題に載せて完成の印を置かずに返す。"
+  (<- bake-started float (GetMonotonic))
+  (<- fetched-answer plan.FetchAnswer (FetchSources order jobs paths code-store inherits (or walk.changed (frozenset))))
+  (<- (MarkProgress))
+  (<- baked float (GetMonotonic))
+  (<- (Note (.format "compile_s の内訳: plan_s={:.2f} tool_s={:.2f}" (- bake-started closed) (- baked bake-started))))
+  (for [reason fetched-answer.unstored]
+    (<- (Note (.format "保存先を使えない(hardlink で置けない .pyc は書いた): {}" reason))))
+  (<- fetch-reason (| str None) (plan.fetch-failure-line fetched-answer))
+  (var outcomes #())
+  (for [#(tree scope tree-plan rows) (zip trees scopes plans walk.rows)]
+    (<- stored int (plan.tree-count fetched-answer.stored tree.path))
+    (<- fetched int (plan.tree-count fetched-answer.fetched tree.path))
+    (<- reused int (plan.tree-count fetched-answer.reused tree.path))
+    (<- missing int (plan.tree-count fetched-answer.missing tree.path))
+    (var problem fetch-reason)
+    (when (is problem None)
+      (<- after tuple (scan-tree tree prefix))
+      (<- after-sources list (plan.scoped-sources (get after 0) scope))
+      (val after-pycs (frozenset (get after 1)))
+      (<- checked (| str None) (tree-problem after-sources after-pycs (frozenset) tree.roots))
+      (:= problem checked)
+      (if (is problem None)
+          (do (<- marker dict (marker-content revision True after-sources after-pycs [] tree.roots))
+              (<- records str (plan.records-dir prefix tree.path))
+              (when (is-not prefix None)
+                (<- (file-done (MakeDirectory records))))
+              (when entries
+                (<- text str (plan.closure-table-text rows hy-version))
+                (<- unwritten (| str None) (WriteClosureTable (posixpath.join records plan.CLOSURE-TABLE) text))
+                (when (is-not unwritten None)
+                  (<- (Note (.format "閉包の表を書けない(次の準備は全部を読む): {}: {}" tree.named unwritten)))))
+              (if (is prefix None)
+                  (<- (WriteMarker tree.path marker))
+                  (do (<- refused (| str None) (WriteReadyMark (posixpath.join records MARKER)
+                                                               (json.dumps marker :ensure-ascii False :indent 1)))
+                      (when (is-not refused None)
+                        (raise (OSError (.format "木の完成の印を書けない: {}: {}" tree.named refused)))))))
+          (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem)))))
+    (val outcome (plan.TreeOutcome :named tree.named :stored stored :fetched fetched
+                                   :rebuilt 0 :reused reused :failed missing :problem problem))
+    (<- line str (plan.tree-line outcome))
+    (<- (Note line))
+    (:= outcomes (+ outcomes #(outcome))))
+  (val summary (plan.BakeSummary :trees outcomes :scan-s (- scanned-at started) :closure-s (- closed scanned-at)
+                                 :compile-s (- baked closed)))
+  (<- total str (plan.total-line summary))
+  (<- (Note total))
+  outcomes)
+
+
+(defk prepare-trees [trees revision jobs entries code-store hy-version * [prefix None] [inherit-prefix None] [fetch-only False]]
+  {:pre [(: trees tuple) (: revision str) (: jobs int) (: entries tuple) (: code-store (| str None)) (: hy-version str)
+         (: prefix (| str None)) (: inherit-prefix (| str None)) (: fetch-only bool)]
    :post [(: % tuple)]
    :tags {:context "worker" :role "main"}}
   "全部の木を 1 回で準備し、木ごとの結果(TreeOutcome の列・trees の順)を返す(頭の註の手順 1〜4)。検めが通った木には完成の印を置き、
    通らない木は印を置かずに理由を結果に載せる。経過の秒は全体の報告の行にだけ載せる。code-store = 保存先の dir(None = 使わない)・
    hy-version = この root の Hy の版(import の名の entry の鍵)。prefix = root の .pyc の置き場・inherit-prefix = 写し元の木の root の
-   置き場(頭の註の「置き場」— None = 木の中)。"
+   置き場(頭の註の「置き場」— None = 木の中)。fetch-only = 真なら焼かずに FetchSources で保存先と分け合う保存先から書くだけ
+   (BakeSources を呼ばず、取れない file が 1 つでも在るか分け合う保存先が読めなければ 1 行の理由を問題に載せて印を置かない)。"
   (<- started float (GetMonotonic))
   (var scans #())
   (for [tree trees]
@@ -496,57 +575,62 @@
   (<- order tuple (plan.bake-order items))
   (<- paths tuple (plan.trees-import-path trees))
   (<- (MarkProgress))
-  (<- bake-started float (GetMonotonic))
-  (<- answer plan.BakeAnswer (BakeSources order jobs paths code-store inherits (or walk.changed (frozenset))))
-  (<- (MarkProgress))
-  (val failures answer.failed)
-  (<- baked float (GetMonotonic))
-  (<- (Note (.format "compile_s の内訳: plan_s={:.2f} tool_s={:.2f}" (- bake-started closed) (- baked bake-started))))
-  (for [#(path rel reason) (cut failures 0 20)]
-    (<- (Note f"  焼けない: {path}/{rel}: {reason}")))
-  (for [reason answer.unstored]
-    (<- (Note (.format "保存先を使えない(書けない code は次の準備が焼き直す・hardlink で置けない .pyc は書いた): {}" reason))))
-  ;; 検め: 用意した結果を木から読み直す(焼きの答えを信じず、置かれた物を数える)。
-  (var outcomes #())
-  (for [#(tree scope tree-plan rows) (zip trees scopes plans walk.rows)]
-    (<- failed list (plan.tree-failures failures tree.path))
-    (<- after tuple (scan-tree tree prefix))
-    (<- after-sources list (plan.scoped-sources (get after 0) scope))
-    (val after-pycs (frozenset (get after 1)))
-    (<- problem (| str None) (tree-problem after-sources after-pycs (frozenset (gfor f failed (get f 0))) tree.roots))
-    (if (is problem None)
-        (do (<- marker dict (marker-content revision True after-sources after-pycs failed tree.roots))
-            ;; 閉包の表は完成の印の前に置く(次の準備の写し元になるのは完成した root の木だけ — R3c)。
-            (<- records str (plan.records-dir prefix tree.path))
-            ;; 置き場の記録の dir は .pyc の無い木では無い — 記録を書く前に作る。
-            (when (is-not prefix None)
-              (<- (file-done (MakeDirectory records))))
-            (when entries
-              (<- text str (plan.closure-table-text rows hy-version))
-              (<- unwritten (| str None) (WriteClosureTable (posixpath.join records plan.CLOSURE-TABLE) text))
-              (when (is-not unwritten None)
-                (<- (Note (.format "閉包の表を書けない(次の準備は全部を読む): {}: {}" tree.named unwritten)))))
-            (if (is prefix None)
-                (<- (WriteMarker tree.path marker))
-                (do (<- refused (| str None) (WriteReadyMark (posixpath.join records MARKER)
-                                                             (json.dumps marker :ensure-ascii False :indent 1)))
-                    (when (is-not refused None)
-                      (raise (OSError (.format "木の完成の印を書けない: {}: {}" tree.named refused)))))))
-        (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem))))
-    (<- stored int (plan.tree-count answer.stored tree.path))
-    (<- fetched int (plan.tree-count answer.fetched tree.path))
-    (<- reused int (plan.tree-count answer.reused tree.path))
-    (val outcome (plan.TreeOutcome :named tree.named :stored stored :fetched fetched
-                                   :rebuilt (- (len tree-plan) (len failed) reused stored fetched)
-                                   :reused reused :failed (len failed) :problem problem))
-    (<- line str (plan.tree-line outcome))
-    (<- (Note line))
-    (:= outcomes (+ outcomes #(outcome))))
-  (val summary (plan.BakeSummary :trees outcomes :scan-s (- scanned-at started) :closure-s (- closed scanned-at)
-                                 :compile-s (- baked closed)))
-  (<- total str (plan.total-line summary))
-  (<- (Note total))
-  outcomes)
+  (if fetch-only
+      (do (<- fetched-outcomes tuple
+              (prepare-trees-fetch-only trees revision jobs entries code-store hy-version prefix started scanned-at closed
+                                        scopes plans walk order paths inherits))
+          fetched-outcomes)
+      (do (<- bake-started float (GetMonotonic))
+          (<- answer plan.BakeAnswer (BakeSources order jobs paths code-store inherits (or walk.changed (frozenset))))
+          (<- (MarkProgress))
+          (val failures answer.failed)
+          (<- baked float (GetMonotonic))
+          (<- (Note (.format "compile_s の内訳: plan_s={:.2f} tool_s={:.2f}" (- bake-started closed) (- baked bake-started))))
+          (for [#(path rel reason) (cut failures 0 20)]
+            (<- (Note f"  焼けない: {path}/{rel}: {reason}")))
+          (for [reason answer.unstored]
+            (<- (Note (.format "保存先を使えない(書けない code は次の準備が焼き直す・hardlink で置けない .pyc は書いた): {}" reason))))
+          ;; 検め: 用意した結果を木から読み直す(焼きの答えを信じず、置かれた物を数える)。
+          (var outcomes #())
+          (for [#(tree scope tree-plan rows) (zip trees scopes plans walk.rows)]
+            (<- failed list (plan.tree-failures failures tree.path))
+            (<- after tuple (scan-tree tree prefix))
+            (<- after-sources list (plan.scoped-sources (get after 0) scope))
+            (val after-pycs (frozenset (get after 1)))
+            (<- problem (| str None) (tree-problem after-sources after-pycs (frozenset (gfor f failed (get f 0))) tree.roots))
+            (if (is problem None)
+                (do (<- marker dict (marker-content revision True after-sources after-pycs failed tree.roots))
+                    ;; 閉包の表は完成の印の前に置く(次の準備の写し元になるのは完成した root の木だけ — R3c)。
+                    (<- records str (plan.records-dir prefix tree.path))
+                    ;; 置き場の記録の dir は .pyc の無い木では無い — 記録を書く前に作る。
+                    (when (is-not prefix None)
+                      (<- (file-done (MakeDirectory records))))
+                    (when entries
+                      (<- text str (plan.closure-table-text rows hy-version))
+                      (<- unwritten (| str None) (WriteClosureTable (posixpath.join records plan.CLOSURE-TABLE) text))
+                      (when (is-not unwritten None)
+                        (<- (Note (.format "閉包の表を書けない(次の準備は全部を読む): {}: {}" tree.named unwritten)))))
+                    (if (is prefix None)
+                        (<- (WriteMarker tree.path marker))
+                        (do (<- refused (| str None) (WriteReadyMark (posixpath.join records MARKER)
+                                                                     (json.dumps marker :ensure-ascii False :indent 1)))
+                            (when (is-not refused None)
+                              (raise (OSError (.format "木の完成の印を書けない: {}: {}" tree.named refused)))))))
+                (<- (Note (.format "検めが通らないので完成の印を置きません: {}: {}" tree.named problem))))
+            (<- stored int (plan.tree-count answer.stored tree.path))
+            (<- fetched int (plan.tree-count answer.fetched tree.path))
+            (<- reused int (plan.tree-count answer.reused tree.path))
+            (val outcome (plan.TreeOutcome :named tree.named :stored stored :fetched fetched
+                                           :rebuilt (- (len tree-plan) (len failed) reused stored fetched)
+                                           :reused reused :failed (len failed) :problem problem))
+            (<- line str (plan.tree-line outcome))
+            (<- (Note line))
+            (:= outcomes (+ outcomes #(outcome))))
+          (val summary (plan.BakeSummary :trees outcomes :scan-s (- scanned-at started) :closure-s (- closed scanned-at)
+                                         :compile-s (- baked closed)))
+          (<- total str (plan.total-line summary))
+          (<- (Note total))
+          outcomes)))
 
 
 ;; --- 焼きの効果の訳し --------------------------------------------------------------------
@@ -577,6 +661,324 @@
         (<- (Note line))))
     (<- answer plan.BakeAnswer (plan.bake-answer outcome.stdout))
     (resume answer)))
+
+
+;; --- 取るだけの形(--fetch-only)の効果の訳し --------------------------------------------------------
+;; 焼きの効果 BakeSources を呼ばず、焼きの道具 bytecode_pool.hy も起こさずに、この process の中で機体の保存先と分け合う保存先
+;; (DOEFF_HY_CODE_SHARE — ADR-DOE-BUILD-002 R8)から .pyc を置くだけ。source の compile は一切呼ばない。
+
+(val FETCH-PYC-HEAD-BYTES 16)
+(val FETCH-CHECKED-HASH-FLAGS 0b11)
+(val FETCH-GUARD-HOOKS #("get_code" "source_to_code"))
+(val FETCH-THREADS 8)
+
+
+(deff fetch-guard-module []  ; cannot be a defk: 取るだけの形の照らしが呼ぶ素の関数(VM の外)
+  {:pre [] :post [(: % ModuleType)]}
+  "root の guard の module(SourceFileLoader の口の持ち主 — bytecode_is_current を出す module)を引くため(ADR-DOE-BUILD-002 R7)。"
+  (for [hook FETCH-GUARD-HOOKS]
+    (setv owner (.get sys.modules (getattr (getattr importlib.machinery.SourceFileLoader hook) "__module__" None)))
+    (when (and (is-not owner None) (callable (getattr owner "bytecode_is_current" None)))
+      (return owner)))
+  (raise (RuntimeError "SourceFileLoader の口を包んだ guard の module が bytecode_is_current を出さない(doeff-hy の .pth が効いていない root)")))
+
+
+(deff fetch-pyc-path [source prefix]  ; cannot be a defk: 取るだけの形が .pyc の置き場を求める素の関数
+  {:pre [(: source str) (: prefix (| str None))] :post [(: % str)]}
+  "source の .pyc の path(prefix = --pycache-prefix・None = 同じ dir の __pycache__)を求めるため。"
+  (setv #(head tail) (posixpath.split source)
+        name (+ (get (posixpath.splitext tail) 0) "." sys.implementation.cache-tag ".pyc"))
+  (if (is prefix None)
+      (posixpath.join head "__pycache__" name)
+      (posixpath.join prefix (.lstrip head "/") name)))
+
+
+(deff fetch-pyc-head [data]  ; cannot be a defk: 取るだけの形が PEP 552 の頭を組む素の関数
+  {:pre [(: data bytes)] :post [(: % bytes)]}
+  "source の中身 data の checked-hash 方式の .pyc の頭(16 byte)を組むため。"
+  (+ importlib.util.MAGIC-NUMBER
+     (.to-bytes FETCH-CHECKED-HASH-FLAGS 4 "little")
+     (importlib.util.source-hash data)))
+
+
+(deff fetch-write-pyc [source pyc prefix]  ; cannot be a defk: 取るだけの形が .pyc を置き換える素の関数
+  {:pre [(: source str) (: pyc bytes) (: prefix (| str None))] :post [(: % None)]}
+  "source の .pyc を一時 file から置き換えて書くため(hardlink の先を書き換えない)。"
+  (setv cache (fetch-pyc-path source prefix))
+  (os.makedirs (posixpath.dirname cache) :exist-ok True)
+  (setv tmp (.format "{}.{}.{}.tmp" cache (os.getpid) (threading.get-ident)))
+  (with [f (open tmp "wb")] (.write f pyc))
+  (os.replace tmp cache)
+  None)
+
+
+(deff fetch-place-pyc [code-store source pyc prefix]  ; cannot be a defk: 取るだけの形が .pyc を置く素の関数
+  {:pre [(: code-store (| str None)) (: source str) (: pyc bytes) (: prefix (| str None))] :post [(: % str)]}
+  "保存先の同じ中身の file への hardlink(code_store の link-pyc)で .pyc を置き、置けなければ書くため。"
+  (setv cache (fetch-pyc-path source prefix)
+        problem (if (is code-store None) None (store.link-pyc code-store pyc cache)))
+  (when (or (is code-store None) (is-not problem None))
+    (fetch-write-pyc source pyc prefix))
+  (or problem ""))
+
+
+(deff fetch-current-pyc [guard tree rel prefix]  ; cannot be a defk: 取るだけの形が在る .pyc を照らす素の関数
+  {:pre [(: guard ModuleType) (: tree str) (: rel str) (: prefix (| str None))] :post [(: % bool)]}
+  "木に既に在る .pyc が今の source と今の環境の macro に合うか。"
+  (setv source (posixpath.join tree rel))
+  (try
+    (setv existing (.read-bytes (Path (fetch-pyc-path source prefix)))
+          data (.read-bytes (Path source)))
+    (.bytecode-is-current guard source existing data)
+    (except [OSError] False)))
+
+
+(deff fetch-carry-pyc [tree origin-tree rel prefix inherit-prefix]  ; cannot be a defk: 取るだけの形が写し元の .pyc を引く素の関数
+  {:pre [(: tree str) (: origin-tree str) (: rel str) (: prefix (| str None)) (: inherit-prefix (| str None))] :post [(: % bool)]}
+  "写し元と同じ inode の source について、写し元の .pyc を hardlink で置くため。"
+  (setv here (posixpath.join tree rel)
+        there (posixpath.join origin-tree rel)
+        origin (fetch-pyc-path there inherit-prefix)
+        target (fetch-pyc-path here prefix)
+        temporary (.format "{}.{}.{}.carry" target (os.getpid) (threading.get-ident)))
+  (when (not (same-file #(here there)))
+    (return False))
+  (try
+    (setv seen (os.stat origin))
+    (except [OSError]
+      (return False)))
+  (when (and (os.path.lexists target) (os.path.samestat (os.lstat target) seen))
+    (return True))
+  (try
+    (os.makedirs (posixpath.dirname target) :exist-ok True)
+    (os.link origin temporary)
+    (os.replace temporary target)
+    True
+    (except [OSError]
+      (when (os.path.lexists temporary)
+        (os.unlink temporary))
+      False)))
+
+
+(deff fetch-carried-current [guard tree rel changed prefix]  ; cannot be a defk: 取るだけの形が引き継ぎ .pyc を判じる素の関数
+  {:pre [(: guard ModuleType) (: tree str) (: rel str) (: changed frozenset) (: prefix (| str None))] :post [(: % bool)]}
+  "写し元から置いた .pyc を照らさずに残せるか。"
+  (setv source (posixpath.join tree rel)
+        modules-of (getattr guard "bytecode_dependency_modules" None))
+  (try
+    (setv pyc (.read-bytes (Path (fetch-pyc-path source prefix)))
+          data (.read-bytes (Path source)))
+    (except [OSError]
+      (return False)))
+  (when (or (not (callable modules-of)) (!= (cut pyc 0 FETCH-PYC-HEAD-BYTES) (fetch-pyc-head data)))
+    (return False))
+  (setv modules (modules-of source pyc))
+  (and (is-not modules None) (not (& modules changed))))
+
+
+(deff fetch-keep-mark [code-store tree rel name prefix]  ; cannot be a defk: 取るだけの形が保存先の印を進める素の関数
+  {:pre [(: code-store (| str None)) (: tree str) (: rel str) (: name str) (: prefix (| str None))] :post [(: % (| str None))]}
+  "引き継いで残した .pyc の保存先の印を進めるため。"
+  (when (is code-store None)
+    (return None))
+  (setv source (posixpath.join tree rel)
+        cache (fetch-pyc-path source prefix))
+  (try
+    (setv at (. (os.stat cache) st-mtime-ns))
+    (when (< (- (time.time-ns) at) (* store.TOUCH-AFTER-SECONDS 1000000000))
+      (return None))
+    (setv pyc (.read-bytes (Path cache))
+          data (.read-bytes (Path source)))
+    (os.utime cache)
+    (except [error OSError]
+      (return (.format "引き継いだ .pyc の保存先の印を進められない: {}" error))))
+  (setv body (cut pyc FETCH-PYC-HEAD-BYTES None)
+        key (store.code-key source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize))
+  (store.keep-code code-store key (marshal.loads body) body))
+
+
+(deff fetch-touch-progress [progress]  ; cannot be a defk: 取るだけの形が進みの印を進める素の関数
+  {:pre [(: progress (| str None))] :post [(: % None)]}
+  (when (is-not progress None)
+    (try
+      (os.utime progress)
+      (except [OSError]
+        None)))
+  None)
+
+
+(deff fetch-open-scope [guard]  ; cannot be a defk: 取るだけの形が thread ごとの ImportScope を開く素の関数
+  {:pre [(: guard ModuleType)] :post [(: % (| tuple None))]}
+  "root の guard が IMPORT_SCOPE と ImportScope を出せば、この thread 用の memo を開いて #(holder scope token) を返す。"
+  (setv holder (getattr guard "IMPORT_SCOPE" None)
+        scope-of (getattr guard "ImportScope" None))
+  (if (and (is-not holder None) (callable scope-of))
+      (do (setv scope (scope-of)
+                token (.set holder scope))
+          #(holder scope token))
+      None))
+
+
+(deff fetch-close-scope [opened]  ; cannot be a defk: 取るだけの形が ImportScope を閉じる素の関数
+  {:pre [(: opened (| tuple None))] :post [(: % None)]}
+  (when (is-not opened None)
+    (setv #(holder scope token) opened)
+    (when (hasattr scope "close")
+      (.close scope))
+    (.reset holder token))
+  None)
+
+
+(deff fetch-one-shared [share code-store guard prefix progress lock share-down entry]  ; cannot be a defk: thread の pool で回す 1 本の取り寄せ
+  {:pre [(: share store.Share) (: code-store str) (: guard ModuleType) (: prefix (| str None))
+         (: progress (| str None)) (: lock _thread.LockType) (: share-down dict) (: entry tuple)]
+   :post [(: % tuple)]}
+  "分け合う保存先から 1 本の code を取り寄せて .pyc を置く。答え = #(種別 tree rel 理由か None 問題の列)。"
+  (setv #(tree rel source data key head) entry)
+  (with [lock]
+    (when (is-not (get share-down "reason") None)
+      (return #("down" tree rel None #()))))
+  (setv opened (fetch-open-scope guard))
+  (try
+    (setv current (fn [d] (.bytecode-is-current guard source (store.data-pyc head d) data)))
+    ;; 同じ中身(空の __init__.py 等)の前の 1 本が取り寄せたか、照らしの途中で保存先へ入った entry は、分け合う保存先へ問わずに使う
+    ;; (fetch_shared_code は機体の保存先に既に在る名を飛ばす)。
+    (setv local (store.current-data code-store key current
+                                    :check-code (not (.endswith source store.HY-SOURCE-SUFFIXES))))
+    (when (is-not local None)
+      (fetch-touch-progress progress)
+      (setv placed (fetch-place-pyc code-store source (store.data-pyc head local) prefix))
+      (return #("stored" tree rel (or placed None) #())))
+    (try
+      (setv fetched (store.fetch-shared-code share code-store key current))
+      (except [error store.ShareUnusable]
+        (setv reason (str error))
+        (with [lock]
+          (when (is (get share-down "reason") None)
+            (setv (get share-down "reason") reason)))
+        (return #("unusable" tree rel reason #()))))
+    (fetch-touch-progress progress)
+    (if (is-not fetched.data None)
+        (do (setv placed (fetch-place-pyc code-store source (store.data-pyc head fetched.data) prefix))
+            #("fetched" tree rel (or placed None) fetched.problems))
+        #("missing" tree rel None fetched.problems))
+    (finally
+      (fetch-close-scope opened))))
+
+
+(deff fetch-only-items [items jobs paths code-store inherits changed progress prefix inherit-prefix]  ; cannot be a defk: 取るだけの形の本体(VM の外)
+  {:pre [(: items tuple) (: jobs int) (: paths tuple) (: code-store (| str None)) (: inherits tuple)
+         (: changed frozenset) (: progress (| str None)) (: prefix (| str None)) (: inherit-prefix (| str None))]
+   :post [(: % plan.FetchAnswer)]}
+  "items の全部を焼かずに機体の保存先と分け合う保存先から取り寄せて .pyc を置く(compile は呼ばない・bytecode_pool も起こさない)。"
+  (setv guard (fetch-guard-module)
+        old-path (list sys.path)
+        old-dont-write sys.dont-write-bytecode
+        inherit-map (dict (gfor #(t s) inherits #(t s)))
+        stored []
+        fetched []
+        reused []
+        missing []
+        unstored []
+        need-share []
+        share-problem None
+        opened None)
+  (try
+    (setv sys.dont-write-bytecode True)
+    (setv (cut sys.path 0 0) (list paths))
+    (setv opened (fetch-open-scope guard))
+    (for [#(tree rel name) items]
+      (setv origin (.get inherit-map tree)
+            carried (and (is-not origin None) (fetch-carry-pyc tree origin rel prefix inherit-prefix)))
+      (when (and carried (fetch-carried-current guard tree rel changed prefix))
+        (setv mark-problem (fetch-keep-mark code-store tree rel name prefix))
+        (when (is-not mark-problem None)
+          (.append unstored mark-problem))
+        (.append reused #(tree rel))
+        (continue))
+      (when (fetch-current-pyc guard tree rel prefix)
+        (.append reused #(tree rel))
+        (continue))
+      (setv source (posixpath.join tree rel))
+      (try
+        (with [f (open source "rb")] (setv data (.read f)))
+        (except [OSError]
+          (.append missing #(tree rel))
+          (continue)))
+      (when (is code-store None)
+        (.append missing #(tree rel))
+        (continue))
+      (setv key (store.code-key source data name hy.__version__ (or sys.implementation.cache-tag "") sys.flags.optimize)
+            head (fetch-pyc-head data)
+            current (fn [d] (.bytecode-is-current guard source (store.data-pyc head d) data))
+            found (store.current-data code-store key current
+                                      :check-code (not (.endswith source store.HY-SOURCE-SUFFIXES))))
+      (if (is-not found None)
+          (do (setv placed (fetch-place-pyc code-store source (store.data-pyc head found) prefix))
+              (when placed
+                (.append unstored placed))
+              (.append stored #(tree rel))
+              (fetch-touch-progress progress))
+          (.append need-share #(tree rel source data key head))))
+    (when need-share
+      (setv share (store.share-from-env))
+      (cond
+        (is share None)
+          (for [#(tree rel _ _ _ _) need-share]
+            (.append missing #(tree rel)))
+        (isinstance share str)
+          (do (setv share-problem share)
+              (for [#(tree rel _ _ _ _) need-share]
+                (.append missing #(tree rel))))
+        True
+          (do (setv probe-problem (store.share-problem share))
+              (if (is-not probe-problem None)
+                  (do (setv share-problem probe-problem)
+                      (for [#(tree rel _ _ _ _) need-share]
+                        (.append missing #(tree rel))))
+                  (do (setv lock (threading.Lock)
+                            share-down {"reason" None}
+                            worker (fn [e] (fetch-one-shared share code-store guard prefix progress lock share-down e))
+                            results (if (or (<= jobs 1) (<= (len need-share) 1))
+                                        (tuple (gfor e need-share (worker e)))
+                                        (with [pool (ThreadPoolExecutor :max-workers (min FETCH-THREADS (len need-share)))]
+                                          (tuple (.map pool worker need-share)))))
+                      (for [#(kind tree rel detail problems) results]
+                        (for [p problems]
+                          (.append unstored p))
+                        (cond
+                          (= kind "stored")
+                            (do (when detail
+                                  (.append unstored detail))
+                                (.append stored #(tree rel)))
+                          (= kind "fetched")
+                            (do (when detail
+                                  (.append unstored detail))
+                                (.append fetched #(tree rel)))
+                          (= kind "unusable")
+                            (do (when (is share-problem None)
+                                  (setv share-problem detail))
+                                (.append missing #(tree rel)))
+                          True
+                            (.append missing #(tree rel))))
+                      (when (and (is share-problem None) (is-not (get share-down "reason") None))
+                        (setv share-problem (get share-down "reason"))))))))
+    (finally
+      (fetch-close-scope opened)
+      (setv (cut sys.path) old-path)
+      (setv sys.dont-write-bytecode old-dont-write)))
+  (plan.FetchAnswer :stored (tuple stored)
+                    :fetched (tuple fetched)
+                    :reused (tuple reused)
+                    :missing (tuple missing)
+                    :share-problem share-problem
+                    :unstored (tuple (sorted (set unstored)))))
+
+
+(defhandler store-fetcher [progress [pycache None] [inherit-pycache None]]
+  ;; 取るだけの形(--fetch-only)の効果を、この process の中の保存先・分け合う保存先の取り寄せで答える(BakeSources も bytecode_pool も呼ばない)。
+  (FetchSources [items jobs paths code-store inherits changed]
+    (resume (fetch-only-items items jobs paths code-store inherits changed progress pycache inherit-pycache))))
 
 
 ;; --- 保存先の entry の効果の訳し ------------------------------------------------------------------
@@ -730,6 +1132,8 @@
                  :help "写し元の木の root の .pyc の置き場(その dir が無ければ写し元の木の中を読む — 頭の註の「置き場」)")
   (.add-argument parser "--inherit" :action "append"
                  :help "写し元の木(依存のキーの同じ完成済みの root の、この木の写し元の木・空 = 無い — 木ごとに 1 つ・ADR-DOE-BUILD-002 R3c)")
+  (.add-argument parser "--fetch-only" :action "store_true"
+                 :help "焼かずに保存先と分け合う保存先から .pyc を置くだけ(取れない file か分け合う保存先の障害が在れば 1 行の訳を stderr に出して決まった 0 でない code で終わる)")
   (setv args (.parse-args parser))
   (setv shaped (run (plan.tree-arguments (tuple args.tree) (tuple (or args.roots [])))))
   (when (isinstance shaped str)
@@ -761,15 +1165,20 @@
   (setv code-store (store.store-dir))
   (setv outcomes (run (with-handlers [(sync-time-handler) slog-handler os-file-handler subprocess-handler tree-files
                                       (pool-tool-baker (or args.progress None) prefix inherit-prefix)
+                                      (store-fetcher (or args.progress None) prefix inherit-prefix)
                                       store-entries closure-reads (progress-marks (or args.progress None))]
                                      (prepare-trees trees args.revision jobs entries code-store hy.__version__
-                                                    :prefix prefix :inherit-prefix inherit-prefix))))
+                                                    :prefix prefix :inherit-prefix inherit-prefix :fetch-only args.fetch-only))))
 
   (setv failed (tuple (gfor t outcomes :if (is-not t.problem None) t)))
-  (for [t failed]
-    (print (.format "準備に失敗: {}: {}" t.named t.problem) :file sys.stderr :flush True))
-  (when failed
-    (sys.exit 1)))
+  (if args.fetch-only
+      (when failed
+        (print (. (get failed 0) problem) :file sys.stderr :flush True)
+        (sys.exit plan.FETCH-ONLY-EXIT-CODE))
+      (do (for [t failed]
+            (print (.format "準備に失敗: {}: {}" t.named t.problem) :file sys.stderr :flush True))
+          (when failed
+            (sys.exit 1)))))
 
 
 (when (= __name__ "__main__")
