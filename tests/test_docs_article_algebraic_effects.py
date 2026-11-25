@@ -52,7 +52,7 @@ FORGOT = (
     "from doeff import run\n"
     "from spire import *\n"
     "moves = [0, 0, 0, None] * 20\n"
-    "run(scheduled(silent(dice(7)(scripted(moves)(turns()(battle()))))))\n"
+    "run(silent(dice(7)(scripted(moves)(turns()(battle())))))\n"
 )
 # Example files the article may quote in fences (all from examples/effects_tour).
 QUOTED_FILES = {"spend.py", "spire.py", "test_spire.py", "clocks.py"}
@@ -315,7 +315,7 @@ try:
 except Exception as error:
     print("bare:", type(error).__name__, str(error).splitlines()[0])
 moves = [0, 0, 0, None] * 20
-runs = {run(scheduled(quiet_stats(silent(dice(7)(scripted(moves)(turns()(battle()))))))) for _ in range(3)}
+runs = {run(quiet_stats(silent(dice(7)(scripted(moves)(turns()(battle())))))) for _ in range(3)}
 print("same seed:", len(runs))
 # A run inside the Monte Carlo handler answers with its own dice: the outer dice's sequence advances in the same shape as with the random bot
 outer = []
@@ -330,7 +330,7 @@ def counted(seed):
 
     return lambda program: inner(count(program))
 
-run(scheduled(quiet_stats(silent(counted(3)(monte_carlo(PLAYOUTS)(turns()(battle())))))))
+run(quiet_stats(silent(counted(3)(monte_carlo(PLAYOUTS)(turns()(battle()))))))
 print("outer rolls:", all(n <= 10 for n in outer), len(outer) < 100)
 """
 
