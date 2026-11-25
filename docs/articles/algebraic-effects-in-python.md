@@ -628,7 +628,7 @@ The other effects that doeff's packages define work the same way, and you can in
 
 ## Time is a handler too: turns and seconds
 
-A game has more than one kind of time. The Poison of `battle` lasts three turns. A damage number rises on the screen for 0.4 seconds. Neither of them is the wall clock, and each is easiest to write as a loop that waits:
+A game has more than one kind of time. The Poison of `battle` lasts three turns. A damage number rises on the screen for four frames, 0.1 s apart. Neither of them is the wall clock, and each is easiest to write as a loop that waits:
 
 ~~~python
 # spire.py (excerpt)
@@ -642,7 +642,7 @@ def poison(n: int, turns: int):  # a lasting card effect: n damage at the end of
 ~~~python
 # clocks.py (excerpt)
 @do
-def rising(text: str):  # an animation: the number rises for four frames, 0.1 s apart
+def rising(text: str):
     for height in range(4):
         yield Draw(text, height)
         yield Delay(0.1)
