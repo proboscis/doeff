@@ -1,4 +1,4 @@
-# clocks_asyncio.py — the game of clocks.py written with asyncio, to compare.
+# clocks_asyncio.py — a small fight with a Poison and rising numbers, written with asyncio, to compare with clocks.py.
 # asyncio has one clock, the machine's: an animation's sleep really waits, and the turns are not a clock
 # at all. So the turn is an object of its own, an asyncio.Condition that every card effect is handed and
 # the fight notifies, with a count of turns so that an effect does not miss one; and the damage the card
