@@ -1446,6 +1446,20 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "UnplacedKind",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
+   "name": "WorkerLoad",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.cluster_policy",
    "name": "env_key",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1530,6 +1544,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.coordinator.core.resource_policy",
+   "name": "UnplacedKind",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.core.resource_policy",
    "name": "unplaced_memory",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R18"
@@ -1589,6 +1610,20 @@
    "name": "run_coordinator",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.intent.cluster_model",
+   "name": "UnplacedKind",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.coordinator.intent.cluster_model",
+   "name": "WorkerLoad",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -1747,6 +1782,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.core.declaring",
+   "name": "RecordArgument",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.declaring",
    "name": "RuntimeEnvInvalid",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
@@ -1806,6 +1848,20 @@
    "name": "runtime_env_of_json",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_env",
+   "name": "LocalCheckout",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.runtime_env",
+   "name": "ProjectOfCheckout",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -1908,6 +1964,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.core.service_rules",
+   "name": "RecordArgument",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.core.service_rules",
    "name": "foundation_needs_refusal",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -1977,10 +2040,31 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.checkout_model",
+   "name": "LocalCheckout",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.checkout_model",
+   "name": "ProjectOfCheckout",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.intent.detached_model",
    "name": "DetachedRefused",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.detached_model",
+   "name": "ServiceListWire",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2068,6 +2152,27 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.service_model",
+   "name": "RecordArgument",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.supplied_model",
+   "name": "SuppliedKind",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.supplied_model",
+   "name": "SuppliedRef",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.shared.intent.supplied_model",
    "name": "SuppliedValueUnavailable",
    "group": "Allowed — exception type",
@@ -2079,6 +2184,13 @@
    "name": "WorkerFactMissing",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.intent.supplied_model",
+   "name": "WorkerFactName",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2128,6 +2240,13 @@
    "name": "DetachedRefused",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.detached",
+   "name": "ServiceListWire",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2237,6 +2356,20 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "SuppliedKind",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "SuppliedRef",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
    "name": "SuppliedValueUnavailable",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
@@ -2247,6 +2380,13 @@
    "name": "WorkerFactMissing",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.shared.protocol.supplied_values",
+   "name": "WorkerFactName",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2342,6 +2482,48 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.sim.local",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "DeclaredReply",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "ProbeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "ProbeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "ProcessView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
    "name": "RemoteJobFailed",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
@@ -2366,6 +2548,13 @@
    "name": "WorkerDied",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.local",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2461,6 +2650,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.sim.worktree_git_script",
+   "name": "OriginBranch",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.sim.worktree_git_script",
    "name": "sha_of",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -2502,10 +2698,73 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.invariants",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.core.launch",
    "name": "child_environment",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "Action",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "JobRecord",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "ProbeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "ProbeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "ProcessView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.policy",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2545,6 +2804,13 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.worker.core.program",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.program",
    "name": "plan",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
@@ -2573,9 +2839,44 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.worker.core.warm_rules",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.warm_rules",
    "name": "runtime_env_of_json",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.worker_due",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.worker_due",
+   "name": "ProbeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.worker_due",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.core.worker_rules",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2629,9 +2930,86 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "Action",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "JobRecord",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "ProbeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "ProbeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "ProcessView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
    "name": "WorkerUnsettled",
    "group": "Allowed — exception type",
    "basis": "ADR-DOE-API-001 R2"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.intent.worker_model",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.code_store",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.code_store",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.coordinator_link",
+   "name": "DeclaredReply",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2646,6 +3024,13 @@
    "name": "declared_reply_of_json",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.declared",
+   "name": "DeclaredReply",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2684,6 +3069,20 @@
   },
   {
    "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.env_store",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.env_store",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
    "module": "doeff_cluster.worker.protocol.env_translation",
    "name": "file_sha256",
    "group": "Allowed — program helper",
@@ -2699,9 +3098,44 @@
   {
    "package": "doeff-cluster",
    "module": "doeff_cluster.worker.protocol.heartbeat",
+   "name": "CodeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.heartbeat",
+   "name": "CodeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.heartbeat",
    "name": "status_rows_json",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.probes",
+   "name": "ProbeState",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.probes",
+   "name": "ProbeView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.process_host",
+   "name": "ProcessView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-cluster",
@@ -2709,6 +3143,13 @@
    "name": "status_rows_json",
    "group": "Allowed — program helper",
    "basis": "ADR-DOE-API-001 R25"
+  },
+  {
+   "package": "doeff-cluster",
+   "module": "doeff_cluster.worker.protocol.world",
+   "name": "WorldView",
+   "group": "Allowed — effect value type",
+   "basis": "ADR-DOE-API-001 R19"
   },
   {
    "package": "doeff-core-effects",

@@ -353,6 +353,7 @@ class GroupFacts:
     #: Classes returned by builders placed in the group "program-shape builder and type" in the allowed table (the shape of the inventory tool's built_class).
     built: frozenset[str] = frozenset()
     #: (module, name) placed in the group "Allowed — program helper" in the allowed table (the helpers whose parameters reach effect value types — R19).
+    #: A helper row moved to the entry point (moved_to_root) is here under the entry point's key too, the key the inventory's value_types name it by.
     helpers: frozenset[Key] = frozenset()
 
 
@@ -601,7 +602,7 @@ def check_package(
     package_dir = repo / "packages" / directory
     facts = GroupFacts(
         writers=frozenset(key for key, group in groups.items() if group == ADR_WRITER_GROUP),
-        helpers=frozenset(key for key, group in groups.items() if group == HELPER_GROUP),
+        helpers=frozenset(key for key, group in (groups | shown).items() if group == HELPER_GROUP),
         commands=frozenset(commands.get(directory, {})),
         plugin_modules=tool.plugin_modules(tool.read_layout(package_dir)),
         startup_calls=tool.startup_calls(package_dir),
@@ -1993,6 +1994,7 @@ def test_a_type_only_a_program_helper_reaches_is_a_value_type_while_the_helper_i
 
     gather's parameter reaches Item, and the __init__ that the dataclass(init=False) Item writes reaches Mark. With gather in the group "Allowed — program helper",
     Item and Mark are green in the group "Allowed — effect value type". With gather left in the known table, placing them is red (naming the group).
+    A helper row the allowed table still keeps under the submodule the helper moved out of (moved_to_root) allows them the same way.
     """
     repo = _fixture_repo(tmp_path, HELPER_VALUE_TYPES)
     package = _read_fixture(repo)
@@ -2002,14 +2004,15 @@ def test_a_type_only_a_program_helper_reaches_is_a_value_type_while_the_helper_i
         "Mark": (["Item.args"], [[FIXTURE_ROOT, "gather"]]),
     }
 
-    def tables(helper_allowed: bool) -> Tables:
+    def tables(helper_allowed: bool, helper_module: str = FIXTURE_ROOT) -> Tables:
         groups = {(FIXTURE_ROOT, name): VALUE_TYPE_GROUP for name in ("Item", "Mark")}
         if helper_allowed:
-            groups[(FIXTURE_ROOT, "gather")] = HELPER_GROUP
+            groups[(helper_module, "gather")] = HELPER_GROUP
         allowed = _fixture_grouped(groups, FIXTURE_DECISION)
         return Tables(_fixture_table({} if helper_allowed else {FIXTURE_ROOT: ["gather"]}), allowed)
 
     check_package(package, *tables(True))
+    check_package(package, *tables(True, f"{FIXTURE_ROOT}.rules"))
     with pytest.raises(AssertionError, match=re.escape(f'group "{VALUE_TYPE_GROUP}"')):
         check_package(package, *tables(False))
 
