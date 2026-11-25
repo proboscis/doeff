@@ -793,6 +793,13 @@
                (if (and (is-not w.prepare None) (!= w.prepare.state "done"))
                    {"prepare" {"state" w.prepare.state "sinceMs" w.prepare.since-ms "stage" w.prepare.stage}}
                    {})
+               ;; env の掃除の失敗(heartbeat の envSweepFailure)。失敗している間だけ載せる(掃除が通っている worker の status の形・版は以前と同じ)。
+               ;; 同じ失敗が続く間は sinceMs が変わらないので版を進めず、失敗の始まり・変わり・回復の拍で版が進み、見張りが GET /resources/Worker で読む。
+               (if (is-not w.env-sweep-failure None)
+                   {"envSweepFailure" {"step" w.env-sweep-failure.step
+                                       "detail" (cut w.env-sweep-failure.detail 0 BLOCKER-DETAIL-CHARS)
+                                       "sinceMs" w.env-sweep-failure.since-ms}}
+                   {})
                ;; 世代をまたぐ recreate の job の受け渡し(AL-D2f): 前の世代がまだ動かしている job(重なりを名乗った新しい世代の間の
                ;; SupersededRun)と、今の世代が起こせると報告した job(状態の行の phase が elder-runs)。受け渡しが進むたびに版が進み、
                ;; この worker を名指した 2 つの世代の GET /watch が起きる(前の世代は外す返事を、今の世代は印の外れを次の heartbeat を

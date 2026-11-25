@@ -48,6 +48,10 @@
 ;; worker の作る mirror の dir の名(url の digest16 + .git — clone の書きかけは .git.tmp。group 1 = digest16 = 錠 locks/mirror-<digest16> の名)。
 (val MIRROR-NAME-PATTERN (re.compile r"([0-9a-f]{16})\.git(?:\.tmp)?"))
 (val SWEEP-EVERY-MS 30000)              ; roots の合計が上限を越えている間の掃除の間隔(前の掃除の終わりから — 固定の集合が変わった時はすぐ)
+;; 掃除が例外で失敗した後に、次の掃除を撃ち直すまでの間隔(ms — 失敗した掃除を拍ごとに暴走させず、間を空けて撃ち直す)。
+(val SWEEP-RETRY-MS 30000)
+;; 掃除の失敗の訳(detail)の長さの上限(字 — log と状態の報告に 1 行で載せる)。
+(val SWEEP-DETAIL-CHARS 300)
 ;; project ごとに消さない root の数(最後に使った時刻の新しい順): 今の版と 1 つ前に動いていた版(戻し先 — #3732)。
 (val KEEP-PER-PROJECT 2)
 ;; roots の合計が上限を越えた時に、消して下げる先(上限に掛ける割合)。上限ちょうどまでしか消さないと、次に完成した
@@ -86,6 +90,37 @@
   (#^ (get frozenset str) ready)
   (#^ int bytes)
   (#^ bool below-min-free))
+
+
+(defrecord SweepFailure
+  "掃除が例外で落ちた記録(周期の外の task の失敗の結末を周期へ返し、状態の報告へ載せる): step = 落ちた片づけの名・detail = 失敗の訳(例外の
+   名と最初の 1 行)・since-ms = 同じ失敗が続き始めた刻(epoch ms — heartbeat と Worker の資源の status に載せる。同じ失敗の撃ち直しで版を
+   進めない)・at-ms = 最後に落ちた刻(epoch ms — 次の撃ち直しまでの間 SWEEP-RETRY-MS を数える)。次の掃除が全部通った時に None へ戻す。"
+  {:tags {:context "worker" :role "type"}}
+  (#^ str step)
+  (#^ str detail)
+  (#^ int since-ms)
+  (#^ int at-ms))
+
+
+(defk sweep-error-detail [error]
+  {:pre [(: error Exception)] :post [(: % str)] :tags {:context "worker" :role "judgment"}}
+  "掃除の片づけが投げた例外を、log と状態の報告に載せる 1 行の訳(例外の名と最初の行・SWEEP-DETAIL-CHARS 字まで)にするため。"
+  (val text (.strip (str error)))
+  (val first-line (if text (get (.splitlines text) 0) ""))
+  (val combined (if first-line (.format "{}: {}" (. (type error) __name__) first-line) (. (type error) __name__)))
+  (cut combined 0 SWEEP-DETAIL-CHARS))
+
+
+(defk sweep-failure-after [previous step detail now-ms]
+  {:pre [(: previous (| SweepFailure None)) (: step str) (: detail str) (: now-ms int)] :post [(: % SweepFailure)]
+   :tags {:context "worker" :role "judgment"}}
+  "新しい掃除の失敗の記録を前の記録 previous から組むため: 同じ片づけと訳が続いている間は since-ms を保ち(Worker の status の版を撃ち直しの
+   たびに進めない)、at-ms だけ今の刻 now-ms へ進める。"
+  (val since (if (and (is-not previous None) (= previous.step step) (= previous.detail detail))
+                 previous.since-ms
+                 now-ms))
+  (SweepFailure :step step :detail detail :since-ms since :at-ms now-ms))
 
 
 (defk recent-per-project [roots]
@@ -189,33 +224,42 @@
           chosen)))
 
 
-(defk sweep-wanted [running tally ready cap low]
-  {:pre [(: running bool) (: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: low bool)] :post [(: % bool)]
+(defk sweep-wanted [running tally ready cap low [failed-ms None] [now-ms 0]]
+  {:pre [(: running bool) (: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: low bool)
+         (: failed-ms (| int None)) (: now-ms int)] :post [(: % bool)]
    :tags {:context "worker" :role "judgment"}}
   "掃除の係が拍(SweepEnvs)を求めているかを判じるため(heartbeat の観測 EnvDisk の sweep-wanted — worker の判断は固定の集合が変わった時と
-   これが真の時に撃つ): 掃除が走っている(running — 数えと消しは拍ごとに答えを読んで進む)・まだ数えていない(tally = None)・完成した
+   これが真の時に撃つ): 掃除が走っている(running — 数えと消しは拍ごとに答えを読んで進む)・前の掃除が失敗していれば失敗の刻 failed-ms から
+   SWEEP-RETRY-MS が経った時だけ(失敗直後は拍ごとに求めない)・失敗していなければまだ数えていない(tally = None)・完成した
    root の集合 ready が数えた時と違う・数えた合計が上限 cap を越えている・今の空きが最低を割っているか(low)が数えた時と違う(#4051 —
    割ったままで数え済みなら求めない。割ったまま固定が変われば判断の側が固定の変わりで SweepEnvs を出す)。"
-  (match tally
-    None True
-    (RootsTally) (or running (!= tally.ready ready) (> tally.bytes cap) (!= low tally.below-min-free))))
+  (cond
+    running True
+    (is-not failed-ms None) (>= (- now-ms failed-ms) SWEEP-RETRY-MS)
+    True (match tally
+           None True
+           (RootsTally) (or (!= tally.ready ready) (> tally.bytes cap) (!= low tally.below-min-free)))))
 
 
-(defk sweep-due [tally ready cap low changed now-ms swept-ms]
-  {:pre [(: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: low bool) (: changed bool) (: now-ms int) (: swept-ms int)]
+(defk sweep-due [tally ready cap low changed now-ms swept-ms [failed-ms None]]
+  {:pre [(: tally (| RootsTally None)) (: ready frozenset) (: cap int) (: low bool) (: changed bool) (: now-ms int) (: swept-ms int)
+         (: failed-ms (| int None))]
    :post [(: % bool)] :tags {:context "worker" :role "judgment"}}
-  "新しい掃除(数え)を始める時かを判じるため: まだ数えていない(tally = None)・完成した root の集合 ready が数えた時と違う(新しく完成した
-   root か消えた root — すぐ数え直す)・今の空きが最低を割っているか(low)が数えた時と違う・空きが最低を割ったままで固定の集合が
+  "新しい掃除(数え)を始める時かを判じるため: 前の掃除が失敗していれば失敗の刻 failed-ms から SWEEP-RETRY-MS が経った時だけ撃ち直す(その間は
+   固定が変わってもすぐ繰り返さない)。失敗していなければ、まだ数えていない(tally = None)・完成した root の集合 ready が数えた時と違う
+   (新しく完成した root か消えた root — すぐ数え直す)・今の空きが最低を割っているか(low)が数えた時と違う・空きが最低を割ったままで固定の集合が
    変わった(止まった job の root が候補になる — #4051)・数えた合計が上限 cap を越えたままで、固定の集合が変わったか前の掃除の終わり
    swept-ms から SWEEP-EVERY-MS が経った時。空きが割ったままの間は時刻では数え直さない(候補が増えない限り、数え直しても選べる物は
    同じ — #4051)。合計が上限の内・空きが最低の上で完成した root の集合が変わらない間は数えない(数えは root ごとに木を歩く重い仕事)。
    走っている掃除が在る間は呼び手が判じない(同時に 1 つ)。"
-  (match tally
-    None True
-    (RootsTally) (or (!= tally.ready ready)
-                     (!= low tally.below-min-free)
-                     (and low changed)
-                     (and (> tally.bytes cap) (or changed (>= (- now-ms swept-ms) SWEEP-EVERY-MS))))))
+  (if (is-not failed-ms None)
+      (>= (- now-ms failed-ms) SWEEP-RETRY-MS)
+      (match tally
+        None True
+        (RootsTally) (or (!= tally.ready ready)
+                         (!= low tally.below-min-free)
+                         (and low changed)
+                         (and (> tally.bytes cap) (or changed (>= (- now-ms swept-ms) SWEEP-EVERY-MS)))))))
 
 
 (defk prepare-overdue [progressed now limits]
