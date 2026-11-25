@@ -73,7 +73,7 @@
 (import doeff_cluster._worker.core.env_upkeep [LayerSample layer-sample-of-text])
 (import doeff_cluster._worker.core.env_prepare [
                      
-                      env-marker->json volume-of-mountinfo mounts-under prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND TREE-MOUNT EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH PYCACHE-SCOPE-LINE SHARED-VENV-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
+                      env-marker->json volume-of-mountinfo mounts-under prepare-env] doeff_cluster._worker.intent.env_prepare_model [StageStarted PrepareNote DiskFree ReadVolume ReadCgroupMemory ReadLayerSample VolumeKind EnsureMirror FetchCommit MaterializeTree CopyVenv VenvCopied VenvRefused UseSharedVenv ShareVenv VenvShared EnsureNativeWheel SyncProject InstallWheels WriteImportRoots ReadEditableRoots ReadHyVersion CompileTrees ProbeImports WriteEnvMarker MirrorReady FetchState WheelOrigin WheelReady SyncReport BytecodeTree TreeProblem BytecodeReport ProbeReport PrepareRequest KnownRoot TreeSource TreePlaced TREE-COPY TREE-EXPAND TREE-MOUNT EnvReady ROOTS-PTH PYCACHE-SCOPE-MODULE PYCACHE-SCOPE-PTH PYCACHE-SCOPE-LINE SHARED-VENV-PTH SHARED-HOOKS-PTH] doeff_cluster._shared.intent.env_marker_model [BytecodeCounts FileSha256 ENV-MARKER TreeCounts])
 (import inspect)
 (import doeff_cluster._foundation.pycache_scope :as pycache-scope)
 ;; venv へ写す置き場の口の source(worker 自身の file — import の時に 1 度だけ読む code の値。準備の file の効果の外: 模擬の世界の file にも
@@ -858,7 +858,10 @@
         (<- placed (| None FileFailed) (thin-top-entry entry shared venv moves))
         (if (isinstance placed FileFailed) (:= failed placed) (:= count (+ count 1))))))
   (when (is failed None)
-    (<- added (| None FileFailed) (WriteText (posixpath.join venv site-rel SHARED-VENV-PTH)
+    (<- added (| None FileFailed) (WriteText (posixpath.join venv site-rel SHARED-VENV-PTH) (+ site "\n")))
+    (if (isinstance added FileFailed) (:= failed added) (:= count (+ count 1))))
+  (when (is failed None)
+    (<- added (| None FileFailed) (WriteText (posixpath.join venv site-rel SHARED-HOOKS-PTH)
                                              (.format "import site; site.addsitedir({!r})\n" site)))
     (if (isinstance added FileFailed) (:= failed added) (:= count (+ count 1))))
   (when (is failed None)

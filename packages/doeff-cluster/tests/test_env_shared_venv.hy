@@ -64,6 +64,7 @@
     (.write-text (/ site (.format "pkg_{}-1.0.dist-info" i) "RECORD") ""))
   (<- src Path (made-tree root))
   (.write-text (/ site "_editable_impl_lib.pth") (+ (str src) "\n"))
+  (.write-text (/ site "lib_guard.pth") "import libpkg; libpkg.STARTED = True\n")
   (len (lfor p (.rglob venv "*") :if (or (.is-symlink p) (.is-file p)) p)))
 
 
@@ -80,7 +81,7 @@
   {:pre [(: venv Path)] :post [(: % list)] :tags {:context "doeff-cluster-test" :role "program"}}
   "venv の python で sys.prefix と、共有の venv の package と editable の package の解け先を読み、venv の bin の script の答え(sys.prefix)を
    足した行の列を返すため。"
-  (val code "import sys, pkg_7, libpkg; print(sys.prefix); print(pkg_7.N); print(libpkg.WHERE)")
+  (val code "import sys, pkg_7, libpkg; assert libpkg.STARTED; print(sys.prefix); print(pkg_7.N); print(libpkg.WHERE)")
   (val ran (subprocess.run [(str (/ venv "bin" "python")) "-c" code] :capture-output True :text True :env {"PATH" "/usr/bin:/bin"}))
   (assert (= ran.returncode 0) ran.stderr)
   (val script (subprocess.run [(str (/ venv "bin" "where"))] :capture-output True :text True :env {"PATH" "/usr/bin:/bin"}))

@@ -32,7 +32,7 @@
         doeff_cluster._shared.core.runtime_env_rules [repo-source-material key-material])
 (import doeff_cluster._worker.core.env_upkeep [PrepareLimits prepare-overdue LayerSample layer-sample->json])
 (import doeff_cluster._worker.core.env_prepare [prepare-env build-memory-of] doeff_cluster [StageStarted MaterializeTree]
-                                                                             doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH SHARED-VENV-PTH] doeff_cluster [ENV-MARKER])
+                                                                             doeff_cluster._worker.intent.env_prepare_model [PrepareRequest KnownRoot EnvReady ROOTS-PTH SHARED-VENV-PTH SHARED-HOOKS-PTH] doeff_cluster [ENV-MARKER])
 (import doeff_cluster._sim.env_world [env-world EnvWorld EnvWorldLog WorldRemote WorldCommit WorldFile read-world-log world-files
                                 set-uv-failure set-unreachable UvFailure UvFault BAKE-COMPILE-SECONDS BAKE-JOBS
                                 BAKE-CLOSURE-SECONDS BAKE-SCAN-SECONDS])
@@ -555,7 +555,7 @@
   (<- common dict (files-under (+ shared "/")))
   (<- own dict (files-under (+ outside "/")))
   (val placed (| (dfor #(p text) (.items common) :if (not-in "/.doeff-" p) (+ inside (cut p (len shared) None)) text)
-                 (dfor #(p text) (.items own) :if (not (.endswith p SHARED-VENV-PTH)) (+ inside (cut p (len outside) None)) text)
+                 (dfor #(p text) (.items own) :if (not (.endswith p #(SHARED-VENV-PTH SHARED-HOOKS-PTH))) (+ inside (cut p (len outside) None)) text)
                  {(+ inside "/bin/hy") (.format "#!{}/bin/python\nimport hy\n" inside)}))
   (for [#(path text) (.items placed)]
     (<- made (| None FileFailed) (MakeDirectory (posixpath.dirname path)))
@@ -646,7 +646,7 @@
   (val site (.format "{}/.venv/lib/python3.14/site-packages" second.root))
   (assert (= (get files (+ site "/_editable_impl_lib.pth")) (.format "{}/lib" second.root)) "editable の .pth は 2 つ目の root の木")
   (assert (= (get files (+ site "/" ROOTS-PTH)) (.format "{0}/app\n{0}/app/vendor\n" second.root)))
-  (assert (in "site.addsitedir" (get files (+ site "/" SHARED-VENV-PTH))) "共有の site-packages を足す .pth が在る")
+  (assert (in "site.addsitedir" (get files (+ site "/" SHARED-HOOKS-PTH))) "共有の site-packages を足す .pth が在る")
   True)
 
 

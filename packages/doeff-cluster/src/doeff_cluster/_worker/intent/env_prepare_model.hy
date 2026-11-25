@@ -20,8 +20,9 @@
 ;; file から置き直す)。
 (val PYCACHE-SCOPE-LINE (.format "import sys; sys.pycache_prefix = None; import {0}; {0}.install()\n" PYCACHE-SCOPE-MODULE))
 ;; root の薄い venv(共有の venv を使う root の venv)の site-packages に置き、共有の venv の site-packages を sys.path へ足す .pth の名
-;; (site.addsitedir で足す — 共有の site-packages の .pth も読まれる)。名の順で置き場の口の .pth の次・ほかの .pth より先。
+;; package は先に見えるようにする。共有の起動 hook は root の editable の検索 path を読んだ後に実行する。
 (val SHARED-VENV-PTH "01_doeff_shared_venv.pth")
+(val SHARED-HOOKS-PTH "zz_doeff_shared_hooks.pth")
 
 
 ;; --- 要求と答え ---------------------------------------------------------------------------
