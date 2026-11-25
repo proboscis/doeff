@@ -1401,10 +1401,20 @@ pub fn substitute_hits(source: &str) -> Result<Vec<SubstituteHit>, String> {
                 }
             }
             // Another definition form (defeffect, defsystem, deftable …): a {…} directly in the form is an option of the form, not a value; the rest is read as values.
+            // defsystem's job rows ((<job> (<program>) :environ {…} :readiness {…} …)) carry the same options one level down: a {…} directly in a job row is a literal
+            // the macro reads at expansion (doeff-cluster _system_form — a dict of strings, or the (filled) and (empty) marks), not a value; the program is read as values.
             _ if head.starts_with("def") => {
                 let owner = named(1).unwrap_or_else(|| head.to_string());
-                for part in items.iter().skip(1).filter(|part| !matches!(part, Hy::Form { kind: Kind::Brace, .. })) {
-                    substitutes_in(source, part, &owner, false, &mut out);
+                let not_option = |part: &&Hy| !matches!(part, Hy::Form { kind: Kind::Brace, .. });
+                for part in items.iter().skip(1).filter(not_option) {
+                    match part.expression().filter(|_| head == "defsystem" && matches!(part, Hy::Form { kind: Kind::Paren, .. })) {
+                        Some(row) => {
+                            for piece in row.iter().filter(not_option) {
+                                substitutes_in(source, piece, &owner, false, &mut out);
+                            }
+                        }
+                        None => substitutes_in(source, part, &owner, false, &mut out),
+                    }
                 }
             }
             _ => {

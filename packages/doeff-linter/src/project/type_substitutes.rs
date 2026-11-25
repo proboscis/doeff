@@ -212,4 +212,21 @@ mod tests {
         // answer-tuple is found but not stopped: 3 kinds above an empty ledger.
         assert_eq!(judge("m.hy", HY, &SubstituteCounts::default()).unwrap().len(), 3);
     }
+
+    #[test]
+    fn the_options_of_a_defsystem_job_row_are_not_values_but_its_program_is() {
+        // :environ and :readiness of a job row are literals the defsystem macro reads at expansion (doeff-cluster _system_form), like the options of the form itself;
+        // a mapping built in the job's program is still a value.
+        let source = r#"
+(defsystem notes-system [#^ Foundation foundation]
+  "notes"
+  (notes (notes-job foundation)
+    :needs #{"pool-a"} :replicas 1
+    :readiness {"windowSeconds" 30}
+    :environ {"NOTES_SECONDS" "3.0e9" "NOTICE_BROKER" (filled)})
+  (other (other-job foundation {:a 1})
+    :environ {}))
+"#;
+        assert_eq!(kinds(source), vec![("notes-system".to_string(), "static-key-dict", false)]);
+    }
 }
