@@ -88,9 +88,10 @@
 (import doeff_cluster._worker.protocol.status_file [status-file])
 (import doeff_cluster._foundation.host_contract [HOST-CONTRACT])
 (import doeff_cluster._shared.core.run_context_rules [worker-context-environ])
-(import doeff_cluster._worker.entry.line_stamp [WORKER-LOG-ENV-NAMES worker-log-plan process-lines JOB-LOG-OTLP-VAR JOB-LOG-ATTRIBUTES-VAR
-                                                 LOGS-PATH JobLogRefused endpoint-usable extra-attributes])
-(import doeff_cluster._worker.core.task_record [TaskRecordTarget task-record-target])
+(import doeff_cluster._worker.entry.line_stamp [WORKER-LOG-ENV-NAMES worker-log-plan process-lines])
+(import doeff_cluster._worker.core.task_record [TaskRecordTarget])
+(import doeff_cluster._worker.core.worker_settings [TASK-RECORD-ENV-NAMES TASK-RECORD-SERVICE-VAR default-settings-file
+                                                    merged-worker-settings parse-env-file resolve-task-record-target])
 
 
 ;; この process の世代を書く Pod の中の file の名(無ければ書かない — readinessProbe が読む)。
@@ -104,9 +105,6 @@
 (val SERVICE-CGROUP-VAR "DOEFF_WORKER_SERVICE_CGROUP")
 ;; 常駐の job の CPU の取り分の名と重み(空白で並べた「<名>=<重み>」— 無ければ services の層を分けない・worker/core/job_cgroup の「取り分」)。
 (val SERVICE-SHARES-VAR "DOEFF_WORKER_SERVICE_SHARES")
-;; task の終わりの行(task 1 本ごとの CPU 秒と memory の山)の resource の service.name(無い・空なら送らない・worker/core/task_record)。
-;; 送り先は job の log と同じ(DOEFF_JOB_LOG_OTLP の基の URL + /v1/logs・属性 DOEFF_JOB_LOG_ATTRIBUTES)。
-(val TASK-RECORD-SERVICE-VAR "DOEFF_WORKER_TASK_RECORD_SERVICE")
 ;; 兄弟の cgroup.procs を書く cgroup v2 の見えの根(起動の script の層 — deploy/boot.sh の WORKER_CGROUP_LAYOUT が書ける見えを置く。無ければ
 ;; /sys/fs/cgroup)。在れば job の子へも渡す(子が自分の子を、機体の配備が宣言した層へ置けるように)。
 (val CGROUP-DIR-VAR "DOEFF_WORKER_CGROUP_DIR")
@@ -545,26 +543,38 @@
   name)
 
 
+(defk boot-settings-env [settings-file machine-env]
+  {:pre [(: settings-file (| str None)) (: machine-env dict)] :post [(: % (get tuple #(dict (| str None))))]
+   :tags {:context "worker" :role "main"}}
+  "起動の時に設定の file(settings-file)があれば読み、container の env(machine-env)の上に重ねた dict と、読めなかった訳(正常・不在は None)を返すため。"
+  (when (is settings-file None)
+    (return #(machine-env None)))
+  (<- st (| PathStat FileFailed) (StatPath settings-file))
+  (when (isinstance st FileFailed)
+    (return #(machine-env (.format "設定の file {} を読めない: {}" settings-file st.detail))))
+  (when (and (isinstance st PathStat) (= st.kind PathKind.MISSING))
+    (return #(machine-env None)))
+  (<- raw (| str FileFailed) (ReadText settings-file))
+  (when (isinstance raw FileFailed)
+    (return #(machine-env (.format "設定の file {} を読めない: {}" settings-file raw.detail))))
+  (<- parsed (| dict str) (parse-env-file raw))
+  (when (isinstance parsed str)
+    (return #(machine-env (.format "設定の file {} が崩れている: {}" settings-file parsed))))
+  (<- merged dict (merged-worker-settings machine-env parsed))
+  #(merged None))
+
+
 (defk task-record-target-of [machine-env node]
   {:pre [(: machine-env dict) (: node str)] :post [(: % (| TaskRecordTarget str None))] :tags {:context "worker" :role "main"}}
-  "task の終わりの行の送り先を、機体の env から 1 度だけ決めるため(worker/core/task_record): 行の service.name(TASK-RECORD-SERVICE-VAR)が
-   無い・空なら送らない(None)。在るのに job の log の送り先の基の URL(DOEFF_JOB_LOG_OTLP)が無い・URL の形でない・配備の属性
-   (DOEFF_JOB_LOG_ATTRIBUTES)の並べ方が崩れている時は、送らずに訳の文を返す(入口が起動の時に 1 行で名乗る — 値そのものは文に出さない)。
+  "task の終わりの行の送り先を、機体の env から決めるため(worker/core/task_record・worker/core/worker_settings): 行の service.name
+   (TASK-RECORD-SERVICE-VAR)が無い・空なら送らない(None)。在るのに job の log の送り先の基の URL(DOEFF_JOB_LOG_OTLP)が無い・URL の形で
+   ない・配備の属性(DOEFF_JOB_LOG_ATTRIBUTES)の並べ方が崩れている時は、送らずに訳の文を返す(値は文に出さない)。
    node = 起動の引数 --node(空なら OS の host の名 — machine-name-of)。"
   (val service (.strip (.get machine-env TASK-RECORD-SERVICE-VAR "")))
   (when (not service)
     (return None))
-  (val base (.strip (.get machine-env JOB-LOG-OTLP-VAR "")))
-  (when (not base)
-    (return (.format "{} が在るのに {} が無い" TASK-RECORD-SERVICE-VAR JOB-LOG-OTLP-VAR)))
-  (val endpoint (+ (.rstrip base "/") LOGS-PATH))
-  (when (not (endpoint-usable endpoint))
-    (return (.format "{} が http か https の絶対の URL でない" JOB-LOG-OTLP-VAR)))
-  (val extra (extra-attributes (.get machine-env JOB-LOG-ATTRIBUTES-VAR "")))
-  (when (isinstance extra JobLogRefused)
-    (return extra.reason))
   (<- machine str (machine-name-of node))
-  (<- target TaskRecordTarget (task-record-target endpoint (tuple (gfor a extra #(a.key a.value))) service machine))
+  (<- target (| TaskRecordTarget str None) (resolve-task-record-target machine-env machine))
   target)
 
 
@@ -745,6 +755,9 @@
   (.add-argument parser "--room-file" :default ""
                  :help "枠の file(JSON — worker の名 → memoryMiB・pools)。渡すと起動の時と heartbeat の前に読み直し、自分の名の行の
                         値を名乗る — 枠の変更で worker を起こし直さない。空 = 読まない")
+  (.add-argument parser "--settings-file" :default ""
+                 :help "設定の file(1 行 1 設定 `名=値` — worker/core/worker_settings)。task の回収ごとに読み直し、container の env より
+                        優先する(Pod を作り直さずに設定の変更を反映する)。空で --room-file が在る時は同じ dir の worker-settings.env を読む")
   (.add-argument parser "--prepare-file" :default ""
                  :help "準備の file(JSON — state・provides・sinceMs・stage・reason。worker/core/prepare_rules)。渡すと置き換えの知らせで
                         読み直し、file の能力を --provides に足して名乗り、準備の状態を heartbeat の prepare で名乗る — 準備を起動の前に
@@ -887,8 +900,13 @@
         shared-procs (run (with-handlers [os-file-handler] (job-shared-placed job-procs)))
         ;; 待ちの子の置き場の根(#3646 — 起こす宿 warm_host と task を分ける宿 process_host が同じ値を読む)。
         warm-dir places.warm
-        ;; task の終わりの行の送り先(worker/core/task_record — 送らない時は None・使えない値の時は訳の文で、下で 1 行名乗る)。
-        task-record (run (with-handlers [subprocess-handler] (task-record-target-of machine-env args.node)))
+        ;; 設定の file(明示の --settings-file、空なら --room-file の隣の worker-settings.env — Pod を作り直さずに設定を読む)。
+        settings-file (run (default-settings-file args.settings-file args.room-file))
+        #(boot-env settings-error) (run (with-handlers [os-file-handler] (boot-settings-env settings-file machine-env)))
+        task-record-node (run (with-handlers [subprocess-handler] (machine-name-of args.node)))
+        task-record-env (tuple (gfor k TASK-RECORD-ENV-NAMES :if (in k machine-env) #(k (get machine-env k))))
+        ;; task の終わりの行の送り先(worker/core/task_record — 設定の file と container の env から決める。送らない時は None・使えない値の時は訳の文)。
+        task-record (run (resolve-task-record-target boot-env task-record-node))
         ;; job の子 process の置き場と起こし方(worker/protocol/process_host の言い換えが読む — #2464)。
         host (HostSettings :log-dir places.logs :generation places.generation :jobs-dir places.jobs
                            :program-dir places.programs :python interpreter :hy-command hy-command
@@ -896,8 +914,11 @@
                            :program-env HOST-CONTRACT.program-env :shim shim :warm-dir warm-dir
                            :notice-env HOST-CONTRACT.notice-env :service-procs service-procs :job-procs job-procs
                            :service-layer service-layer :service-shares service-shares
-                           ;; task の終わりの行の送り先(機体の配備が service.name を渡した時だけ)。
-                           :task-record (if (isinstance task-record TaskRecordTarget) task-record None))
+                           ;; task の終わりの行の送り先と、回収ごとに読み直す設定の file(Pod を作り直さずに反映する)。
+                           :task-record (if (isinstance task-record TaskRecordTarget) task-record None)
+                           :settings-file settings-file
+                           :task-record-env task-record-env
+                           :task-record-node task-record-node)
         ;; root ごとの待ちの子の置き場と起こし方(worker/protocol/warm_host の言い換えが読む — #3646)。
         warm (WarmSettings :warm-dir warm-dir :log-dir places.logs :generation places.generation :uv args.uv
                            ;; service だけが分かれる root の待ちの子を置く cgroup(版の切り替えの道を task の層の CPU の枠に置かない)。
@@ -930,6 +951,9 @@
   ;; 1 本にまとめる — coordinator の入口と同じ merged)。fd 1・2 は替えない — 子孫は元の file を継ぐ。
   ;; 終わりは process の終わり — 下の断りの traceback も送る。
   (process-lines (worker-log-plan machine-env args.name boot) :merged (in POD-UID-VAR machine-env))
+  ;; 設定の file が読めない・形が崩れていれば 1 行名乗り、container の env で続ける(worker は止めない・値は出さない)。
+  (when (is-not settings-error None)
+    (print (.format "worker: {}" settings-error) :file sys.stderr :flush True))
   ;; task の終わりの行の service.name が在るのに送り先の値が使えなければ、送らない訳を 1 行名乗る(worker は止めない)。
   (when (isinstance task-record str)
     (print (.format "worker: task の終わりの行を送らない — {}" task-record) :file sys.stderr :flush True))

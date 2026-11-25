@@ -15,10 +15,12 @@
 (import doeff_cluster [JobSpec now-epoch-ms])
 (import doeff_cluster._worker.core.task_record [TaskEnd TaskRecordTarget TaskUsage cpu-seconds-of peak-mib-of task-record-body
                                                 task-record-refusal task-record-target])
-(import doeff_cluster._worker.entry.main [task-record-target-of])
+(import doeff_cluster._worker.core.worker_settings [default-settings-file merged-worker-settings parse-env-file resolve-task-record-target])
+(import doeff_cluster._worker.entry.main [boot-settings-env task-record-target-of])
 (import doeff_cluster._worker.intent.worker_model [Outcome ProcessView SpecChanged])
 (import doeff_cluster._worker.protocol.declared [task-spec])
-(import doeff_cluster._worker.protocol.process_host [HostSettings Started StopAsked TASK-RECORD-FAILED-LOG recorded-task-end task-stop-word])
+(import doeff_cluster._worker.protocol.process_host [HostSettings SETTINGS-FILE-FAILED-LOG Started StopAsked TASK-RECORD-FAILED-LOG
+                                                     current-task-record-target recorded-task-end task-stop-word])
 (import tests.host_rig [host-settings])
 
 ;; 2026-11-16 12:00 UTC(epoch ms)。
@@ -297,3 +299,109 @@
   (assert (= target TARGET) target)
   (<- unnamed (| TaskRecordTarget str None) (with-handlers [named-machine] (task-record-target-of good "")))
   (assert (= #(unnamed.node (get unnamed.resource -1)) #("box-1" #("host.name" "box-1"))) unnamed))
+
+
+(deftest test-default-settings-file-follows-explicit-or-room-file-dir
+  ;; 明示の --settings-file が最優先。空で --room-file が在れば同じ dir の worker-settings.env。どちらも空なら None。
+  (assert (= (! (default-settings-file "/etc/custom/settings.env" "/etc/worker-room/worker-room.json")) "/etc/custom/settings.env"))
+  (assert (= (! (default-settings-file "" "/etc/worker-room/worker-room.json")) "/etc/worker-room/worker-settings.env"))
+  (assert (= (! (default-settings-file None "/etc/worker-room/worker-room.json")) "/etc/worker-room/worker-settings.env"))
+  (assert (is (! (default-settings-file "" "")) None))
+  (assert (is (! (default-settings-file None None)) None)))
+
+
+(deftest test-parse-env-file-handles-comments-overrides-and-malformed-lines-without-leaking-values
+  ;; `#` 行と空行を飛ばし、値の `=` を保ち、後の同名 key が勝つ。崩れた行は行番号だけを返し、秘密や値を文に出さない。
+  (val text (+ "# comment\n\n"
+               "DOEFF_WORKER_TASK_RECORD_SERVICE=first\n"
+               "DOEFF_JOB_LOG_ATTRIBUTES=deploy.boundary=personal,env=prod\n"
+               "DOEFF_WORKER_TASK_RECORD_SERVICE=records.task-ends\n"
+               "CLEARED=\n"))
+  (<- parsed (| dict str) (parse-env-file text))
+  (assert (= parsed {"DOEFF_WORKER_TASK_RECORD_SERVICE" "records.task-ends"
+                     "DOEFF_JOB_LOG_ATTRIBUTES" "deploy.boundary=personal,env=prod"
+                     "CLEARED" ""}) parsed)
+  (<- bad-no-eq (| dict str) (parse-env-file "OK=1\nSECRET_TOKEN_VALUE_NO_EQ\n"))
+  (assert (and (isinstance bad-no-eq str) (in "2 行目" bad-no-eq) (not-in "SECRET_TOKEN_VALUE_NO_EQ" bad-no-eq)) bad-no-eq)
+  (<- bad-empty-key (| dict str) (parse-env-file "   =secret-val\n"))
+  (assert (and (isinstance bad-empty-key str) (in "1 行目" bad-empty-key) (not-in "secret-val" bad-empty-key)) bad-empty-key))
+
+
+(deftest test-settings-file-takes-precedence-over-container-env-and-empty-value-disables
+  ;; 優先順位: file > env。file に無い key は env から補い、file の空値は env の値を明示的に無効化する。
+  (val base-env {"DOEFF_WORKER_TASK_RECORD_SERVICE" "old.service"
+                 "DOEFF_JOB_LOG_OTLP" "http://collector.test:4318"
+                 "DOEFF_JOB_LOG_ATTRIBUTES" "deploy.boundary=personal"})
+  (<- overridden dict (merged-worker-settings base-env {"DOEFF_WORKER_TASK_RECORD_SERVICE" "new.service"}))
+  (<- target (| TaskRecordTarget str None) (resolve-task-record-target overridden "node-a"))
+  (assert (isinstance target TaskRecordTarget) target)
+  (assert (= target.endpoint "http://collector.test:4318/v1/logs") target)
+  (assert (= target.resource #(#("deploy.boundary" "personal") #("service.name" "new.service") #("host.name" "node-a"))) target)
+  (<- cleared dict (merged-worker-settings base-env {"DOEFF_WORKER_TASK_RECORD_SERVICE" ""}))
+  (<- disabled (| TaskRecordTarget str None) (resolve-task-record-target cleared "node-a"))
+  (assert (is disabled None) disabled))
+
+
+(deftest test-changing-the-settings-file-updates-subsequent-tasks-without-restarting-worker [#^ Path tmp-path]
+  ;; Pod 起動時の container env に DOEFF_WORKER_TASK_RECORD_SERVICE が無くても、設定の file を追加・更新した後の task が
+  ;; worker を作り直さずに新しい値で送る。file が崩れた時は警告 log(値は出さない)を残して直前の正常値を維持し、空値で無効化できる。
+  (val settings-path (/ tmp-path "worker-settings.env"))
+  (val base-env #(#("DOEFF_JOB_LOG_OTLP" "http://collector.test:4318")
+                  #("DOEFF_JOB_LOG_ATTRIBUTES" "deploy.boundary=personal")))
+  (<- base HostSettings (host-settings tmp-path))
+  (val settings (dataclasses.replace base
+                                     :task-record None
+                                     :settings-file (str settings-path)
+                                     :task-record-env base-env
+                                     :task-record-node "node-a"))
+  (<- group str (cgroup-child tmp-path))
+  (val started (Started :view (ProcessView "task/t7" TASK 1 4242 (- NOON-MS 60000)) :fork None :group group))
+  ;; 1. 設定 file がまだ無い間: container env にも service が無いので送らない。
+  (val collector-before (Collector (HttpResponse 200 {} b"{}" "{}" ENDPOINT 0.0)))
+  (val told-before (ToldLines))
+  (<- (run-reaped settings started collector-before told-before))
+  (assert (= collector-before.posts #()) collector-before.posts)
+  (assert (= told-before.lines #()) told-before.lines)
+  ;; 2. 設定 file を足す(kubelet が ConfigMap volume を更新する再現): 同じ worker の次の task が新しい値で送る。
+  (.write-text settings-path "DOEFF_WORKER_TASK_RECORD_SERVICE=records.task-ends\n" :encoding "utf-8")
+  (val collector-added (Collector (HttpResponse 200 {} b"{}" "{}" ENDPOINT 0.0)))
+  (val told-added (ToldLines))
+  (<- (run-reaped settings started collector-added told-added))
+  (assert (= (len collector-added.posts) 1) collector-added.posts)
+  (<- rows-added tuple (posted-fields collector-added))
+  (assert (= (get (get (get rows-added 0) 0) "service.name") "records.task-ends") rows-added)
+  (assert (= (get (get (get rows-added 0) 0) "deploy.boundary") "personal") rows-added)
+  ;; 3. 設定 file の送り先 URL と service 名を替える: 次の task が新しい送り先と新しい service 名で送る。
+  (val v2-endpoint "http://collector-v2.test:4318/v1/logs")
+  (.write-text settings-path
+               "DOEFF_WORKER_TASK_RECORD_SERVICE=records.v2\nDOEFF_JOB_LOG_OTLP=http://collector-v2.test:4318\n"
+               :encoding "utf-8")
+  (val collector-v2 (Collector (HttpResponse 200 {} b"{}" "{}" v2-endpoint 0.0)))
+  (val told-v2 (ToldLines))
+  (<- (run-reaped settings started collector-v2 told-v2))
+  (assert (= (lfor #(method url _) collector-v2.posts #(method url)) [#("POST" v2-endpoint)]) collector-v2.posts)
+  (<- rows-v2 tuple (posted-fields collector-v2))
+  (assert (= (get (get (get rows-v2 0) 0) "service.name") "records.v2") rows-v2)
+  ;; 4. 設定 file が崩れた時: 警告 log(値は出さない)を出し、直前の正常値(fallback)を維持して落ちない。
+  (.write-text settings-path "BROKEN_SECRET_VALUE_LINE\n" :encoding "utf-8")
+  (val told-broken (ToldLines))
+  (<- #(kept ok) (get tuple #((| TaskRecordTarget None) bool))
+      (with-handlers [os-file-handler (recording-log told-broken)]
+        (current-task-record-target settings TARGET)))
+  (assert (and (not ok) (= kept TARGET)) #(kept ok))
+  (val warnings (tuple (gfor #(msg fields) told-broken.lines :if (= msg SETTINGS-FILE-FAILED-LOG) fields)))
+  (assert (= (len warnings) 1) warnings)
+  (assert (not-in "BROKEN_SECRET_VALUE_LINE" (get (get warnings 0) "detail")) warnings)
+  ;; 5. 設定 file で空値にすると無効化される(env に在っても止まる)。
+  (.write-text settings-path "DOEFF_WORKER_TASK_RECORD_SERVICE=\n" :encoding "utf-8")
+  (val settings-with-env-service (dataclasses.replace settings
+                                                      :task-record-env (+ base-env #(#("DOEFF_WORKER_TASK_RECORD_SERVICE" "from.env")))))
+  (val collector-off (Collector (HttpResponse 200 {} b"{}" "{}" ENDPOINT 0.0)))
+  (<- (run-reaped settings-with-env-service started collector-off (ToldLines)))
+  (assert (= collector-off.posts #()) collector-off.posts)
+  ;; 6. 起動時の boot-settings-env も file > env で解決し、崩れた file は env にフォールバックする。
+  (.write-text settings-path "DOEFF_WORKER_TASK_RECORD_SERVICE=from.file\n" :encoding "utf-8")
+  (<- #(merged err) (get tuple #(dict (| str None)))
+      (with-handlers [os-file-handler]
+        (boot-settings-env (str settings-path) {"DOEFF_WORKER_TASK_RECORD_SERVICE" "from.env" "OTHER" "1"})))
+  (assert (and (is err None) (= (get merged "DOEFF_WORKER_TASK_RECORD_SERVICE") "from.file") (= (get merged "OTHER") "1")) #(merged err)))

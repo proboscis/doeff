@@ -51,6 +51,7 @@
 (import doeff_cluster._worker.protocol.env_store [root-entry-place root-venv-path])
 (import doeff_cluster._worker.core.task_record [TaskEnd TaskRecordTarget TaskUsage cpu-seconds-of peak-mib-of task-record-body
                                                 task-record-refusal])
+(import doeff_cluster._worker.core.worker_settings [merged-worker-settings parse-env-file resolve-task-record-target])
 (import doeff_cluster._worker.intent.worker_model [Outcome])
 
 
@@ -89,9 +90,14 @@
   ;; service-procs は層の共有の子。
   (setv #^ (| str None) service-layer None)
   (setv #^ (get tuple #((get tuple #(str int)) ...)) service-shares #())
-  ;; task の終わりの行の送り先(worker/core/task_record・入口 main が DOEFF_WORKER_TASK_RECORD_SERVICE と job の log の送り先から 1 度だけ
-  ;; 決める)。None = 送らない。
-  (setv #^ (| TaskRecordTarget None) task-record None))
+  ;; task の終わりの行の送り先(worker/core/task_record・入口 main が設定の file と container の env から決める初期値 / 既定値)。None = 送らない。
+  (setv #^ (| TaskRecordTarget None) task-record None)
+  ;; worker の設定の file(ConfigMap の volume mount で kubelet が入れ替える `名=値` の file — worker/core/worker_settings)。None = 読まない。
+  (setv #^ (| str None) settings-file None)
+  ;; task の終わりの行の送り先解決の土台になる container の env(#(名 値) の並び — 設定の file に無い key のフォールバック)。
+  (setv #^ (get tuple #((get tuple #(str str)) ...)) task-record-env #())
+  ;; task の終わりの行が名乗る解決済みの機体の名(resource の host.name と欄 node)。
+  (setv #^ str task-record-node ""))
 
 
 (defrecord ForkedFrom
@@ -146,6 +152,8 @@
 (val JOB-CGROUP-SWEEP-FAILED-LOG "worker: job の cgroup の掃きが走らない")
 ;; task の終わりの行を送れなかった時の行の名(worker/core/task_record の取りこぼし — 名 + 欄 job・detail)。回収と task はそのまま進む。
 (val TASK-RECORD-FAILED-LOG "worker: task の終わりの行を送れない")
+;; 設定の file を読めない・形が崩れた時の行の名(worker/core/worker_settings — 名 + 欄 path・detail。値は出さない)。直前の正常値または env を維持。
+(val SETTINGS-FILE-FAILED-LOG "worker: 設定の file を読めない")
 ;; task の終わりの行の 1 回の POST の秒の上限(送りは拍の外の task — 上限が縛るのは送りの task の残る長さだけ)。
 (val TASK-RECORD-TIMEOUT-SECONDS 5.0)
 ;; 掃きの秒の上限(sh の rmdir と cat だけ — 越えたら諦めて次の掃きに回す)。
@@ -474,14 +482,55 @@
   None)
 
 
-(defk recorded-task-end [settings started outcome exit-code stop-reason]
-  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: exit-code (| int None)) (: stop-reason (| str None))] :post [(: % None)]
+(defk current-task-record-target [settings [fallback None]]
+  {:pre [(: settings HostSettings) (: fallback (| TaskRecordTarget None))]
+   :post [(: % (get tuple #((| TaskRecordTarget None) bool)))]
+   :tags {:context "worker" :role "protocol"}}
+  "設定の file(settings.settings-file)と container の env(settings.task-record-env)から、今の task の終わりの行の送り先を解決するため
+   (優先の順: file > env)。答え = #(送り先 か None, 正常に読めたか)。settings-file が None の時は settings.task-record をそのまま返す。
+   file が存在しない時は env のみで解決する。読み込み失敗・書式崩れ・不正値の時は警告 log(値は出さない)を出して #(fallback False) を返す。"
+  (when (is settings.settings-file None)
+    (return #(settings.task-record True)))
+  (val path settings.settings-file)
+  (val base-env (dfor #(k v) settings.task-record-env k v))
+  (<- st (| PathStat FileFailed) (StatPath path))
+  (when (isinstance st FileFailed)
+    (<- (slog SETTINGS-FILE-FAILED-LOG :level "warning" :path path :detail st.detail))
+    (return #(fallback False)))
+  (var file-values {})
+  (when (not (and (isinstance st PathStat) (= st.kind PathKind.MISSING)))
+    (<- raw (| str FileFailed) (ReadText path))
+    (when (isinstance raw FileFailed)
+      (<- (slog SETTINGS-FILE-FAILED-LOG :level "warning" :path path :detail raw.detail))
+      (return #(fallback False)))
+    (<- parsed (| dict str) (parse-env-file raw))
+    (when (isinstance parsed str)
+      (<- (slog SETTINGS-FILE-FAILED-LOG :level "warning" :path path :detail parsed))
+      (return #(fallback False)))
+    (:= file-values parsed))
+  (<- merged dict (merged-worker-settings base-env file-values))
+  (<- resolved (| TaskRecordTarget str None) (resolve-task-record-target merged settings.task-record-node))
+  (when (isinstance resolved str)
+    (<- (slog SETTINGS-FILE-FAILED-LOG :level "warning" :path path :detail resolved))
+    (return #(fallback False)))
+  #(resolved True))
+
+
+(defk recorded-task-end [settings started outcome exit-code stop-reason [resolved-target None] [has-resolved False]]
+  {:pre [(: settings HostSettings) (: started Started) (: outcome Outcome) (: exit-code (| int None)) (: stop-reason (| str None))
+         (: resolved-target (| TaskRecordTarget None)) (: has-resolved bool)] :post [(: % None)]
    :tags {:context "worker" :role "protocol"}}
   "回収する task の終わりの行を、設定の送り先へ拍の外の task で 1 回送るため(worker/core/task_record — 常駐の job と、送り先の無い worker は
-   送らない)。拍は送りの終わりを待たない — 送り先が遅い・届かない時も、回収と次の job の起動と状態の報告を止めない。"
-  (val target settings.task-record)
+   送らない)。settings.settings-file が在る時は回収のたびに設定の file を読み直す(has-resolved True の時は呼び手が解決済みの値を使う)。
+   拍は送りの終わりを待たない — 送り先が遅い・届かない時も、回収と次の job の起動と状態の報告を止めない。"
   (val view started.view)
-  (when (or (is target None) (not view.spec.once))
+  (when (not view.spec.once)
+    (return None))
+  (var target resolved-target)
+  (when (not has-resolved)
+    (<- #(fresh _ok) (get tuple #((| TaskRecordTarget None) bool)) (current-task-record-target settings settings.task-record))
+    (:= target fresh))
+  (when (is target None)
     (return None))
   (<- now int (now-epoch-ms))
   (<- usage TaskUsage (task-group-usage started.group))
@@ -616,6 +665,8 @@
   ;; 有効化までだけ観測の期限を持つ。常駐の起動の後で旧世代が退いた場合も、起動をもう一度要求せずに取り分を有効にする。
   (session var shares-ready (or (is settings.service-layer None) (not settings.service-shares)))
   (session var shares-read-ms None)
+  ;; 設定の file から最後に正常に解決できた task の終わりの行の送り先(file が一時的に読めない・崩れた時のフォールバック)。
+  (session var last-task-record settings.task-record)
   (StartJob [spec attempt code-path warm-key warm-places]
     (when (in spec.name table) (raise (RuntimeError f"{spec.name} は既に動いています")))
     ;; 実行環境の job は空の作業 dir で起こす — 前の job の作業 dir が残っていれば置き場へ退ける(消しは拍の外)。
@@ -677,7 +728,12 @@
         (<- now int (now-epoch-ms))
         (<- (noted-stop StopMoment.REAPED name pid started.stop now)))
       ;; task の終わりの行(worker/core/task_record): job の名の子は次の掃きまで残るので、ここで CPU 秒と memory の山を読める。
-      (<- (recorded-task-end settings started outcome exit-code stop-reason))
+      ;; 設定の file が在る時は回収のたびに読み直し、正常に読めた送り先を last-task-record へ保つ。
+      (when started.view.spec.once
+        (<- #(target ok) (get tuple #((| TaskRecordTarget None) bool)) (current-task-record-target settings last-task-record))
+        (when ok
+          (:= last-task-record target))
+        (<- (recorded-task-end settings started outcome exit-code stop-reason :resolved-target target :has-resolved True)))
       ;; 実行環境の job の作業 dir(worker が作った物だけ)は、終わった後に置き場へ退け、拍の外の task が消す(頭の註 — 拍は消しの終わりを
       ;; 待たない)。
       (when started.view.spec.runtime-env

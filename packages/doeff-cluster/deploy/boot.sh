@@ -1304,6 +1304,9 @@ fi
 # coordinator が数える — 手書きの task の枠(WORKER_TASK_RESERVE・WORKER_BACKGROUND_ROOM・WORKER_CAPACITY)は渡されても読まない。
 set --
 [ -z "${WORKER_ROOM_FILE:-}" ] || set -- "$@" --room-file "$WORKER_ROOM_FILE"
+# 設定の file: WORKER_SETTINGS_FILE(1 行 1 設定 `名=値` — worker/core/worker_settings)が渡されれば --settings-file へ渡す。
+# 渡されず WORKER_ROOM_FILE が在る時は、worker の入口が枠の file と同じ dir の worker-settings.env を既定で読む(Pod を作り直さない)。
+[ -z "${WORKER_SETTINGS_FILE:-}" ] || set -- "$@" --settings-file "$WORKER_SETTINGS_FILE"
 # 準備の file: WORKER_PREPARE_FILE(state・provides・sinceMs・stage・reason の JSON — worker/core/prepare_rules の頭の註)が渡されれば、
 # worker は heartbeat の前にその file を読み直し、file の能力を WORKER_PROVIDES に足して名乗り、準備の状態を heartbeat の prepare で
 # 名乗る。上に載る系の準備を起動の前に待たずに worker を起こし、準備が済んだ後で能力を足すため(file はまだ無くてよい — running と名乗る)。
