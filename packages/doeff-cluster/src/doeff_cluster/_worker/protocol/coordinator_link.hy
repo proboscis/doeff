@@ -192,7 +192,7 @@
                           #^ (| FileNotices None) [prepare-notices None]]
     (setv self.name name self.provides provides self.exclusive exclusive self.node node self.pod-ip pod-ip
           self.tools (or tools {})
-          self.handles-envs handles-envs self.env-report None
+          self.handles-envs handles-envs self.env-report None self.sent-sweep-failure None
           self.fence-ms fence-ms self.statuses []
           ;; 途絶しても動かし続けてよい印の在る job を止めるまでの長い方の柵(#2804 — 返事の timing の keep_fence_ms が上書きする。
           ;; 欄の無い返事 = 古い coordinator は印も付けないので、この既定が使われる事は無い)。
@@ -619,6 +619,7 @@
   (val sending state.statuses)
   (val stopping state.stopping)
   (val preparing state.prepare)
+  (val sending-sweep-failure (if (is state.env-report None) None (.get state.env-report "sweepFailure")))
   ;; 送る前に起こしの印を下ろす(送った後に来た変化の印を消さない)。
   (setv state.watch.woken False)
   (val endpoint (get cell.route.urls cell.route.active))
@@ -707,6 +708,7 @@
     (setv state.sent-statuses sending
           state.sent-stopping stopping
           state.sent-prepare preparing
+          state.sent-sweep-failure sending-sweep-failure
           state.beat-interval-ms (beat-interval-ms timing state.task-echo)
           ;; 退いた世代の印(返事の superseded)は Pod の job の label の答え手が読む。
           state.last-desired (DesiredJobs (+ state.last-jobs state.last-tasks) :warm state.last-warm :superseded declared.superseded))
@@ -1238,9 +1240,10 @@
   (var desired state.last-desired)
   ;; 止まり始め(#2819)と準備の姿の移り(準備で足す能力が置き方に効くまでを、送る間隔で遅らせない)は、状態の報告の違いと同じく、
   ;; 送る間隔を待たずに名乗る。
+  (val sweep-failure (if (is state.env-report None) None (.get state.env-report "sweepFailure")))
   (when (heartbeat-due watching (is-not state.last-desired None) state.watch.woken
                        (or (!= state.statuses state.sent-statuses) (!= state.stopping state.sent-stopping)
-                           (!= state.prepare state.sent-prepare))
+                           (!= state.prepare state.sent-prepare) (!= sweep-failure state.sent-sweep-failure))
                        silent state.beat-interval-ms)
     ;; 送りの事実(#3850)は送り口が溜め、宣言の読みが渡す(拍の外の送りと同じ数え方)。
     (<- beaten (| DesiredJobs DesiredUnreadable) (sent-beat state cell options))

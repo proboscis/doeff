@@ -25,7 +25,7 @@
 (import doeff_cluster._coordinator.intent.task_table [ENDED-PHASES TaskTable task-table-of])
 (import doeff_cluster._shared.intent.job_model [IdleBudget JobSpec])
 (import doeff_cluster._shared.intent.protocol [ClusterTiming Request])
-(import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow MeasuredLoad PrepareReport])
+(import doeff_cluster._coordinator.intent.request_bodies [StatusRow DurationRow MeasuredLoad PrepareReport EnvSweepFailure])
 (import doeff_cluster._shared.intent.detached_model [TaskLimit GroupLimit DetachedEnded DetachedOutbox DetachedOutboxAcked])
 (import doeff_cluster._shared.intent.compartment_model [MachineCompartments HeldCompartment])
 
@@ -140,6 +140,9 @@
   ;; done でない間の Worker の status に写す(知らせる読み手が準備の遅れと落ちを読む)。保存しない(次の heartbeat で埋まる)。
   ;; 位置で渡す欄の後ろに置かない(retired と boot-at の前)。
   (setv #^ (| PrepareReport None) prepare None)
+  ;; env の掃除の失敗(heartbeat の envSweepFailure — 落ちた片づけの名・訳・続き始めた刻。掃除が通れば None)。保存しない(次の heartbeat で
+  ;; 埋まる)。GET /resources/Worker の status と GET /state の worker の行に写し、見張りが読めるようにする。位置で渡す欄の後ろに置かない。
+  (setv #^ (| EnvSweepFailure None) env-sweep-failure None)
   ;; 退いた世代(boot の欄の説明 — 位置で渡す欄の後ろに置く)。
   (setv #^ (get tuple #(str ...)) retired #())
   ;; 今の世代の process の起動時刻(epoch ms・heartbeat の bootAt — 2026-09-27)。今の世代と来た世代の両方の起動時刻を知る時は、

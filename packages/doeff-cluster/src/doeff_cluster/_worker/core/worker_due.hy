@@ -31,7 +31,7 @@
 (import doeff_cluster._shared.core.due_policy [due-of-instants earliest-due])
 (import doeff_cluster._worker.intent.worker_model [CodeState ProbeState StopStage WorldView WorkerPolicy WakeSet])
 (import doeff_cluster._worker.core.policy [backoff-ms backoff-from])
-(import doeff_cluster._worker.core.env_upkeep [RootsTally PrepareLimits SWEEP-EVERY-MS])
+(import doeff_cluster._worker.core.env_upkeep [RootsTally PrepareLimits SWEEP-EVERY-MS SWEEP-RETRY-MS])
 (import doeff_cluster._worker.core.warm_rules [warm-child-refused])
 
 
@@ -98,12 +98,17 @@
   due)
 
 
-(defk sweep-interval-due [now tally cap swept-ms]
-  {:pre [(: now int) (: tally (| RootsTally None)) (: cap int) (: swept-ms int)] :post [(: % (| DueAt DueNever))]
+(defk sweep-interval-due [now tally cap swept-ms [failed-ms None]]
+  {:pre [(: now int) (: tally (| RootsTally None)) (: cap int) (: swept-ms int) (: failed-ms (| int None))] :post [(: % (| DueAt DueNever))]
    :tags {:context "worker" :role "judgment"}}
-  "roots の数え直しの判断(env_upkeep.sweep-due)が時刻だけで変わる刻を知るため: 数えた合計が上限 cap を越えている間だけ、前の掃除の
-   終わり swept-ms から SWEEP-EVERY-MS。まだ数えていない・上限の内なら、時刻では変わらない。"
-  (<- due (| DueAt DueNever) (due-after now (if (and (is-not tally None) (> tally.bytes cap)) #((+ swept-ms SWEEP-EVERY-MS)) #())))
+  "roots の数え直し・失敗後の撃ち直しの判断(env_upkeep.sweep-due)が時刻だけで変わる刻を知るため: 前の掃除が失敗していれば失敗の刻
+   failed-ms から SWEEP-RETRY-MS、失敗していなければ数えた合計が上限 cap を越えている間だけ前の掃除の終わり swept-ms から
+   SWEEP-EVERY-MS。まだ数えていない・上限の内なら、時刻では変わらない。"
+  (val instants (cond
+                  (is-not failed-ms None) #((+ failed-ms SWEEP-RETRY-MS))
+                  (and (is-not tally None) (> tally.bytes cap)) #((+ swept-ms SWEEP-EVERY-MS))
+                  True #()))
+  (<- due (| DueAt DueNever) (due-after now instants))
   due)
 
 

@@ -211,6 +211,10 @@
                                       {"prepare" {"state" w.info.prepare.state "sinceMs" w.info.prepare.since-ms
                                                   "stage" w.info.prepare.stage "reason" w.info.prepare.reason
                                                   "provides" (list w.info.prepare.provides)}})
+                                  (if (is w.info.env-sweep-failure None) {}
+                                      {"envSweepFailure" {"step" w.info.env-sweep-failure.step
+                                                          "detail" w.info.env-sweep-failure.detail
+                                                          "sinceMs" w.info.env-sweep-failure.since-ms}})
                                   (if (in w.info.name measured) {"measured" (get measured w.info.name)} {})))
    "placements" (dfor #(k v) (.items view.placements) k (asdict v))
    "unplaced" view.unplaced

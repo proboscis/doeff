@@ -37,7 +37,7 @@
 (import posixpath)
 (import re)
 (import doeff_core_effects [slog])
-(import doeff_core_effects [Spawn CreatePromise CompletePromise FailPromise Promise])
+(import doeff_core_effects [Spawn CreatePromise CompletePromise Promise])
 (import doeff_core_effects [Compute Computed ComputeFailed])
 (import doeff_time [WaitWithin])
 (import doeff_core_effects [PathKind PathStat FileFailed StatPath ReadText WriteText ListDirectory WalkTree StatTree RenamePath MakeDirectory RemoveTree ReadDiskUsage MeasureTree
@@ -57,7 +57,8 @@
 (import doeff_cluster._worker.core.worker_rules [ENV-KEY-PREFIX])
 (import doeff_cluster._worker.core.launch [entry-place-of-marker venv-of-marker])
 (import doeff_cluster._worker.core.job_cgroup [prepare-group-dir grouped-argv closing-argv placed-argv])
-(import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
+(import doeff_cluster._worker.core.env_upkeep [RootInfo RootsTally PrepareLimits SweepFailure sweep-candidates sweep-choice sweep-wanted sweep-due roots-bytes kept-bytes
+                                              sweep-error-detail sweep-failure-after
                                               prepare-overdue env-capacity WHEEL-UNUSED-SECONDS CODE-STORE-UNUSED-SECONDS MIRROR-UNUSED-SECONDS unused-mirror-names MemoryUse LayerMemoryUse MemoryUnread WarmRoom
                                               LayerSample memory-use-of layer-memory-use-of unreclaimable-of layer-sample->json sampled-layer root-estimate build-memory-estimate reclaimable-bytes warm-refusal
                                               DEFAULT-BUILD-MEMORY-BYTES layer-need used-root-keys ROOT-NAME-PATTERN])
@@ -78,6 +79,9 @@
 ;; 掃除の終わりの行の名(#3715 — 名 + 欄の形: removed = 脇へ退けて消した root の数・leftovers = 消した脇の dir と古い wheel の数・
 ;; took-ms = 数えの始めから消しの終わりまでの ms)。
 (val SWEEP-DONE-LOG "worker: 掃除の終わり")
+;; 掃除の片づけが例外で失敗した行の名(名 + 欄の形: step = 落ちた片づけの名・detail = 失敗の訳。worker の process は終わらせず、
+;; 状態の報告 EnvReport → heartbeat の envSweepFailure にも載せて次の掃除を間を空けて撃ち直す)。
+(val SWEEP-FAILED-LOG "worker: 掃除が失敗した")
 ;; 使われない repo の bare mirror を消した行の名(名 + 欄の形: mirror = mirrors/ の下の dir の名・unused-ms = 最後に使ってからの ms)。
 (val MIRROR-SWEPT-LOG "worker: 使われない mirror を消した")
 ;; 鍵の表を読めず、mirror の名を決められないので mirror を消さなかった行の名(path = 鍵の表の file)。
@@ -523,9 +527,10 @@
 
 (defrecord MeasuredRoots
   "掃除の数え(ループの外の task)の答え: infos = root ごとの観測(大きさは MeasureTree で数えた byte か、前の数えから使い回した byte)・
-   walked = この数えで木を歩いた(MeasureTree を呼んだ)root の数(掃除の頭の行の欄)。"
+   walked = この数えで木を歩いた(MeasureTree を呼んだ)root の数(掃除の頭の行の欄)・free = 数えの終わりに読んだ共有の disk の空き(byte)。"
   (#^ (get tuple #(RootInfo ...)) infos)
-  (#^ int walked))
+  (#^ int walked)
+  (setv #^ int free 0))
 
 
 (defk root-infos [settings known]
@@ -572,25 +577,40 @@
 
 
 (defrecord RemovedRoots
-  "掃除の消し(ループの外の task)の答え: paths = 消した dir(脇へ退けた root・途中で止まった準備の残り・7 日使われない wheel・使われない
-   mirror)。"
+  "掃除の消し(ループの外の task — removing-leftovers)の答え: paths = 消した dir(脇へ退けた root・途中で止まった準備の残り・7 日使われない
+   wheel・使われない mirror)。"
   (#^ (get tuple #(str ...)) paths))
 
 
+(defrecord SweepFailed
+  "掃除のループの外の task が例外で落ちた結末(CompletePromise で周期へ値として返す — FailPromise で周期の Program を終わらせない):
+   step = 落ちた片づけの名・detail = 失敗の訳(例外の名と文の 1 行)。"
+  (#^ str step)
+  (#^ str detail))
+
+
+(defrecord SweepPinned
+  "固定の file の書き(ループの外の task — pinning-roots)が通った結末。")
+
+
+(defrecord SweepPinning
+  "走っている固定の file の書き: done = 答え(SweepPinned か SweepFailed)を受ける Promise・started-ms = 始めた時刻。"
+  (#^ Promise done)
+  (#^ int started-ms))
+
+
 (defrecord SweepMeasuring
-  "走っている掃除の数え: done = 答え(MeasuredRoots)を受ける Promise・started-ms = 掃除を始めた時刻・ready = 数えを始めた拍の完成した
-   root のキーの集合(数えの結び RootsTally に載せる — #3732)。"
+  "走っている掃除の数え: done = 答え(MeasuredRoots か SweepFailed)を受ける Promise・started-ms = 掃除を始めた時刻・ready = 数えを始めた拍の
+   完成した root のキーの集合(数えの結び RootsTally に載せる — #3732)。"
   (#^ Promise done)
   (#^ int started-ms)
   (#^ (get frozenset str) ready))
 
 
 (defrecord SweepRemoving
-  "走っている掃除の消し: done = 答え(RemovedRoots)を受ける Promise・started-ms = 掃除を始めた時刻(数えの始め)・keys = 脇へ退けた root の
-   キー(脇の名は . で始まるので、消している間は選びにも完成品の観測にも出ない)。"
+  "走っている掃除の選び・退け・消し・prune: done = 答え(SweepRemoved か SweepFailed)を受ける Promise・started-ms = 掃除を始めた時刻(数えの始め)。"
   (#^ Promise done)
-  (#^ int started-ms)
-  (#^ (get tuple #(str ...)) keys))
+  (#^ int started-ms))
 
 
 (defrecord PinRecord
@@ -678,44 +698,92 @@
   (setv #^ int started-ms 0))
 
 
-(defk sweep-leftovers [settings now-ms]
-  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
-  "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
-   wheel(build の口の保存先 — 口が使うたびに dir の中の印の file を置き換えて dir の時刻を進める)と、7 日使われない bytecode の
-   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)と中が全部 7 日動いて
-   いない保存先の dir(unused-store-names)と、終わった世代の固定の
-   file(AL-D2g)と、root の宣言が指さず 7 日使われない repo の bare mirror(unused-mirrors)を消し、消した path の列を返すため。"
+(defrecord SweepRemoved
+  "掃除の選び・退け・残りの片づけ・prune(ループの外の task — removing-sweep)の結末: keys = 脇へ退けた root のキー・
+   paths = 消した path の列・prune = 次の PruneState・failures = 途中で落ちた片づけの失敗の列(全部通れば空)。"
+  (#^ (get tuple #(str ...)) keys)
+  (#^ (get tuple #(str ...)) paths)
+  (#^ PruneState prune)
+  (setv #^ (get tuple #(SweepFailed ...)) failures #()))
+
+
+(defk sweep-aside-roots [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
+  "脇へ退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)と、その RAM の .pyc の置き場(symlink の先)を消し、
+   消した path の列を返すため。"
   (<- place str (roots-dir settings))
   (<- roots (ListDirectory place))
   (val aside (if (isinstance roots FileFailed)
                  #()
                  (tuple (gfor entry roots :if (and (.startswith entry.name ".") (or (in ".broken." entry.name) (in SWEPT-MARK entry.name)))
                               (+ place "/" entry.name)))))
-  (<- wheels (ListDirectory (wheels-root (or settings.shared settings.state))))
+  (<- placed tuple (pycache-targets aside))
+  (val doomed (+ placed aside))
+  (for [target doomed]
+    (<- (RemoveTree target)))
+  doomed)
+
+
+(defk sweep-stale-wheels [settings now-ms]
+  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
+  "7 日使われない native の wheel(build の口の保存先)を消し、消した path の列を返すため。"
+  (val root (wheels-root (or settings.shared settings.state)))
+  (<- wheels (ListDirectory root))
   (var stale #())
   (when (not (isinstance wheels FileFailed))
     (for [entry wheels]
       (when (= entry.kind PathKind.DIRECTORY)
-        (val path (+ (wheels-root (or settings.shared settings.state)) "/" entry.name))
+        (val path (+ root "/" entry.name))
         (<- at (modified-ms path))
         (when (and (is-not at None) (> (- now-ms at) (* 1000 WHEEL-UNUSED-SECONDS)))
           (:= stale (+ stale #(path)))))))
+  (for [target stale]
+    (<- (RemoveTree target)))
+  stale)
+
+
+(defk sweep-code-store [settings now-ms]
+  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
+  "7 日使われない bytecode の保存先の entry と空の dir(unused-store-entries)を消し、消した path の列を返すため。"
   (<- unused tuple (unused-store-entries settings.code-store now-ms))
-  ;; 終わった世代(状態の dir が無い)の固定の file(AL-D2g)。
+  (for [target unused]
+    (<- (RemoveTree target)))
+  unused)
+
+
+(defk sweep-ended-pins [settings]
+  {:pre [(: settings EnvSettings)] :post [(: % tuple)]}
+  "終わった世代(状態の dir が無い)の固定の file(AL-D2g)を消し、消した path の列を返すため。"
   (<- pins tuple (pin-records settings))
   (val ended (tuple (gfor r pins :if (not r.alive) r.path)))
-  ;; RAM の dir に置いた root の .pyc の置き場(symlink の先)は、root の dir と一緒に消す。
-  (<- placed tuple (pycache-targets aside))
-  (val doomed (+ placed aside stale unused ended))
-
-  (for [target doomed]
+  (for [target ended]
     (<- (RemoveTree target)))
-  ;; root の宣言が指さず 7 日使われない repo の bare mirror(mirror ごとに url の錠の中で消す — unused-mirrors)。
+  ended)
+
+
+(defk sweep-mirrors [settings now-ms]
+  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
+  "root の宣言が指さず 7 日使われない repo の bare mirror(unused-mirrors)を消し、消した path の列を返すため。"
+  (<- pins tuple (pin-records settings))
   (<- mirrors tuple (unused-mirrors settings pins now-ms))
-  ;; 使う root が無くなった共有の venv(共有の venv ごとに、その錠の中で root の使いを読み直して消す — unused-venvs)。root を
-  ;; 消した後に読むので、この掃除で消した root の共有の venv も消える。
+  mirrors)
+
+
+(defk sweep-leftovers [settings now-ms]
+  {:pre [(: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
+  "脇の dir — 消すと選んで退けた root(.<名>.swept.<時刻>)と途中で止まった準備の残り(.<名>.broken.<時刻>)— と、7 日使われない native の
+   wheel(build の口の保存先 — 口が使うたびに dir の中の印の file を置き換えて dir の時刻を進める)と、7 日使われない bytecode の
+   保存先の entry(使うたびに entry の時刻を進める — doeff-hy の code_store・書きかけで残った一時の file も同じ)と中が全部 7 日動いて
+   いない保存先の dir(unused-store-names)と、終わった世代の固定の
+   file(AL-D2g)と、root の宣言が指さず 7 日使われない repo の bare mirror(unused-mirrors)と、使う root が無くなった共有の venv
+   (unused-venvs)を消し、消した path の列を返すため。"
+  (<- aside tuple (sweep-aside-roots settings))
+  (<- wheels tuple (sweep-stale-wheels settings now-ms))
+  (<- store tuple (sweep-code-store settings now-ms))
+  (<- ended tuple (sweep-ended-pins settings))
+  (<- mirrors tuple (sweep-mirrors settings now-ms))
   (<- venvs tuple (unused-venvs settings))
-  (+ doomed mirrors venvs))
+  (+ aside wheels store ended mirrors venvs))
 
 
 (defk venv-users [settings]
@@ -948,43 +1016,76 @@
                        entry.name))))
 
 
-(defk measuring-roots [settings known done]
-  {:pre [(: settings EnvSettings) (: known tuple) (: done Promise)] :post [(: % None)]}
-  "掃除の数え(root ごとの MeasureTree — root 1 つが数千の file の木)をループの外の task で行い、答えを done へ渡すため(#3715)。
-   known = 前の数えの root ごとの観測(変わっていない root は歩かない — root-infos)。
-   失敗も done へ渡す(渡さないと掃除が走り続けていると読まれ、次の掃除が起きない — 失敗はループが答えを読んだ拍で上がる)。"
+(defk pinning-roots [settings pinned done]
+  {:pre [(: settings EnvSettings) (: pinned frozenset) (: done Promise)] :post [(: % None)]}
+  "この世代の固定の集合を固定の file へ書く仕事をループの外の task で行い、成功・失敗を値(SweepPinned か SweepFailed)として done へ返すため
+   (例外を周期の Program へ上げない)。"
   (try
-    (<- measured MeasuredRoots (root-infos settings known))
-    (<- (CompletePromise done measured))
+    (<- (wrote-pins settings pinned))
+    (<- (CompletePromise done (SweepPinned)))
     (except [error Exception]
-      (<- (FailPromise done error))))
+      (<- detail str (sweep-error-detail error))
+      (<- (CompletePromise done (SweepFailed :step "write-pins" :detail detail)))))
+  None)
+
+
+(defk measuring-roots [settings known pinned write-pins done]
+  {:pre [(: settings EnvSettings) (: known tuple) (: pinned frozenset) (: write-pins bool) (: done Promise)] :post [(: % None)]}
+  "掃除の数え(root ごとの MeasureTree — root 1 つが数千の file の木)と必要なら固定の file の書きをループの外の task で行い、答えを
+   値(MeasuredRoots か SweepFailed)として done へ渡すため(#3715)。
+   known = 前の数えの root ごとの観測(変わっていない root は歩かない — root-infos)。
+   例外は FailPromise にせず SweepFailed(落ちた片づけの名と訳)として返し、worker の process と job を終わらせない。"
+  (var step "measure-roots")
+  (try
+    (when write-pins
+      (:= step "write-pins")
+      (<- (wrote-pins settings pinned)))
+    (:= step "measure-roots")
+    (<- measured MeasuredRoots (root-infos settings known))
+    (<- free int (disk-free settings))
+    (<- (CompletePromise done (replace measured :free free)))
+    (except [error Exception]
+      (<- detail str (sweep-error-detail error))
+      (<- (CompletePromise done (SweepFailed :step step :detail detail)))))
   None)
 
 
 (defk removing-leftovers [settings now-ms done]
   {:pre [(: settings EnvSettings) (: now-ms int) (: done Promise)] :post [(: % None)]}
-  "掃除の消し(脇へ退けた root の木と残りの片づけ — sweep-leftovers)をループの外の task で行い、答えを done へ渡すため(#3715)。
-   失敗も done へ渡す(measuring-roots と同じ訳)。"
+  "掃除の消し(脇へ退けた root の木と残りの片づけ — sweep-leftovers)をループの外の task で行い、答えを値(RemovedRoots か SweepFailed)
+   として done へ渡すため(#3715)。例外は FailPromise にせず SweepFailed として返す。"
   (try
     (<- removed tuple (sweep-leftovers settings now-ms))
     (<- (CompletePromise done (RemovedRoots :paths removed)))
     (except [error Exception]
-      (<- (FailPromise done error))))
+      (<- detail str (sweep-error-detail error))
+      (<- (CompletePromise done (SweepFailed :step "remove-leftovers" :detail detail)))))
   None)
 
 
-(defk start-measuring [settings ready known now-ms]
-  {:pre [(: settings EnvSettings) (: ready frozenset) (: known tuple) (: now-ms int)] :post [(: % SweepMeasuring)]}
+(defk start-pinning [settings pinned now-ms]
+  {:pre [(: settings EnvSettings) (: pinned frozenset) (: now-ms int)] :post [(: % SweepPinning)]}
+  "固定の file の書きをループの外の task として起こすため。"
+  (<- done Promise (CreatePromise))
+  (<- (Spawn (pinning-roots settings pinned done) :daemon True))
+  (SweepPinning :done done :started-ms now-ms))
+
+
+(defk start-measuring [settings ready known pinned write-pins now-ms]
+  {:pre [(: settings EnvSettings) (: ready frozenset) (: known tuple) (: pinned frozenset) (: write-pins bool) (: now-ms int)]
+   :post [(: % SweepMeasuring)]}
   "掃除の数えをループの外の task として起こし、走っている数えの記録を返すため(ループは待たない — 答えは後の拍で sweep-answer が読む)。
    ready = この拍の完成した root のキーの集合・known = 前の数えの root ごとの観測(まだ数えていなければ空)。"
   (<- done Promise (CreatePromise))
-  (<- (Spawn (measuring-roots settings known done) :daemon True))
+  (<- (Spawn (measuring-roots settings known pinned write-pins done) :daemon True))
   (SweepMeasuring :done done :started-ms now-ms :ready ready))
 
 
 (defk sweep-answer [work]
-  {:pre [(: work (| SweepMeasuring SweepRemoving))] :post [(: % (| MeasuredRoots RemovedRoots None))]}
-  "走っている掃除の答えを待たずに読むため(まだなら None — 待つ秒 0 の WaitWithin)。task が渡した失敗はここで上がる。"
+  {:pre [(: work (| SweepPinning SweepMeasuring SweepRemoving))]
+   :post [(: % (| SweepPinned MeasuredRoots SweepRemoved SweepFailed None))]}
+  "走っている掃除の答えを待たずに読むため(まだなら None — 待つ秒 0 の WaitWithin)。掃除の task は例外も SweepFailed として返すので、
+   ここは周期の Program へ例外を上げない。"
   (<- answer (WaitWithin work.done.future 0.0))
   answer)
 
@@ -1055,35 +1156,120 @@
   keys)
 
 
-(defk start-removing [settings measured busy free started-ms]
-  {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int) (: started-ms int)] :post [(: % SweepRemoving)]}
-  "数えの答えが届いた時に、その時の固定(busy — 数えの間に固定になった root も入る・root の置き場を分け合う他の世代の固定 — AL-D2g・Pod の中の worker の外の使い手の root — root-users)と、roots の合計の上限・共有の disk の空き free と
-   その最低で消す root を選び(#4051)、脇へ退け、消しをループの外の task として起こすため。答え = 走っている消しの記録。"
-  (<- total int (roots-bytes measured.infos))
-  (val cap settings.roots-cap-bytes)
-  (val min-free settings.min-free-bytes)
-  ;; root の置き場を分け合う他の世代の固定も消さない(AL-D2g)。
-  (<- others frozenset (others-pins settings))
-  ;; worker の外の使い手(同じ Pod の走っている process・設定の dir の link)が今使う root も消さない — 選ぶこの拍で読む。
-  (<- users frozenset (root-users settings))
-  (val held (| busy others users))
-  (<- candidates tuple (sweep-candidates measured.infos held))
-  (<- chosen tuple (sweep-choice measured.infos held cap free min-free))
-  ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す): 空き・空きの最低・roots の合計・上限・固定の数・候補の数・選んだ数・木を歩いた
-  ;; root の数。
-  (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len held)
-            :in-use (len users) :candidates (len candidates) :chosen (len chosen) :walked measured.walked))
-  (<- now-ms int (now-epoch-ms))
-  (var aside #())
-  (for [key chosen]
-    (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(roots の合計 {} byte・上限 {} byte・空き {} byte・最低 {} byte)"
-                       (cut key (len ENV-KEY-PREFIX) None) total cap free min-free)))
-    (<- moved bool (set-aside settings key now-ms))
-    (when moved
-      (:= aside (+ aside #(key)))))
+(defk sweep-failed-of [step error]
+  {:pre [(: step str) (: error Exception)] :post [(: % SweepFailed)]}
+  "片づけの名 step と投げた例外 error から SweepFailed を作るため。"
+  (<- detail str (sweep-error-detail error))
+  (SweepFailed :step step :detail detail))
+
+
+(defk run-leftover-step [step-name settings now-ms]
+  {:pre [(: step-name str) (: settings EnvSettings) (: now-ms int)] :post [(: % tuple)]}
+  "残りの片づけ 1 つを名で実行し、消した path の列を返すため。"
+  (match step-name
+    "remove-aside" (do (<- aside tuple (sweep-aside-roots settings)) aside)
+    "remove-wheels" (do (<- wheels tuple (sweep-stale-wheels settings now-ms)) wheels)
+    "remove-code-store" (do (<- store tuple (sweep-code-store settings now-ms)) store)
+    "remove-ended-pins" (do (<- ended tuple (sweep-ended-pins settings)) ended)
+    "remove-mirrors" (do (<- mirrors tuple (sweep-mirrors settings now-ms)) mirrors)
+    "remove-venvs" (do (<- venvs tuple (unused-venvs settings)) venvs)
+    _ (raise (ValueError (.format "知らない掃除の片づけ: {}" step-name)))))
+
+
+(defk removing-sweep [settings measured busy free pinned write-pins prune preparing done]
+  {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int)
+         (: pinned frozenset) (: write-pins bool) (: prune PruneState) (: preparing bool) (: done Promise)]
+   :post [(: % None)]}
+  "数えの答えが届いた後の掃除の全部(必要なら固定の file の書き・選び・脇への退け・残りの 6 つの片づけ・uv cache の prune)をループの外の
+   task で行い、結末(SweepRemoved か SweepFailed)を値として done へ渡すため。1 つの片づけが例外で落ちても、他の独立な片づけは進め、
+   落ちた片づけの名と訳を failures に全部集めて返す(例外を周期の Program へ上げず、握りつぶしもしない)。"
+  (try
+    (var failures #())
+    (when write-pins
+      (try
+        (<- (wrote-pins settings pinned))
+        (except [error Exception]
+          (<- pin-err SweepFailed (sweep-failed-of "write-pins" error))
+          (:= failures (+ failures #(pin-err))))))
+    (var chosen #())
+    (var total 0)
+    (val cap settings.roots-cap-bytes)
+    (val min-free settings.min-free-bytes)
+    (try
+      (<- counted int (roots-bytes measured.infos))
+      (:= total counted)
+      ;; root の置き場を分け合う他の世代の固定も消さない(AL-D2g)。
+      (<- others frozenset (others-pins settings))
+      ;; worker の外の使い手(同じ Pod の走っている process・設定の dir の link)が今使う root も消さない。
+      (<- users frozenset (root-users settings))
+      (val held (| busy others users))
+      (<- candidates tuple (sweep-candidates measured.infos held))
+      (<- picked tuple (sweep-choice measured.infos held cap free min-free))
+      (:= chosen picked)
+      ;; 掃除の選びの 1 行(#3713 — 何も選ばなかった回も出す)。
+      (<- (slog SWEEP-LOG :level "info" :free-bytes free :min-free-bytes min-free :roots-bytes total :cap-bytes cap :pinned (len held)
+                :in-use (len users) :candidates (len candidates) :chosen (len chosen) :walked measured.walked))
+      (except [error Exception]
+        (<- choose-err SweepFailed (sweep-failed-of "choose-roots" error))
+        (:= failures (+ failures #(choose-err)))))
+    (<- now-ms int (now-epoch-ms))
+    (var aside #())
+    (when chosen
+      (try
+        (for [key chosen]
+          (<- (slog (.format "worker: 掃除 — 固定されていない root {} を消す(roots の合計 {} byte・上限 {} byte・空き {} byte・最低 {} byte)"
+                             (cut key (len ENV-KEY-PREFIX) None) total cap free min-free)))
+          (<- moved bool (set-aside settings key now-ms))
+          (when moved
+            (:= aside (+ aside #(key)))))
+        (except [error Exception]
+          (<- aside-err SweepFailed (sweep-failed-of "set-aside-roots" error))
+          (:= failures (+ failures #(aside-err))))))
+    (var removed #())
+    (for [step-name #("remove-aside" "remove-wheels" "remove-code-store" "remove-ended-pins" "remove-mirrors" "remove-venvs")]
+      (try
+        (<- paths tuple (run-leftover-step step-name settings now-ms))
+        (:= removed (+ removed paths))
+        (except [error Exception]
+          (<- step-err SweepFailed (sweep-failed-of step-name error))
+          (:= failures (+ failures #(step-err))))))
+    (var next-prune prune)
+    (try
+      (<- pruned PruneState (pruned-after settings prune preparing now-ms))
+      (:= next-prune pruned)
+      (except [error Exception]
+        (<- prune-err SweepFailed (sweep-failed-of "prune-cache" error))
+        (:= failures (+ failures #(prune-err)))))
+    (<- (CompletePromise done (SweepRemoved :keys aside :paths removed :prune next-prune :failures failures)))
+    (except [error Exception]
+      (<- sweep-err SweepFailed (sweep-failed-of "sweep" error))
+      (<- (CompletePromise done sweep-err))))
+  None)
+
+
+(defk start-removing [settings measured busy free pinned write-pins prune preparing started-ms]
+  {:pre [(: settings EnvSettings) (: measured MeasuredRoots) (: busy frozenset) (: free int)
+         (: pinned frozenset) (: write-pins bool) (: prune PruneState) (: preparing bool) (: started-ms int)]
+   :post [(: % SweepRemoving)]}
+  "数えの答えが届いた時に、選び・脇への退け・残りの片づけ・uv cache の prune をループの外の task として起こし、走っている消しの記録を
+   返すため(周期の Program から全部の片づけを切り離す)。"
   (<- done Promise (CreatePromise))
-  (<- (Spawn (removing-leftovers settings now-ms done) :daemon True))
-  (SweepRemoving :done done :started-ms started-ms :keys aside))
+  (<- (Spawn (removing-sweep settings measured busy free pinned write-pins prune preparing done) :daemon True))
+  (SweepRemoving :done done :started-ms started-ms))
+
+
+(defk noted-sweep-failure [previous failures now-ms]
+  {:pre [(: previous (| SweepFailure None)) (: failures tuple) (: now-ms int)] :post [(: % tuple)]}
+  "掃除の失敗の列 failures を 1 行ずつ warning の log に出し、#(次の SweepFailure 報告が変わったか write-pins が落ちたか) を返すため。"
+  (var pin-failed False)
+  (for [f failures]
+    (<- (slog SWEEP-FAILED-LOG :level "warning" :step f.step :detail f.detail))
+    (when (= f.step "write-pins")
+      (:= pin-failed True)))
+  (val primary (get failures 0))
+  (<- next-fail SweepFailure (sweep-failure-after previous primary.step primary.detail now-ms))
+  (val changed (or (is previous None) (!= previous.step next-fail.step) (!= previous.detail next-fail.detail)))
+  #(next-fail changed pin-failed))
 
 
 (defk pruned-after [settings prune preparing now-ms]
@@ -1310,6 +1496,11 @@
   (session var unmeasured (frozenset))
   ;; 完成した root の依存のキー(root のキー → 依存のキー — heartbeat の readyDeps・印を読み直さないため最後の名乗りの値を持つ)。
   (session var dependencies {})
+  ;; 直前の掃除が例外で落ちた記録(None = 通っている・まだ落ちていない — EnvReport → heartbeat の envSweepFailure に載せる)・
+  ;; 固定の file を書き直す必要があるか(changed で立て、ループの外の task へ渡す)・掃除の失敗か回復を次の拍で即座に名乗るための 1 回の起こし。
+  (session var sweep-failure None)
+  (session var pins-dirty False)
+  (session var report-wake False)
   (PrepareEnv [key runtime-env compile-jobs warm service]
     ;; job の頼み(warm = False)は、同じ root の先読みが走っていれば job の準備へ上げ(同時の枠の数え方が job の物になる — 期限は
     ;; 先読みと同じ停滞の長さ・走っている焼きの並べる数は変えない)、待っていれば job の頼み(焼きの並べる数も)に置き換える。先の組み(warm)は
@@ -1352,14 +1543,17 @@
     (:= views (get observed 3))
     (resume views))
   (ObserveEnvDisk []
-    ;; 掃除の係が拍を求めているか(sweep-wanted)は最後の観測の完成した root の集合と最後の数えの結びで判じる(#3732)。
+    ;; 掃除の係が拍を求めているか(sweep-wanted)は最後の観測の完成した root の集合と最後の数えの結びと掃除の失敗の刻で判じる(#3732)。
     (<- free int (disk-free settings))
     (<- ready frozenset (ready-keys views))
-    (<- wanted bool (sweep-wanted (is-not sweeping None) tally ready settings.roots-cap-bytes (< free settings.min-free-bytes)))
-    (resume (EnvDisk :free free :sweep-wanted wanted :pinned pinned-roots)))
+    (<- now-ms int (now-epoch-ms))
+    (val failed-ms (if (is sweep-failure None) None sweep-failure.at-ms))
+    (<- wanted bool (sweep-wanted (is-not sweeping None) tally ready settings.roots-cap-bytes (< free settings.min-free-bytes)
+                                  :failed-ms failed-ms :now-ms now-ms))
+    (resume (EnvDisk :free free :sweep-wanted (or wanted (and pins-dirty (is failed-ms None))) :pinned pinned-roots)))
   (EnvReport []
-    ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件
-    ;; (形は env-report — sim の宿と同じ関数)。
+    ;; heartbeat で名乗る root の姿(coordinator の置き先と温める表の読みが使う): 最後の観測(まだ無ければ今観測する)と disk の条件と
+    ;; 掃除の失敗(形は env-report — sim の宿と同じ関数)。
     (when (is views None)
       (<- observed tuple (observe-envs settings waiting pending failed refused measured-infos))
       (:= waiting (get observed 0))
@@ -1371,54 +1565,109 @@
     (:= disk-named capacity)
     (<- read dict (ready-dependencies settings views dependencies))
     (:= dependencies read)
-    (resume (env-report (or views #()) capacity unmeasured (frozenset (.values dependencies)))))
+    (resume (env-report (or views #()) capacity unmeasured (frozenset (.values dependencies)) sweep-failure)))
   (SweepEnvs [pinned]
-    ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 数えと消しはループの外の task・ループは待たない・走っている掃除は同時に 1 つ):
-    ;;   走っていない → 始める時(sweep-due — まだ数えていない・完成した root の集合が変わった・空きの状態が変わったか割ったまま固定が
-    ;;                  変わった・上限を越えたまま)なら数えを起こす
-    ;;   数えている   → 答えが届いていれば、数えの結び(tally)を持ち替え、この時の固定と上限と空きで選び、選んだ root を脇へ退けて消しを起こす
-    ;;   消している   → 終わっていれば終わりの 1 行を出し、共有の disk の空きが最低を割っていれば uv の cache の prune を起こす
+    ;; 固定の集合を持ち替え、掃除を 1 歩進める(#3715 — 固定の書き・数え・選び・退け・消し・prune の全部をループの外の task で走らせ、
+    ;; ループは待たず、例外も SweepFailed として周期へ返し、worker の process と job を終わらせない・走っている掃除は同時に 1 つ):
+    ;;   走っていない → 始める時(sweep-due — 失敗後は SWEEP-RETRY-MS の後・それ以外は未数え・完成した root の変化・空きの変化・上限越え)
+    ;;                  なら数えを起こす。そうでなく固定が変わっていれば固定の書きだけを起こす
+    ;;   固定の書き中 → 終わっていれば掃除を終える(失敗なら log と状態の報告に載せ、間を空けて撃ち直す)
+    ;;   数えている   → 答えが届いていれば、失敗なら log と状態の報告に載せて終え、成功なら数えの結び(tally)を持ち替えて選び・退け・消し・
+    ;;                  prune の task を起こす
+    ;;   消している   → 終わっていれば、失敗した片づけが在れば全部 log に出して状態の報告に載せ、無ければ終わりの 1 行を出して失敗の報告を消す
     ;; 初期値の空との比べで「変わった」と判じる最初の SweepEnvs は、worker が最初の宣言を読んだ拍の物(読む前は判断の側
     ;; policy.sweep-actions が撃たない — #3731)。ここで二重に止めない。
     (val changed (!= pinned pinned-roots))
     (:= pinned-roots pinned)
-    ;; 固定が変われば、root の置き場を分け合う他の世代の掃除が読む file へ書く(AL-D2g)。
     (when changed
-      (<- (wrote-pins settings pinned)))
+      (:= pins-dirty True))
     (<- now-ms int (now-epoch-ms))
+    (val failed-ms (if (is sweep-failure None) None sweep-failure.at-ms))
+    (var failed-this-tick #())
     (match sweeping
       None
         (do (<- ready frozenset (ready-keys views))
-            (<- free int (disk-free settings))
-            (<- due bool (sweep-due tally ready settings.roots-cap-bytes (< free settings.min-free-bytes) changed now-ms swept-ms))
-            (when due
-              (<- measuring SweepMeasuring (start-measuring settings ready measured-infos now-ms))
-              (:= sweeping measuring)))
+            (var low False)
+            (when (> settings.min-free-bytes 0)
+              (try
+                (<- free int (disk-free settings))
+                (:= low (< free settings.min-free-bytes))
+                (except [error Exception]
+                  (<- detail str (sweep-error-detail error))
+                  (:= failed-this-tick #((SweepFailed :step "disk-free" :detail detail))))))
+            (when (not failed-this-tick)
+              (<- due bool (sweep-due tally ready settings.roots-cap-bytes low changed now-ms swept-ms :failed-ms failed-ms))
+              (cond
+                due
+                  (do (val measure-write-pins pins-dirty)
+                      (:= pins-dirty False)
+                      (<- measuring SweepMeasuring (start-measuring settings ready measured-infos pinned-roots measure-write-pins now-ms))
+                      (:= sweeping measuring))
+                (and pins-dirty (is failed-ms None))
+                  (do (:= pins-dirty False)
+                      (<- pinning SweepPinning (start-pinning settings pinned-roots now-ms))
+                      (:= sweeping pinning))
+                True None)))
+      (SweepPinning)
+        (do (<- pin-answer (| SweepPinned SweepFailed None) (sweep-answer sweeping))
+            (match pin-answer
+              (SweepPinned)
+                (do (when (and (is-not sweep-failure None) (= sweep-failure.step "write-pins"))
+                      (:= sweep-failure None)
+                      (:= report-wake True))
+                    (:= sweeping None))
+              (SweepFailed)
+                (do (:= failed-this-tick #(pin-answer))
+                    (:= sweeping None))
+              None None))
       (SweepMeasuring)
-        (do (<- measured (| MeasuredRoots None) (sweep-answer sweeping))
-            (when (is-not measured None)
-              (<- total int (roots-bytes measured.infos))
-              ;; 空きは答えを受けた時に 1 度読み、結び(空きの状態 — 次の起こしの判断が比べる)と選びに同じ値を使う(#4051)。
-              (<- free int (disk-free settings))
-              (:= tally (RootsTally :ready sweeping.ready :bytes total :below-min-free (< free settings.min-free-bytes)))
-              (:= measured-infos measured.infos)
-              ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
-              (<- removing SweepRemoving (start-removing settings measured (| pinned-roots (frozenset pending) (frozenset waiting)) free
-                                                        sweeping.started-ms))
-              (:= sweeping removing)))
+        (do (<- measure-answer (| MeasuredRoots SweepFailed None) (sweep-answer sweeping))
+            (match measure-answer
+              (SweepFailed)
+                (do (:= failed-this-tick #(measure-answer))
+                    (:= sweeping None))
+              (MeasuredRoots)
+                (do (<- total int (roots-bytes measure-answer.infos))
+                    (:= tally (RootsTally :ready sweeping.ready :bytes total :below-min-free (< measure-answer.free settings.min-free-bytes)))
+                    (:= measured-infos measure-answer.infos)
+                    (val remove-write-pins pins-dirty)
+                    (:= pins-dirty False)
+                    ;; 固定には走っている準備(pending と waiting)も足す(判断の側の観測より新しいので)。数えの間に固定になった root も入る。
+                    (<- removing SweepRemoving
+                        (start-removing settings measure-answer (| pinned-roots (frozenset pending) (frozenset waiting)) measure-answer.free
+                                        pinned-roots remove-write-pins prune (bool (or pending waiting)) sweeping.started-ms))
+                    (:= sweeping removing))
+              None None))
       (SweepRemoving)
-        (do (<- removed (| RemovedRoots None) (sweep-answer sweeping))
-            (when (is-not removed None)
-              (<- (slog SWEEP-DONE-LOG :level "info" :removed (len sweeping.keys) :leftovers (- (len removed.paths) (len sweeping.keys))
-                        :took-ms (- now-ms sweeping.started-ms)))
-              (<- next-prune PruneState (pruned-after settings prune (bool (or pending waiting)) now-ms))
-              (:= prune next-prune)
-              (:= swept-ms now-ms)
-              (:= sweeping None))))
+        (do (<- remove-answer (| SweepRemoved SweepFailed None) (sweep-answer sweeping))
+            (match remove-answer
+              (SweepFailed)
+                (do (:= failed-this-tick #(remove-answer))
+                    (:= sweeping None))
+              (SweepRemoved)
+                (do (:= prune remove-answer.prune)
+                    (if remove-answer.failures
+                        (:= failed-this-tick remove-answer.failures)
+                        (do (<- (slog SWEEP-DONE-LOG :level "info" :removed (len remove-answer.keys) :leftovers (- (len remove-answer.paths) (len remove-answer.keys))
+                                      :took-ms (- now-ms sweeping.started-ms)))
+                            (when (is-not sweep-failure None)
+                              (:= sweep-failure None)
+                              (:= report-wake True))
+                            (:= swept-ms now-ms)))
+                    (:= sweeping None))
+              None None)))
+    (when failed-this-tick
+      (<- #(next-fail report-changed pin-failed) tuple (noted-sweep-failure sweep-failure failed-this-tick now-ms))
+      (when pin-failed
+        (:= pins-dirty True))
+      (:= sweep-failure next-fail)
+      (when report-changed
+        (:= report-wake True))
+      (:= swept-ms now-ms))
     (resume None))
   (WorkerWakes [began]
     ;; 周の間の待ちを起こす物(#3871 の単位 4): 準備の子と走っている prune の子の終わり(exits)・走っている掃除の task の終わりの Future
-    ;; (bells)・準備の停滞の止めの期限と roots の数え直しの間隔(due)を、外側の答えに足す。期限は tick の頭の時刻 began を基準に組み立てる
+    ;; (bells)・準備の停滞の止めの期限と roots の数え直し・失敗の撃ち直しの間隔(due)を、外側の答えに足す。期限は tick の頭の時刻 began を基準に組み立てる
     ;; (準備の停滞と掃除の判断は tick の中で読んだ時刻で判定したので、began より後の期限はまだ判定していない — #4332)。
     (<- outer WakeSet effect)
     (var dues #())
@@ -1426,11 +1675,15 @@
       (<- progressed int (progressed-ms p))
       (<- stop-due (| DueAt DueNever) (prepare-stop-due began progressed settings.limits))
       (:= dues (+ dues #(stop-due))))
-    (<- interval-due (| DueAt DueNever) (sweep-interval-due began tally settings.roots-cap-bytes swept-ms))
+    (val failed-ms (if (is sweep-failure None) None sweep-failure.at-ms))
+    (<- interval-due (| DueAt DueNever) (sweep-interval-due began tally settings.roots-cap-bytes swept-ms :failed-ms failed-ms))
     ;; 準備の層の空きを待つ準備が在れば、ROOM-RECHECK-MS の後に層を読み直す(空きは worker の起こさない物の終わりでも戻る)。
     (<- room-due (| DueAt DueNever)
         (due-after began (if (and waiting (is-not settings.prepare-procs None)) #((+ began ROOM-RECHECK-MS)) #())))
-    (<- due (| DueAt DueNow DueNever) (earliest-due (+ dues #(interval-due room-due))))
+    (val report-due (if report-wake #((DueNow)) #()))
+    (when report-wake
+      (:= report-wake False))
+    (<- due (| DueAt DueNow DueNever) (earliest-due (+ dues #(interval-due room-due) report-due)))
     (val bells (if (is sweeping None) #() #(sweeping.done.future)))
     (val exits (+ (tuple (gfor p (.values pending) (AwaitProcessExit p.pid)))
                   (if (is prune.pid None) #() #((AwaitProcessExit prune.pid)))))

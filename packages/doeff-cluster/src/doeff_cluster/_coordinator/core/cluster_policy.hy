@@ -2996,6 +2996,7 @@
                          :measured body.measured
                          :child-environ (if (is body.child-environ None) None (tuple (sorted body.child-environ)))
                          :prepare body.prepare
+                         :env-sweep-failure body.env-sweep-failure
                          :retired (retired-after previous boot)
                          ;; 同じ世代が起動時刻を名乗らなくなっても(版を戻した worker)、知っている起動時刻は捨てない。
                          :boot-at (if (and (is boot-at None) (= order GenerationOrder.CURRENT) (is-not previous None)

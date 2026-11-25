@@ -291,6 +291,16 @@
   (setv #^ str reason ""))
 
 
+(defwire EnvSweepFailure
+  "heartbeat の env 掃除の失敗(欄 envSweepFailure — worker/protocol/heartbeat の env-heartbeat-part と同じ形・worker/core/env_upkeep の
+   SweepFailure): step = 落ちた片づけの名(空でない)・detail = 失敗の訳(例外の名と文の 1 行)・since-ms = 同じ失敗が続き始めた刻(epoch ms)。"
+  {:tags {:context "coordinator" :role "type" :reads "json"} :names :camel :unknown :ignore
+   :check [(bool step) (>= since-ms 0)]}
+  (#^ str step)
+  (#^ str detail)
+  (#^ int since-ms))
+
+
 (defwire HeartbeatBody
   "POST /heartbeat の本文(worker/protocol/heartbeat の heartbeat-body と env-heartbeat-part と同じ形): name = worker の名(空でない)・
    provides / exclusive = 能力の名の列(labels = 旧い形の名乗り — 判断が断る)・node・versions / tools = 名 → 版・platform・
@@ -345,7 +355,8 @@
   (setv #^ (| MeasuredLoad None) measured None)
   (setv #^ (| (get tuple #(str ...)) None) child-environ None)
   (setv #^ str pod-ip "")
-  (setv #^ (| PrepareReport None) prepare None))
+  (setv #^ (| PrepareReport None) prepare None)
+  (setv #^ (| EnvSweepFailure None) env-sweep-failure None))
 
 
 (defwire ResourceBody
