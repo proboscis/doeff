@@ -65,6 +65,7 @@ store that cannot be reached, refuses the key, or answers with a server error ra
 Only the worker's baking tool uses the shared store (the import hook does not — it looks up the machine's directory only).
 """
 
+import _thread
 import os
 import sys
 from collections.abc import Callable
@@ -513,7 +514,7 @@ def link_pyc(store: str, pyc: bytes, target: str) -> str | None:
         pass  # the tree has no .pyc yet — place it below (the link below answers with the reason if it cannot be placed)
     except OSError as error:
         return f"cannot read the tree's .pyc: {errno.errorcode.get(error.errno, error.errno)} {error.strerror}"
-    temporary = f"{target}.{os.getpid()}.link"
+    temporary = f"{target}.{os.getpid()}.{_thread.get_ident()}.link"
     try:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         os.link(path, temporary)
@@ -563,7 +564,7 @@ SHARE_TIMEOUT_SECONDS = 5.0
 #: connect on every new connection: 2026-11-14, a spot node in another region took 1.47 s per request with a new connection (the cluster DNS's ndots:5 search tried six names,
 #: 0.175 s apart, before the connect) and 0.17 s on a kept one, and a cold preparation that looked up and published 480 files spent 1,834 s baking with the CPU idle. The
 #: process id is in the key because the baking pool forks: a child never writes on the socket its parent opened.
-_SHARE_CONNECTIONS: "dict[tuple[int, str, str], http.client.HTTPConnection]" = {}
+_SHARE_CONNECTIONS: "dict[tuple[int, int, str, str], http.client.HTTPConnection]" = {}
 
 #: How many of a key's shared entries are fetched and checked, newest first. The entry of the environment being prepared is normally the newest (every worker preparing the same
 #: root writes the same name), and older entries belong to earlier roots.
@@ -658,7 +659,7 @@ def _share_connection(share: Share, fresh: bool) -> "tuple[http.client.HTTPConne
     earlier request)."""
     import http.client  # loaded only when the shared store is used
 
-    slot = (os.getpid(), share.scheme, share.host)
+    slot = (os.getpid(), _thread.get_ident(), share.scheme, share.host)
     kept = None if fresh else _SHARE_CONNECTIONS.get(slot)
     if kept is not None:
         return kept, True

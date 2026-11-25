@@ -93,6 +93,25 @@
   (setv #^ tuple fetched #()))
 
 
+;; 取るだけの形(--fetch-only)で取れない file が在るか分け合う保存先が読めない時の終了 code(0 = 成功・1 = 通常の検め失敗・2 = 引数の誤りと分ける)。
+(val FETCH-ONLY-EXIT-CODE 3)
+
+
+(defrecord FetchAnswer
+  "取るだけの形(--fetch-only)の答え: stored = 機体の保存先の code から .pyc を書いた物の #(木の path 相対 path) の列・
+   fetched = 分け合う保存先の code から .pyc を書いた物の #(木の path 相対 path) の列・
+   reused = 在った .pyc が今の source と今の環境の macro に合うので残した物の #(木の path 相対 path) の列・
+   missing = どちらの保存先にも合う code が無く取れなかった物の #(木の path 相対 path) の列・
+   share-problem = 分け合う保存先を読めない(ShareUnusable・設定の誤り)理由の文か None・
+   unstored = 保存先の .pyc を hardlink で置けなかった・手元の写しを置けなかった理由の列(重ねない)。"
+  (#^ tuple stored)
+  (#^ tuple fetched)
+  (#^ tuple reused)
+  (#^ tuple missing)
+  (#^ (| str None) share-problem)
+  (#^ tuple unstored))
+
+
 (defrecord BakeSummary
   "1 回の準備の結果: trees = 木ごとの TreeOutcome(命令の順)・経過の秒(scan-s = 木の走査・closure-s = 閉包の歩み・compile-s = 保存先の
    引きと焼き)。"
@@ -476,3 +495,19 @@
            (sum (gfor t summary.trees t.failed))
            (round summary.compile-s 2) (round summary.closure-s 2) (round summary.scan-s 2)
            (sum (gfor t summary.trees t.fetched))))
+
+
+(defk fetch-failure-line [answer]
+  {:pre [(: answer FetchAnswer)] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "取るだけの形(--fetch-only)で分け合う保存先が読めないか、取れない file が 1 つでも在る時に、標準エラーへ出す 1 行の訳を作るため
+   (全部揃っていれば None)。分け合う保存先が読めない時はその理由を 1 行にし、取れない file が在る時は取れなかった数と最初の file
+   (木と相対 path の順の先頭 — 並列の終わりの順に依らない)を 1 行にする。"
+  (cond
+    (is-not answer.share-problem None)
+      (.format "fetch-only: 分け合う保存先を読めないため焼かずに中止: {}" (.join " " (.split answer.share-problem)))
+    answer.missing
+      (do (val ordered (sorted answer.missing))
+          (val first (get ordered 0))
+          (.format "fetch-only: 取れない file が {} 本あるため焼かずに中止(最初: {}/{})"
+                   (len ordered) (get first 0) (get first 1)))
+    True None))

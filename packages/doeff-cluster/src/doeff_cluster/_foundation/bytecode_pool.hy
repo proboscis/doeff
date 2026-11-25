@@ -364,7 +364,10 @@
           found (.current-data code-store store key current
                                :check-code (not (.endswith source (. code-store HY-SOURCE-SUFFIXES)))))
     (when (is-not found None)
-      (return #("stored" (place-pyc store source (.data-pyc code-store head found)))))
+      ;; 2 回り目(look-only が偽 — 1 回り目で機体にも分け合う保存先にも無かった物)で機体の保存先に在るのは、
+      ;; 先に焼いた file の require が compile して機体の保存先へ足した macro の定義元等。分け合う保存先へも置く。
+      (setv shared-problem (if (and (not look-only) sharing) (published share key (marshal.loads found) found) None))
+      (return #("stored" (joined-reasons (place-pyc store source (.data-pyc code-store head found)) shared-problem))))
     ;; 機体の保存先に合う code が無い — ほかの機体が焼いて分け合う保存先へ置いた code を取り寄せる(照らしは機体の保存先と同じ current)。
     (when sharing
       (setv #(shared fetch-reason) (shared-entry share store key current))
