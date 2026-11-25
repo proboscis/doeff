@@ -277,7 +277,7 @@
 ;; worker の世代は入口の組み立て(doeff_cluster._worker.entry.main の worker-on)を偽の宿の組の上で回す(本番の main と同じ口)。
 (import doeff_cluster._worker.entry.main [worker-on])
 (import doeff_cluster._worker.intent.worker_model [ProgramGap ProgramUnfetched])
-(import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState
+(import doeff_cluster._worker.intent.worker_model [WorkerPolicy WorkerState WorldView CodeView CodeState ProcessView ProbeView ProbeState EnvDisk
                        DesiredJobs DesiredUnreadable ReadDesired ObserveWorld PublishStatus
                        PrepareCode PrepareEnv SweepEnvs StartJob JobStarted SignalJob ReapJob RetireJob ProbeEntry ForgetProbes
                        ReleaseLeases EnvReport AwaitNextTick WakeSet WorkerWakes StopStage StopProgress WarmChildMark WarmChildView StartWarmChild StopWarmChild
@@ -460,18 +460,23 @@
   (setv #^ bool steps-wall False)
   (setv #^ bool reads-room False)
   (setv #^ (| SimMemoryWatch None) memory-watch None)
-  (setv #^ bool memory-tight False))
+  (setv #^ bool memory-tight False)
+  ;; 掃除(SweepEnvs)で落ちる壊れた版の代役: 非 None なら SweepEnvs で RuntimeError(sweep-crash)を投げて世代が落ちる。
+  (setv #^ (| str None) sweep-crash None))
 
 
 (defrecord SimGeneration
   "worker の世代 1 つの姿(GenerationsOf の答えの要素): boot = 世代の名・pod-ip = その世代が名乗る Pod の IP・pids = その世代の宿が今
-   持つ process の pid・elder = 退いた世代か・down = 死んだか止まった・stopping = 止めを頼まれた。"
+   持つ process の pid・elder = 退いた世代か・down = 死んだか止まった・stopping = 止めを頼まれた・committed = 拍の 1 周(掃除を含む)を
+   回り切って committed を書いたか・crash-reason = 例外で落ちた時の理由(空 = 例外で落ちていない)。"
   (#^ str boot)
   (#^ str pod-ip)
   (#^ (get tuple #(int ...)) pids)
   (#^ bool elder)
   (#^ bool down)
-  (#^ bool stopping))
+  (#^ bool stopping)
+  (setv #^ bool committed False)
+  (setv #^ str crash-reason ""))
 
 
 (defrecord SimProcess
@@ -763,9 +768,10 @@
 (defeffect RollWorker
   "検の effect: 動いている worker name の新しい世代を、今の世代を止めずに先に起こす(本番の RollingUpdate の maxSurge 1・AL-D2)。今の世代は
    退いた世代として動き続ける(止めるのは StopElder)。same-pod = 新しい世代を同じ Pod の中に起こす(本番の keeper が同じ container の
-   中で世代を入れ替える形 — 新しい世代は前の世代と同じ Pod の IP を名乗る。偽 = 別の Pod の IP)。答え = 退いた世代の boot(止まっている・
-   止まり始めた worker には None)。"
-  {:fields [(: name str) (: same-pod bool False)]
+   中で世代を入れ替える形 — 新しい世代は前の世代と同じ Pod の IP を名乗る。偽 = 別の Pod の IP)。next-worker = 新しい世代を別の
+   SimWorker の値(版や掃除の故障の違い)で起こす時に渡す(None = 今の値のまま)。答え = 退いた世代の boot(止まっている・止まり始めた
+   worker には None)。"
+  {:fields [(: name str) (: same-pod bool False) (: next-worker (| SimWorker None) None)]
    :answer (| str None)
    :tags {:context "doeff-cluster" :role "intent"}})
 
@@ -981,7 +987,15 @@
   (setv #^ (| RoomState None) room-state None)
   (setv #^ (| int None) room-read-ms None)
   ;; この世代が名乗る Pod の IP(本番の Pod の status.podIP — sim-pod-ip が名と世代から決める。heartbeat の podIp)。
-  (setv #^ str pod-ip ""))
+  (setv #^ str pod-ip "")
+  ;; 拍の掃除(SweepEnvs)と世代の確定点(committed): swept = 起動から最初の掃除を 1 周回し切った・pinned-roots = 最後に渡された固定・
+  ;; ready-settled = 最後に読んだ heartbeat の返事で handoverPending が偽だった・committed = 1 周を回り切って確定した・crash-reason =
+  ;; 掃除などの例外で世代が落ちた時の理由。
+  (setv #^ bool swept False)
+  (setv #^ (get frozenset str) pinned-roots (frozenset))
+  (setv #^ bool ready-settled False)
+  (setv #^ bool committed False)
+  (setv #^ str crash-reason ""))
 
 
 (defrecord HostTruthChange
@@ -1151,6 +1165,11 @@
 (defeffect WorkerEnded
   "worker name の世代 boot の run-worker が抜けた(その世代がまだ今の世代なら止まったと記録し、StopWorker の待ちを解く)。"
   {:fields [(: name str) (: boot str)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
+
+(defeffect WorkerCrashed
+  "worker name の世代 boot が拍の例外(掃除の失敗など)で落ちたと世界へ知らせる: その世代の process だけを -9 で止め、退いた世代は
+   止めずに残し、落ちた世代に crash-reason と down=True を記録する。"
+  {:fields [(: name str) (: boot str) (: reason str)] :answer None :tags {:context "doeff-cluster" :role "intent"}})
 
 (defeffect RevivalOf
   "worker name が止まっていれば、StartWorker で完了する Promise(動いていれば None — すぐ次の世代を起こす)。"
@@ -1408,14 +1427,19 @@
   views)
 
 
-(defk view-of [truth now]
-  {:pre [(: truth HostTruth) (: now int)] :post [(: % WorldView)] :tags {:context "doeff-cluster" :role "judgment"}}
-  "宿の真実 → worker の観測(準備・子 process・入口の検め・待ちの子)にするため。"
+(defk view-of [truth now [sweeps-envs False]]
+  {:pre [(: truth HostTruth) (: now int) (: sweeps-envs bool)] :post [(: % WorldView)] :tags {:context "doeff-cluster" :role "judgment"}}
+  "宿の真実 → worker の観測(準備・子 process・入口の検め・待ちの子・掃除の disk)にするため。
+   sweeps-envs = 掃除(SweepEnvs)を回す世代(前の世代と重なる世代・掃除で落ちる版の代役)の時にだけ env-disk を載せる。"
   (<- codes tuple (codes-view truth.codes now))
   ;; 手元に無い Program(本番の coordinator への口の program-gaps と同じ判じ — 最後に受け取った宣言のうち、取っていない物)。
   (val gaps (tuple (gfor s truth.last-desired :if (and s.program (not-in s.program truth.programs))
                          (ProgramGap :job s.name :failure (.get truth.program-failures s.program)))))
-  (WorldView codes truth.processes (tuple (.values truth.probes)) :warm-children truth.warm-children :program-gaps gaps))
+  (val env-disk (if sweeps-envs
+                    (EnvDisk :free 1000000000 :sweep-wanted (not truth.swept) :pinned truth.pinned-roots :swept truth.swept)
+                    None))
+  (WorldView codes truth.processes (tuple (.values truth.probes)) :env-disk env-disk :warm-children truth.warm-children
+             :program-gaps gaps))
 
 
 (defk run-context-of [worker spec attempt instance]
@@ -2207,12 +2231,12 @@
   changed)
 
 
-(defk statuses-written [truth statuses]
-  {:pre [(: truth HostTruth) (: statuses tuple)] :post [(: % HostTruth)] :tags {:context "doeff-cluster" :role "judgment"}}
+(defk statuses-written [truth statuses [cycle-complete False]]
+  {:pre [(: truth HostTruth) (: statuses tuple) (: cycle-complete bool)] :post [(: % HostTruth)] :tags {:context "doeff-cluster" :role "judgment"}}
   "宿の真実 truth の状態の報告を statuses から綴り直した真実を作るため — PublishStatus が ChangeHostTruth の change に渡し、世界の節の中で
-   走る(綴りの status-report は何の効果も待たない)。"
+   走る(綴りの status-report は何の効果も待たない)。受け渡しの待ちが解けて 1 周回し切った(cycle-complete)時に committed を真にする。"
   (<- rows list (status-report statuses truth.task-echo truth.results))
-  (replace truth :statuses rows))
+  (replace truth :statuses rows :committed (or truth.committed (and cycle-complete truth.ready-settled))))
 
 
 (defk accepted-programs [link wanted known]
@@ -2272,6 +2296,7 @@
                                 :statuses truth.statuses :endpoint (+ "sim://" worker.name)
                                 :boot (if worker.fresh-boot-every-beat (+ truth.boot "-" (str sent-at)) truth.boot)
                                 :boot-at truth.boot-at :tools {} :kept kept :stopping stopping :overlaps-elder truth.overlaps-elder
+                                :doeff-commit worker.doeff-commit
                                 :pod-ip truth.pod-ip
                                 :pinned (! (pinned-claim? worker.pinned-to-node stopping))
                                 :pools room.pools
@@ -2365,12 +2390,13 @@
                                             :task-echo echo
                                             ;; 次の拍の判断の材料(#1933 — 本番の coordinator への口の beat と同じ)。
                                             :fresh True :sent-statuses before.statuses :sent-stopping stopping
+                                            :ready-settled (not declared.handover-pending)
                                             :beat-interval-ms (beat-interval-ms timing echo)
                                             :watch-after (reply-revision reply) :beat-bells #()))))
           ;; 起こした後の待ちに、版が進んだことを知らせる(鳴らすのは置き直す前に掛かっていた呼び鈴)。
           (for [bell written.before.beat-bells]
             (<- (CompletePromise bell None)))
-          (DesiredJobs (+ jobs tasks) :warm warm))
+          (DesiredJobs (+ jobs tasks) :warm warm :superseded declared.superseded))
       (do ;; 届かない間は毎拍送り直す(前の desired を使い続けない — fence の判断を毎拍する)。
           (<- unsent HostTruthChange (change-live-truth worker.name boot (fn [truth] (replace truth :fresh False))))
           (val truth unsent.before)
@@ -2556,7 +2582,8 @@
   (ObserveWorld []
     (<- truth HostTruth (live-truth worker.name boot))
     (<- now int (now-epoch-ms))
-    (<- view WorldView (view-of truth now))
+    (val sweeps-envs (or truth.overlaps-elder (is-not worker.sweep-crash None)))
+    (<- view WorldView (view-of truth now :sweeps-envs sweeps-envs))
     ;; 壊れた worker hides-retired(条 C14 の反例)は、入れ替えで名から外した旧の process を観測に載せない — worker の判断は退いた
     ;; process が無いと読み、旧を止める前に次の新を並べる。逼迫したまま続く機体の worker(memory-tight)は、観測に逼迫を載せる。
     (val seen (replace view :memory-tight worker.memory-tight))
@@ -2571,6 +2598,9 @@
     (resume None))
   (SweepEnvs [pinned]
     (<- (live-truth worker.name boot))
+    (when (is-not worker.sweep-crash None)
+      (raise (RuntimeError worker.sweep-crash)))
+    (<- (change-live-truth worker.name boot (fn [truth] (replace truth :swept True :pinned-roots pinned))))
     (resume None))
   (ProbeEntry [spec code-path]
     (val key (spec-hash spec))
@@ -2687,10 +2717,11 @@
     (<- (release-leases (SimLink :queue parts.queue :actor worker.name :revision plan.revision :peer worker.name :versions plan.versions :timing plan.timing)
                          job instance))
     (resume None))
-  (PublishStatus [statuses note]
+  (PublishStatus [statuses note cycle-complete]
     ;; 宿の真実の結果と写しで状態の報告を綴り、報告だけを置き直す — 綴り(defk の status-report)は世界の節の中で走らせ、読みと書きを
     ;; 世界への問い 1 つにする(#2668・L1218 の不変条件 — 前に読んでから書くと 1 組で世界を 2 度通る)。
-    (<- (change-live-truth worker.name boot (fn [latest] (statuses-written latest statuses))))
+    ;; 受け渡しの待ちが解けて 1 周回し切った(cycle-complete)時に committed を真にする。
+    (<- (change-live-truth worker.name boot (fn [latest] (statuses-written latest statuses cycle-complete))))
     (resume None))
   (StopRequested []
     ;; 世代の確かめと全 worker の止まれを世界への問い 1 つで読む(#3054 の C-6)。止めの頼み(StopWorker・StopWorkers)は本番の
@@ -2886,6 +2917,7 @@
   ;; 世界へ聞かない — #3054 の C-6)。
   (<- plan SimPlan (PlanOf))
   (<- parts SimParts (PartsOf))
+  (<- truth HostTruth (HostTruthOf worker.name boot))
   ;; worker の調整ループ自身の行(起こしの見送り — #3713・本番は入口の slog-handler が出す)は sim-host の内側で捨てる。job の Program は
   ;; sim-host の節の中から Spawn され、節の外側の handler だけを持つので、job の slog はこの捨てる handler に当たらず外の受け手へ届く。
   ;; 機体の壁の時計を筋書きが動かす worker(steps-wall)は、宿の外側に機体の壁の時計の代役を並べる(調整ループ・宿・子 process の
@@ -2896,25 +2928,28 @@
     (<- (Spawn (sim-memory-watch worker boot) :daemon True)))
   (<- (worker-on (+ (if worker.steps-wall [(worker-wall worker.name)] [])
                     [(sim-host worker boot plan parts) tick-pauses slog-discard-handler])
-                 policy))
+                 (replace policy :overlaps-elder truth.overlaps-elder)))
   boot)
 
 
 (defk generation-end [loop]
-  {:pre [(: loop Task)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
-  "worker の世代の run-worker が抜けるのを待ち、抜け方(stopped = 止めの手順で回収した・died = 死んだ)を返すため。"
+  {:pre [(: loop Task)] :post [(: % tuple)] :tags {:context "doeff-cluster" :role "program"}}
+  "worker の世代の run-worker が抜けるのを待ち、#(抜け方 理由)(stopped = 止めの手順で回収した・died = 死んだ・crashed = 掃除などの
+   例外で落ちた)を返すため。"
   (try
     (<- (Wait loop))
-    "stopped"
+    #("stopped" "")
     (except [WorkerDied]
-      "died")))
+      #("died" ""))
+    (except [error Exception]
+      #("crashed" (str error)))))
 
 
 (defk worker-keeper [worker policy]
   {:pre [(: worker SimWorker) (: policy WorkerPolicy)] :post [(: % str)] :tags {:context "doeff-cluster" :role "program"}}
   "worker 1 台の node の一生: 止まっていれば(死んだ・止めた・止まったまま始まる worker)StartWorker を待ち、今の世代の run-worker を
-   回す。抜ければ(死んだ・止めた)次の世代を待つ。全 worker の止まれの合図で抜ける。各世代は、その世代を起こす時の値(WorkerOf —
-   止まっている間に ReplaceWorker で差し替えた値)で回す(#3366)。"
+   回す。抜ければ(死んだ・止めた・落ちた)次の世代を待つ。全 worker の止まれの合図で抜ける。各世代は、その世代を起こす時の値(WorkerOf —
+   止まっている間に ReplaceWorker で差し替えた値、または RollWorker の next-worker)で回す(#3366)。"
   (var going True)
   (var elders #())
   (while going
@@ -2933,10 +2968,15 @@
             ;; 動き続け(終わりは elder-end が見届ける)、すぐ次の世代を回す。
             (<- bell Promise (RollBellOf worker.name truth.boot))
             (<- ender Task (Spawn (generation-end loop)))
-            (<- ended str (Race ender bell.future))
-            (if (= ended ROLLED)
+            (<- ended (| str tuple) (Race ender bell.future))
+            (cond
+              (= ended ROLLED)
                 (do (<- elder Task (Spawn (elder-end ender watcher worker.name truth.boot)))
                     (:= elders (+ elders #(elder))))
+              (and (isinstance ended tuple) (= (get ended 0) "crashed"))
+                (do (<- (Cancel watcher))
+                    (<- (WorkerCrashed worker.name truth.boot (get ended 1))))
+              True
                 (do (<- (Cancel watcher))
                     (<- (WorkerEnded worker.name truth.boot))))
             (<- again bool (WorkersStopping))
@@ -2949,9 +2989,11 @@
 (defk elder-end [ender watcher name boot]
   {:pre [(: ender Task) (: watcher Task) (: name str) (: boot str)] :post [(: % None)] :tags {:context "doeff-cluster" :role "program"}}
   "退いた世代(RollWorker の後の旧い世代)の run-worker が抜けるのを見届け、名指しの待ちを取り消して抜けたと記録するため(AL-D2)。"
-  (<- _how str (Wait ender))
+  (<- outcome tuple (Wait ender))
   (<- (Cancel watcher))
-  (<- (WorkerEnded name boot))
+  (if (= (get outcome 0) "crashed")
+      (<- (WorkerCrashed name boot (get outcome 1)))
+      (<- (WorkerEnded name boot)))
   None)
 
 
@@ -3834,6 +3876,44 @@
     (for [promise waiting]
       (<- (CompletePromise promise None)))
     (resume None))
+  (WorkerCrashed [name boot reason]
+    ;; 世代が掃除などの例外で落ちた: その世代の process だけを -9 で止め、退いた世代は止めずに残し、crash-reason と down=True を記録する。
+    (val key (host-key hosts name boot))
+    (val truth (get hosts key))
+    (val waiting (.get stop-waiters key #()))
+    (<- now int (now-epoch-ms))
+    (val own-pids (frozenset (gfor p truth.processes p.pid)))
+    (val victims (tuple (gfor r log :if (and (in r.pid own-pids) (is r.ended-ms None)) r)))
+    (val killed (SimExit :code KILLED-CODE :result None :detail (+ "worker が拍の例外で落ちた: " reason)))
+    (val mains (tuple (gfor r victims :if (in r.pid handles) (get handles r.pid))))
+    (:= kills (| kills (dfor r victims r.pid killed)))
+    (val resting truth.wake-bell)
+    (:= hosts (| hosts {key (replace truth :down True :stopping False :crash-reason reason :wake-bell None)}))
+    (:= stop-waiters (dfor #(k v) (.items stop-waiters) :if (!= k key) k v))
+    (<- ends ProcessEnds (end-processes (ProcessEnds :hosts hosts :log log :handles handles :children children :finished finished
+                                                     :end-waiters end-waiters :stopped #() :due #() :bells #())
+                                        victims killed now))
+    (:= hosts ends.hosts)
+    (:= log ends.log)
+    (:= handles ends.handles)
+    (:= children ends.children)
+    (:= finished ends.finished)
+    (:= end-waiters ends.end-waiters)
+    (<- reaped ReapedDescendants (descendants-reaped descendants descendant-tasks (frozenset) #(name boot)
+                                                     (or (is plan.children None) plan.children.adoption) now orphans))
+    (:= descendants reaped.descendants)
+    (:= descendant-tasks reaped.tasks)
+    (for [discarded reaped.discarded]
+      (<- (Discard discarded)))
+    (when (is-not resting None)
+      (<- (CompletePromise resting None)))
+    (for [task mains]
+      (<- (Discard task)))
+    (for [task ends.stopped]
+      (<- (Discard task)))
+    (for [promise (+ ends.due ends.bells waiting)]
+      (<- (CompletePromise promise None)))
+    (resume None))
   (RevivalOf [name]
     ;; 全 worker が止まる時は待たせない(完了させる者が居ない)。
     (if (and (. (get hosts name) down) (not stopping))
@@ -3976,7 +4056,8 @@
     (resume (tuple (gfor key keys
                          :setv truth (get hosts key)
                          (SimGeneration :boot truth.boot :pod-ip truth.pod-ip :pids (tuple (gfor v truth.processes v.pid))
-                                        :elder (!= key name) :down truth.down :stopping truth.stopping)))))
+                                        :elder (!= key name) :down truth.down :stopping truth.stopping
+                                        :committed truth.committed :crash-reason truth.crash-reason)))))
   (KillWorker [name]
     (<- now int (now-epoch-ms))
     (val truth (get hosts name))
@@ -4086,19 +4167,25 @@
             (<- mono float (GetMonotonic))
             (val generation (+ (get generations name) 1))
             (<- fresh HostTruth (fresh-truth name generation now (monotonic-ms-of mono) plan.timing))
+            (val alive-elder (next (gfor #(k v) (.items hosts) :if (and (.startswith k (+ name ELDER-MARK)) (not v.down)) v) None))
+            (val started (if (is alive-elder None)
+                             fresh
+                             (replace fresh :overlaps-elder True :pod-ip (if (= truth.pod-ip alive-elder.pod-ip) alive-elder.pod-ip fresh.pod-ip))))
             (val revival (.get revivals name))
             (:= generations (| generations {name generation}))
-            (:= hosts (| hosts {name fresh}))
+            (:= hosts (| hosts {name started}))
             (:= revivals (dfor #(k v) (.items revivals) :if (!= k name) k v))
             (when (is-not revival None)
               (<- (CompletePromise revival None)))
             (resume True))))
-  (RollWorker [name same-pod]
+  (RollWorker [name same-pod next-worker]
     ;; 新しい世代を先に起こす(AL-D2): 今の世代の真実を退いた世代の鍵へ移し、名には新しい世代の真実を置いて、worker の一生の係の約束を
     ;; 鳴らす(係は今の世代を退いた世代として見届け、すぐ新しい世代を回す)。same-pod なら新しい世代は前の世代の Pod の IP を名乗る。
+    ;; next-worker が渡された時は、新しい世代からその SimWorker の値で起こす(退いた世代は元の値のまま動く)。
     (val truth (get hosts name))
     (val rung (.get roll-bells name))
-    (if (or truth.down truth.stopping (is rung None) (!= (get rung 0) truth.boot))
+    (if (or truth.down truth.stopping (is rung None) (!= (get rung 0) truth.boot)
+            (and (is-not next-worker None) (!= next-worker.name name)))
         (resume None)
         (do (<- now int (now-epoch-ms))
             (<- mono float (GetMonotonic))
@@ -4106,6 +4193,8 @@
             (<- born HostTruth (fresh-truth name generation now (monotonic-ms-of mono) plan.timing))
             ;; 前の世代を止めずに起こした新しい世代は、重なりを名乗る(本番の起動の script の --overlaps-elder — AL-D2e)。
             (val fresh (replace born :overlaps-elder True :pod-ip (if same-pod truth.pod-ip born.pod-ip)))
+            (when (is-not next-worker None)
+              (:= current (| current {name next-worker})))
             (:= generations (| generations {name generation}))
             (:= hosts (| hosts {(elder-key name truth.boot) truth name fresh}))
             (:= roll-bells (dfor #(k v) (.items roll-bells) :if (!= k name) k v))

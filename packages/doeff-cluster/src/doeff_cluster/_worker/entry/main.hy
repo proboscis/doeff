@@ -858,7 +858,8 @@
         policy (WorkerPolicy :stop-grace-ms (int (* args.stop-grace 1000))
                              :warm-services (if (isinstance warm-services bool) warm-services (.error parser warm-services))
                              :warm-table-children (if (isinstance warm-table-children bool) warm-table-children
-                                                      (.error parser warm-table-children)))
+                                                      (.error parser warm-table-children))
+                             :overlaps-elder args.overlaps-elder)
         ;; 子と検めの shim の時間(猶予と掃除の余裕 — 方針から導く 1 か所・#2940)。破る組は下の timing-checked が断る。
         shim (run (shim-spans policy))
         ;; 起動の内訳の刻(Pod の起動・boot.sh の始まり・exec・import の終わり — 最初の heartbeat の答えの後に口が 1 行で出す・#3676)。

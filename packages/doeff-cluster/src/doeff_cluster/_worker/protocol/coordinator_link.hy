@@ -273,7 +273,10 @@
           self.load-paths load-paths self.measured None self.load-ticks None self.load-read-ms None self.load-reason ""
           self.eviction eviction
           ;; job の子へ渡す環境変数の名(None = 名乗らない — 起動の時に決まり、process の間は変わらない)。
-          self.child-environ child-environ)))
+          self.child-environ child-environ
+          ;; 世代入れ替えの確定点(committed): ready-settled = 最後に読んだ返事が解けて handoverPending でない(ready を許した)・
+          ;; committed = 拍の 1 周(掃除を含む)を回り切って DOEFF_WORKER_COMMITTED_FILE を書いた(1 度だけ書く)。
+          self.ready-settled False self.committed False)))
 
 
 
@@ -484,6 +487,21 @@
   None)
 
 
+(defk committed-file-written []
+  {:pre [] :post [(: % bool)]}
+  "keeper が旧い世代を退かせる確定点の file(DOEFF_WORKER_COMMITTED_FILE — 無ければ書かない)へ「committed」を 1 度書くため。
+   worker が coordinator に名乗れて受け渡しの待ち(handoverPending)が解け、かつ起動から拍の action(掃除 SweepEnvs を含む)を
+   1 周回し切った後にだけ呼ばれる。答え = file を書いたか。"
+  (<- found (get tuple #(EnvEntry ...)) (ReadEnvironment #("DOEFF_WORKER_COMMITTED_FILE")))
+  (when (not found)
+    (return False))
+  (val path (. (get found 0) value))
+  (when (not path)
+    (return False))
+  (<- (file-done (WriteText path "committed\n" :replace True)))
+  True)
+
+
 (defk reply-ready-refusal [text]
   {:pre [(: text str)] :post [(: % str)] :tags {:context "worker" :role "protocol" :reads "json"}}
   "生存の合図の thread の送りに届いた返事の本文が、ready の file を新しくしてよいと言っているかを読むため(\"\" = 許す・それ以外 =
@@ -668,6 +686,7 @@
     (<- jobs tuple (declared-job-specs declared))
     ;; 同じ名の前の世代がまだ動かしている job を、この世代がまだ受け取れない間(handoverPending — AL-D2k)は ready を書かない:
     ;; Pod が Ready になると Deployment が前の世代の Pod の削除を始め、Service がその Pod を振り先から外す。
+    (setv state.ready-settled (not declared.handover-pending))
     (when (not declared.handover-pending)
       (<- (ready-file-written state.life)))
     ;; 自己停止の時間は coordinator の ClusterTiming が持つ(移し替えの時間と組で決まる)。受け取った値に合わせる。
@@ -1351,8 +1370,15 @@
   (ObservePrograms []
     (<- gaps tuple (program-gaps state))
     (resume gaps))
-  (PublishStatus [statuses note]
+  (PublishStatus [statuses note cycle-complete]
     ;; 状態は次の heartbeat で送る。file にも書くので、同じ効果を外側の status-file へ回す。
     (<- rows list (status-rows state statuses))
     (setv state.statuses rows)
+    ;; 受け渡しの待ちが解け(ready-settled)、かつ起動から拍の action(掃除を含む)を 1 周回し切った(cycle-complete)時に 1 度だけ
+    ;; committed の印を書く(keeper はこの印を見て旧い世代を退かせる)。
+    (when (and cycle-complete state.ready-settled (not state.committed))
+      (setv state.committed True)
+      (<- wrote bool (committed-file-written))
+      (when wrote
+        (<- (slog "worker: 起動から拍の 1 周(掃除を含む)を回り切った — committed の印を書いた"))))
     (reperform effect)))

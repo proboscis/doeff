@@ -126,11 +126,13 @@
 (defclass [(dataclass :frozen True)] EnvDisk []
   "実行環境の root の置き場の disk の観測(2026-09-26): free = 共有の disk の空き(byte)・sweep-wanted = 掃除の係が拍を求めている
    (roots の合計が上限を越えている・最後に数えてから完成した root の集合が変わった・まだ数えていない・掃除が走っている —
-   env_upkeep.sweep-wanted・#3732)・pinned = 掃除の係が今持っている固定の集合(root のキー env-<キー>)。worker の判断は固定の集合が
+   env_upkeep.sweep-wanted・#3732)・pinned = 掃除の係が今持っている固定の集合(root のキー env-<キー>)・swept = 起動から最初の掃除を
+   1 周回し切ったか(env-host の swept-ms > 0 — keeper の世代入れ替えの確定点 committed の条件)。worker の判断は固定の集合が
    変わった時と、sweep-wanted が真の時に SweepEnvs を撃つ。"
   (#^ int free)
   (#^ bool sweep-wanted)
-  (#^ (get frozenset str) pinned))
+  (#^ (get frozenset str) pinned)
+  (setv #^ bool swept False))
 
 
 (defclass [(dataclass :frozen True)] WarmEnv []
@@ -466,6 +468,10 @@
   ;; 動く間、見回りの task が 2 回続けて 15 分を越えて起こされなかった。10-24 にも同じ事例)。既定 10 分 = 見回りが
   ;; 「終わらない」と数える 15 分より前に別の worker へ回る長さ。
   (setv #^ int memory-tight-hold-limit-ms 600000)
+  ;; 同じ名の前の世代がまだ走っている間に起きた世代か(起動の script の --overlaps-elder)。真の間は、起動から最初の掃除(SweepEnvs)を
+  ;; 1 周回し切る(EnvDisk.swept)まで前の世代から job を奪わず(StartJob と elder-runs の報告を待つ)、掃除で落ちても前の世代の job を
+  ;; 止めない。
+  (setv #^ bool overlaps-elder False)
 
   (defn #^ None __post-init__ [self]
     ;; 焼く道具の並べる数が正の整数である事を、方策を作る時に確かめるため(0 以下は道具が受けない — 準備が使い方の誤りで落ち続ける)。
@@ -581,8 +587,11 @@
 
 
 (defclass [(dataclass :frozen True)] PublishStatus [EffectBase]
+  "状態の報告。cycle-complete = この拍で宣言の読み・観測・拍の action(掃除を含む)を 1 周回し切ったか(coordinator への口は
+   受け渡しの待ちが解けてこの印が真になった時に世代の committed の印を書く)。"
   (#^ (get tuple #(JobStatus ...)) statuses)
-  (setv #^ str note ""))
+  (setv #^ str note "")
+  (setv #^ bool cycle-complete False))
 
 
 (defrecord BootMarks

@@ -76,18 +76,20 @@
 #   置いた file(subPath でない — 中身を変えても Pod は作り直されず、kubelet が file を入れ替える)。起動の版は呼び手がこの file から
 #   WORKER_DOEFF_COMMIT に入れて渡す(image の script は file を読まない)。その版の script は役 worker を keeper として回す:
 #     1. worker の世代(process 1 つ)を自分の子から外して起こす(回収は PID 1 の tini)。世代ごとの状態の dir は $WORK_DIR/gen/<世代>
-#        (下の WORKER_GENERATION_DIRS — 世代の名は <POD_UID>.<起こした刻>)・boot と ready と pid の file は $DOEFF_KEEPER_DIR/gens/<世代>/。
+#        (下の WORKER_GENERATION_DIRS — 世代の名は <POD_UID>.<起こした刻>)・boot と ready と committed と pid の file は $DOEFF_KEEPER_DIR/gens/<世代>/。
 #     2. KEEPER_TICK_SECONDS 秒(既定 2)ごとに版の file を読み、版が替わると、その版の root を役 prepare で背景で準備し(走っている世代は
 #        止めない・cgroup の準備の層の下のその版の子で起こし〔OOM kill は準備の木を丸ごと止め、頭が終わったら残りを止めて子を消す〕、
-#        追い出しの線までの空きが準備の層の上限に足りない間は起こさずに待つ — keeper_swap)、準備できたらその版の世代を同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
+#        追い出しの線までの空きが準備の層の上限に足りない間は起こさずに待つ — keeper_swap)、準備できたらその版の世代を候補として同じ container に起こす(前の世代の錠が持たれているので --overlaps-elder — 同じ機体に同じ名の
 #        2 つの世代を並べる RollingUpdate と同じ形・AL-D2)。
-#     3. いちばん新しい世代が coordinator に名乗れて自分の ready の file を書いた後(受け渡しの待ち handover-pending が解けた後)に、前の
-#        世代の dir に印 draining を置いて(世代の見張りはこれを読んだ後 cgroup の層の上限を書かない — DOEFF_WORKER_RETIRED_FILE)、
+#     3. 候補の世代が coordinator に名乗れて受け渡しの待ち(handover-pending)が解け、さらに起動から拍の action(掃除 SweepEnvs を含む)を
+#        1 周回し切って自分の committed の file を書いた後に、候補を今の世代へ進め、前の世代の dir に印 draining を置いて(世代の見張りはこれを読んだ後 cgroup の層の上限を書かない — DOEFF_WORKER_RETIRED_FILE)、
 #        世代つきで drain し(旧い Pod の preStop と同じ drain_main・上限は preStop の DRAIN_DEADLINE と分けた KEEPER_RETIRE_DEADLINE —
 #        keeper_retire の註)、drained の後に SIGTERM を送る。前の世代は
-#        自分の task と退いた handoff の process を終わりまで回してから退く(新しい世代は引き取らない)。新しい世代が名乗れない間(断られる・
-#        古い coordinator)は前の世代を drain しない — 前の世代が仕事を続ける。
-#     4. いちばん新しい世代が落ちたら、間を空けて(30 秒から倍にして 300 秒まで)同じ版で起こし直す。準備の失敗は 300 秒後に撃ち直す。
+#        自分の task と退いた handoff の process を終わりまで回してから退く(新しい世代は引き取らない)。候補が committed を書く前に落ちたら、
+#        その版を退けた版として覚え($DOEFF_KEEPER_DIR/rejected と log 1 行)、前の世代を止めずに動かし続け、版の file が同じ版を名指す間は
+#        起こし直さない(別の版に替わったらその版を試す)。
+#     4. 今の世代が落ちたら、間を空けて(30 秒から倍にして 300 秒まで)同じ版で起こし直す。間を 30 秒へ戻す(restarts=0)のは committed を
+#        書いた世代だけ。準備の失敗は 300 秒後に撃ち直す。
 #        世代を知らない版(起動の script に DOEFF_WORKER_GENERATION の無い commit)へは替えず、log に 1 行出して今の版のまま。
 #     5. Pod の ready: 生きているどれかの世代の ready の file が新しければ、readinessProbe の読む file(DOEFF_WORKER_READY_FILE・既定
 #        /tmp/doeff-worker-ready)へ ready を写す。いちばん新しい ready の世代の boot は DOEFF_WORKER_BOOT_FILE へ写す。
@@ -723,7 +725,7 @@ keeper_forget_other_pidns() {
   k_ns=$(readlink /proc/self/ns/pid 2>/dev/null || true)
   if [ -d "$keeper_dir" ] && [ "$(cat "$keeper_dir/pidns" 2>/dev/null || true)" != "$k_ns" ]; then
     keeper_log "状態の dir $keeper_dir は別の pid の名前空間(前の container)の物 — 残った世代と準備を忘れる"
-    rm -rf "$keeper_dir/gens" "$keeper_dir/prepare" "$keeper_dir/leaving"
+    rm -rf "$keeper_dir/gens" "$keeper_dir/prepare" "$keeper_dir/leaving" "$keeper_dir/rejected"
   fi
   mkdir -p "$keeper_dir"
   printf '%s\n' "$k_ns" >"$keeper_dir/pidns"
@@ -751,7 +753,12 @@ keeper_ready() {
   [ $(( $(date +%s) - k_mtime )) -le "${READY_MAX_AGE:-30}" ]
 }
 
-# 版 $1(root $2 — 準備済み)の世代を起こし、いちばん新しい世代にする。世代は keeper の子から外す(外側の subshell が抜けると PID 1 が
+# 世代の dir $1 が起動から拍の action(掃除を含む)を 1 周回し切った印(committed)を書いたか。
+keeper_committed() {
+  [ -f "$1/committed" ] && [ "$(cat "$1/committed" 2>/dev/null || true)" = committed ]
+}
+
+# 版 $1(root $2 — 準備済み)の世代を起こし、k_started_gen と k_started_at に置く。世代は keeper の子から外す(外側の subshell が抜けると PID 1 が
 # 親になる — keeper が版の替わりで止まらず、世代の終わりの回収を keeper が持たない)。
 keeper_start() {
   k_key="${POD_UID:-local}.$(boot_ms)"
@@ -762,16 +769,15 @@ keeper_start() {
     # 起動の内訳の刻(#3676)は世代ごとに数える — keeper の起動の刻を継がない。
     unset DOEFF_BOOT_STARTED_MS DOEFF_BOOT_EXEC_MS
     ROLE=worker WORKER_DOEFF_COMMIT=$1 DOEFF_BOOT_FROM_ROOT=1 WORKER_GENERATION_DIRS=1 DOEFF_WORKER_GENERATION=$k_key
-    DOEFF_WORKER_BOOT_FILE=$k_gen/boot DOEFF_WORKER_READY_FILE=$k_gen/ready DOEFF_WORKER_PREPARE_ROOM_FILE=$keeper_dir/prepare-room
+    DOEFF_WORKER_BOOT_FILE=$k_gen/boot DOEFF_WORKER_READY_FILE=$k_gen/ready DOEFF_WORKER_COMMITTED_FILE=$k_gen/committed
+    DOEFF_WORKER_PREPARE_ROOM_FILE=$keeper_dir/prepare-room
     export ROLE WORKER_DOEFF_COMMIT DOEFF_BOOT_FROM_ROOT WORKER_GENERATION_DIRS DOEFF_WORKER_GENERATION DOEFF_WORKER_BOOT_FILE \
-      DOEFF_WORKER_READY_FILE DOEFF_WORKER_PREPARE_ROOM_FILE
+      DOEFF_WORKER_READY_FILE DOEFF_WORKER_COMMITTED_FILE DOEFF_WORKER_PREPARE_ROOM_FILE
     sh "$2/packages/doeff-cluster/deploy/boot.sh" </dev/null &
     echo $! >"$k_gen/pid"
   )
-  # 役 drain(preStop)が使う版 — いちばん新しい世代の版(準備済みで、keeper の世代を知る)。
-  printf '%s\n' "$1" >"$keeper_dir/commit"
-  newest=$k_gen
-  newest_started=$(date +%s)
+  k_started_gen=$k_gen
+  k_started_at=$(date +%s)
   keeper_log "doeff $(keeper_short "$1") の世代 $k_key を起こした(pid $(cat "$k_gen/pid"))"
 }
 
@@ -870,11 +876,24 @@ keeper_swap() {
         fi
         return 0 ;;
     esac
-    keeper_log "版の file が doeff $(keeper_short "$target") → $(keeper_short "$1") に替わった — 新しい世代を起こし、名乗れた後に前の世代を退かせる"
-    target=$1
-    target_root=$k_root
-    restarts=0
-    keeper_start "$target" "$target_root"
+    # 前の未確定の候補が別の版で残っていれば止めて外す。
+    if [ -n "${candidate:-}" ]; then
+      k_old_pid=$(cat "$candidate/pid" 2>/dev/null || true)
+      if keeper_alive "$k_old_pid"; then
+        kill -TERM "$k_old_pid" 2>/dev/null || true
+      fi
+      rm -rf "$candidate"
+      candidate=""
+      candidate_commit=""
+      candidate_root=""
+      candidate_started=0
+    fi
+    keeper_log "版の file が doeff $(keeper_short "$target") → $(keeper_short "$1") に替わった — 新しい世代を候補として起こし、拍の 1 周を回り切った後に前の世代を退かせる"
+    keeper_start "$1" "$k_root"
+    candidate=$k_started_gen
+    candidate_commit=$1
+    candidate_root=$k_root
+    candidate_started=$k_started_at
   elif [ -f "$k_prep/failed" ]; then
     k_mtime=$(keeper_mtime "$k_prep/failed") || k_mtime=0
     [ $(( $(date +%s) - k_mtime )) -lt 300 ] || rm -rf "$k_prep"
@@ -964,15 +983,16 @@ keeper_group_close() {
   }
 }
 
-# keeper の 1 歩: 世代の生死と ready を読み、Pod の ready を写し、いちばん新しい世代が ready なら前の世代を退かせ、落ちていれば間を
-# 空けて起こし直し、版の file を読んで替える。止まり(印 leaving)の後は版を替えず、起こし直さない。
+# keeper の 1 歩: 世代の生死と ready・committed を読み、Pod の ready を写し、候補が committed を書いたら今の世代へ進めて前の世代を
+# 退かせ、committed の前に候補が落ちたらその版を退けて今の世代を続け、今の世代が落ちていれば間を空けて起こし直し、版の file を読んで
+# 替える。止まり(印 leaving)の後は版を替えず、起こし直さない。
 keeper_tick() {
   k_any_ready=""
   for k_gen in "$keeper_dir"/gens/*; do
     [ -d "$k_gen" ] || continue
     if ! keeper_alive "$(cat "$k_gen/pid" 2>/dev/null || true)"; then
-      # 終わった前の世代の印を外す(状態の dir $WORK_DIR/gen/<世代> は、次の世代の起動の script が錠の空きを見て消す)。
-      [ "$k_gen" = "$newest" ] || rm -rf "$k_gen"
+      # 終わった前の世代の印を外す(active と candidate の終わりは下の分岐で扱う — 状態の dir $WORK_DIR/gen/<世代> は次の起動が錠を見て消す)。
+      [ "$k_gen" = "$active" ] || [ "$k_gen" = "$candidate" ] || rm -rf "$k_gen"
       continue
     fi
     if keeper_ready "$k_gen"; then
@@ -982,26 +1002,63 @@ keeper_tick() {
   if [ -n "$k_any_ready" ]; then
     printf 'ready' >"$pod_ready.tmp" && mv -f "$pod_ready.tmp" "$pod_ready"
   fi
-  if keeper_alive "$(cat "$newest/pid" 2>/dev/null || true)"; then
-    if keeper_ready "$newest"; then
+  if [ -n "$candidate" ]; then
+    if keeper_alive "$(cat "$candidate/pid" 2>/dev/null || true)"; then
+      if keeper_committed "$candidate"; then
+        keeper_log "新しい世代 ${candidate##*/}(doeff $(keeper_short "$candidate_commit"))が拍の 1 周(掃除を含む)を回り切った — 前の世代を退かせる"
+        active=$candidate
+        active_started=$candidate_started
+        target=$candidate_commit
+        target_root=$candidate_root
+        # 役 drain(preStop)が使う版 — 確定した今の世代の版(準備済みで、keeper の世代を知る)。
+        printf '%s\n' "$target" >"$keeper_dir/commit"
+        candidate=""
+        candidate_commit=""
+        candidate_root=""
+        candidate_started=0
+        restarts=0
+        rejected=""
+        rm -f "$keeper_dir/rejected"
+      fi
+    else
+      if [ ! -f "$keeper_dir/leaving" ]; then
+        rejected=$candidate_commit
+        printf '%s\n' "$rejected" >"$keeper_dir/rejected.tmp" && mv -f "$keeper_dir/rejected.tmp" "$keeper_dir/rejected"
+        keeper_log "新しい世代 ${candidate##*/}(doeff $(keeper_short "$candidate_commit"))が拍の 1 周を回り切る(committed)前に落ちた — この版を退け、doeff $(keeper_short "$target") のまま続ける"
+      fi
+      rm -rf "$candidate"
+      candidate=""
+      candidate_commit=""
+      candidate_root=""
+      candidate_started=0
+    fi
+  fi
+  if keeper_alive "$(cat "$active/pid" 2>/dev/null || true)"; then
+    if keeper_committed "$active"; then
       restarts=0
-      if [ -f "$newest/boot" ] && [ "$(cat "$newest/boot")" != "$(cat "$pod_boot" 2>/dev/null || true)" ]; then
-        cp "$newest/boot" "$pod_boot.tmp" && mv -f "$pod_boot.tmp" "$pod_boot"
+      if [ -f "$active/boot" ] && [ "$(cat "$active/boot")" != "$(cat "$pod_boot" 2>/dev/null || true)" ]; then
+        cp "$active/boot" "$pod_boot.tmp" && mv -f "$pod_boot.tmp" "$pod_boot"
       fi
       for k_gen in "$keeper_dir"/gens/*; do
-        [ -d "$k_gen" ] && [ "$k_gen" != "$newest" ] && [ ! -f "$k_gen/draining" ] || continue
+        [ -d "$k_gen" ] && [ "$k_gen" != "$active" ] && [ "$k_gen" != "$candidate" ] && [ ! -f "$k_gen/draining" ] || continue
         keeper_alive "$(cat "$k_gen/pid" 2>/dev/null || true)" || continue
         keeper_retire "$k_gen"
       done
+    elif keeper_ready "$active"; then
+      if [ -f "$active/boot" ] && [ "$(cat "$active/boot")" != "$(cat "$pod_boot" 2>/dev/null || true)" ]; then
+        cp "$active/boot" "$pod_boot.tmp" && mv -f "$pod_boot.tmp" "$pod_boot"
+      fi
     fi
   elif [ ! -f "$keeper_dir/leaving" ]; then
     k_wait=$((30 << restarts))
     [ "$k_wait" -le 300 ] || k_wait=300
-    if [ $(( $(date +%s) - newest_started )) -ge "$k_wait" ]; then
-      keeper_log "いちばん新しい世代 ${newest##*/}(doeff $(keeper_short "$target"))が終わった — 同じ版で起こし直す"
-      rm -rf "$newest"
+    if [ $(( $(date +%s) - active_started )) -ge "$k_wait" ]; then
+      keeper_log "今の世代 ${active##*/}(doeff $(keeper_short "$target"))が終わった — 同じ版で起こし直す"
+      rm -rf "$active"
       [ "$restarts" -ge 4 ] || restarts=$((restarts + 1))
       keeper_start "$target" "$target_root"
+      active=$k_started_gen
+      active_started=$k_started_at
     fi
   fi
   [ ! -f "$keeper_dir/leaving" ] || return 0
@@ -1013,7 +1070,13 @@ keeper_tick() {
     fi
   else
     unreadable=""
-    [ "$k_wanted" = "$target" ] || keeper_swap "$k_wanted"
+    if [ -n "$rejected" ] && [ "$k_wanted" != "$rejected" ]; then
+      rejected=""
+      rm -f "$keeper_dir/rejected"
+    fi
+    if [ "$k_wanted" != "$target" ] && [ "$k_wanted" != "$candidate_commit" ] && [ "$k_wanted" != "$rejected" ]; then
+      keeper_swap "$k_wanted"
+    fi
   fi
 }
 
@@ -1060,15 +1123,23 @@ keeper_run() {
   pod_boot=${DOEFF_WORKER_BOOT_FILE:-/tmp/doeff-worker-boot}
   keeper_forget_other_pidns
   mkdir -p "$keeper_dir/gens" "$keeper_dir/prepare"
-  rm -f "$keeper_dir/leaving"
+  rm -f "$keeper_dir/leaving" "$keeper_dir/rejected"
   target=$sha
   target_root=$root
   restarts=0
   unreadable=""
   prepare_waiting=""
+  candidate=""
+  candidate_commit=""
+  candidate_root=""
+  candidate_started=0
+  rejected=""
   trap keeper_stop TERM INT
   keeper_log "版の file $WORKER_VERSION_FILE を読む keeper として起きた(doeff $(keeper_short "$sha"))"
   keeper_start "$target" "$target_root"
+  active=$k_started_gen
+  active_started=$k_started_at
+  printf '%s\n' "$target" >"$keeper_dir/commit"
   while :; do
     # 待ちは背景の sleep を wait で待つ — 止めの合図を待ちの途中で受ける(前面の sleep は終わるまで trap を走らせない)。
     sleep "${KEEPER_TICK_SECONDS:-2}" &
