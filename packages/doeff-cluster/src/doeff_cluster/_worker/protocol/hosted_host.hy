@@ -5,8 +5,13 @@
 ;;; os-proc-table-handler・os-file-handler。判断(置き場・id・層・持ち主)は worker/core/hosted_rules。
 ;;;
 ;;; 起こし方: 専用の session(process-group — job の group への合図も、launchd が worker の group に送る止めも届かない)で、worker の
-;;; 終わりの後も動き続ける子(ChildLifetime.OUTLIVES-STARTER — worker の消失で止める lifeline に載せない)。層を頼まれたら、その層の
-;;; cgroup.procs へ移ってから exec する sh で包む(worker/core/job_cgroup の placed-argv — 外の job-cgroup-placer は包み直さない)。
+;;; 終わりの後も動き続ける子(ChildLifetime.OUTLIVES-STARTER — worker の消失で止める lifeline に載せない)。層を頼まれたら、その層
+;;; (子の名も頼まれたら層の下の子 — 無ければ作る)の cgroup.procs へ移ってから exec する sh で包む(worker/core/hosted_rules の
+;;; hosted-placed-argv — 外の job-cgroup-placer は包み直さない)。起こす前に移る先の cgroup.subtree_control を読み、子に controller を配る
+;;; cgroup(cgroup v2 は process を置かない)なら path と訳で断る。移りが kernel に断られた子は命令を走らせずに終わり、移る先と断りの文が
+;;; 終わりの観測で答えの detail に載る。
+;;; ⚠ 層の直下に前から process が残る層(子に controller を配っていない層)へ後から controller を配ると、その書きは kernel に断られる —
+;;; 子を名指す頼みに替えても、直下の process が居なくなるまで層は配れない。
 ;;; worker の環境は継がない(頼みの env と、置き場の 2 つの環境変数だけ)。cwd と出力の file は置き場の dir。
 ;;;
 ;;; 覚え方: 起こした直後に置き場の中へ記録(HostedRecord — pid と、machine の process の表の start-ticks)を書く。worker の世代が替わったら、
@@ -37,9 +42,10 @@
 (import doeff_cluster._shared.core.clock [now-epoch-ms])
 (import doeff_cluster._shared.intent.hosted_model [HostedLaunch HostedProcess HostedRefused LaunchHosted StopHosted ListHosted])
 (import doeff_cluster._worker.intent.worker_model [DesiredJobs DesiredUnreadable ReadDesired ObserveWorld WorldView])
-(import doeff_cluster._worker.core.hosted_rules [HostedRecord ID-BYTES ID-VAR OUTPUT-NAME PLACE-VAR RECORD-NAME STOP-GRACE-MS
-                                                 hosted-id-of hosted-id? hosted-layer-procs hosted-orphans hosted-owners hosted-place-of])
-(import doeff_cluster._worker.core.job_cgroup [placed-argv])
+(import posixpath)
+(import doeff_cluster._worker.core.hosted_rules [HostedRecord ID-BYTES ID-VAR OUTPUT-NAME PLACE-VAR RECORD-NAME STOP-GRACE-MS UNPLACED-CODE
+                                                 hosted-id-of hosted-id? hosted-layer-procs hosted-orphans hosted-owners hosted-place-of
+                                                 hosted-placed-argv hosted-subgroup-procs inner-node-refusal unplaced-detail])
 
 ;; 頼みと答えの綴りの版(口の 1 行の欄 v)。
 (val WIRE-VERSION 1)
@@ -60,13 +66,15 @@
 
 (defrecord HostedEntry
   "宿が覚えている 1 本: record = 置き場の記録・own = この宿が起こした子(PollProcess で終わりと code を拾える)・ended = 終わりを観測した・
-   exit-code = 終わりの code(own の子だけ)・term-ms = 持ち主不在の止めで TERM を送った刻(None = 送っていない)。"
+   exit-code = 終わりの code(own の子だけ)・term-ms = 持ち主不在の止めで TERM を送った刻(None = 送っていない)・detail = 層へ移れずに
+   終わった訳(hosted_rules の unplaced-detail — own の子だけ)。"
   {:tags {:context "worker" :role "type"}}
   (#^ HostedRecord record)
   (#^ bool own)
   (setv #^ bool ended False)
   (setv #^ (| int None) exit-code None)
-  (setv #^ (| int None) term-ms None))
+  (setv #^ (| int None) term-ms None)
+  (setv #^ (| str None) detail None))
 
 
 (defclass HostedCell []
@@ -90,17 +98,19 @@
   (setv #^ (| str None) layer None)
   (#^ str place)
   (#^ int started-ms)
-  (#^ str generation))
+  (#^ str generation)
+  (setv #^ (| str None) subgroup None))
 
 
 (defwire HostedRequestWire
-  "口の頼みの 1 行: op = launch・stop・list。launch は argv・env・layer・owner、stop は id を持つ。"
+  "口の頼みの 1 行: op = launch・stop・list。launch は argv・env・layer・subgroup・owner、stop は id を持つ。"
   {:tags {:context "worker" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (#^ int v)
   (#^ str op)
   (setv #^ (| (get tuple #(str ...)) None) argv None)
   (setv #^ (| (get dict #(str str)) None) env None)
   (setv #^ (| str None) layer None)
+  (setv #^ (| str None) subgroup None)
   (setv #^ (| str None) owner None)
   (setv #^ (| str None) id None))
 
@@ -115,7 +125,9 @@
   (#^ str place)
   (#^ int started-ms)
   (setv #^ bool ended False)
-  (setv #^ (| int None) exit-code None))
+  (setv #^ (| int None) exit-code None)
+  (setv #^ (| str None) subgroup None)
+  (setv #^ (| str None) detail None))
 
 
 (defwire HostedAnswerWire
@@ -131,14 +143,15 @@
   {:pre [(: process HostedProcess)] :post [(: % HostedProcessWire)] :tags {:context "worker" :role "protocol"}}
   "答えの process を口の綴りにするため。"
   (HostedProcessWire :id process.id :pid process.pid :owner process.owner :layer process.layer :place process.place
-                     :started-ms process.started-ms :ended process.ended :exit-code process.exit-code))
+                     :started-ms process.started-ms :ended process.ended :exit-code process.exit-code :subgroup process.subgroup
+                     :detail process.detail))
 
 
 (defk process-of-wire [wire]
   {:pre [(: wire HostedProcessWire)] :post [(: % HostedProcess)] :tags {:context "worker" :role "protocol"}}
   "口の綴りの process を型に戻すため。"
   (HostedProcess :id wire.id :pid wire.pid :owner wire.owner :layer wire.layer :place wire.place :started-ms wire.started-ms
-                 :ended wire.ended :exit-code wire.exit-code))
+                 :ended wire.ended :exit-code wire.exit-code :subgroup wire.subgroup :detail wire.detail))
 
 
 (defk process-wires-of [processes]
@@ -169,7 +182,8 @@
         (match request
           (LaunchHosted) (HostedRequestWire :v WIRE-VERSION :op "launch" :argv request.launch.argv
                                             :env (dfor e request.launch.env e.name e.value)
-                                            :layer request.launch.layer :owner request.launch.owner)
+                                            :layer request.launch.layer :subgroup request.launch.subgroup
+                                            :owner request.launch.owner)
           (StopHosted) (HostedRequestWire :v WIRE-VERSION :op "stop" :id request.id)
           (ListHosted) (HostedRequestWire :v WIRE-VERSION :op "list"))))
   text)
@@ -195,7 +209,7 @@
     (and (= wire.op "stop") (is-not wire.id None)) (HostedAsk :op "stop" :id wire.id)
     (and (= wire.op "launch") wire.argv wire.owner)
       (HostedAsk :op "launch"
-                 :launch (HostedLaunch :argv wire.argv :owner wire.owner :layer wire.layer
+                 :launch (HostedLaunch :argv wire.argv :owner wire.owner :layer wire.layer :subgroup wire.subgroup
                                        :env (tuple (gfor #(k v) (.items (or wire.env {})) (EnvEntry :name k :value v)))))
     True (HostedRefused :detail (.format "頼みの op {!r} と欄が合わない" wire.op))))
 
@@ -231,7 +245,7 @@
   "置き場の記録を file の中身にするため。"
   (<- text str (dump-json (HostedRecordWire :id record.id :pid record.pid :start-ticks record.start-ticks :owner record.owner
                                             :layer record.layer :place record.place :started-ms record.started-ms
-                                            :generation record.generation)))
+                                            :generation record.generation :subgroup record.subgroup)))
   text)
 
 
@@ -242,7 +256,7 @@
   (if (isinstance wire Malformed)
       wire
       (HostedRecord :id wire.id :pid wire.pid :start-ticks wire.start-ticks :owner wire.owner :layer wire.layer :place wire.place
-                    :started-ms wire.started-ms :generation wire.generation)))
+                    :started-ms wire.started-ms :generation wire.generation :subgroup wire.subgroup)))
 
 
 ;; --- 起こす・観る・止める ---------------------------------------------------------
@@ -252,7 +266,7 @@
   "覚えている 1 本を答えの形にするため。"
   (val r entry.record)
   (HostedProcess :id r.id :pid r.pid :owner r.owner :layer r.layer :place r.place :started-ms r.started-ms :ended entry.ended
-                 :exit-code entry.exit-code))
+                 :exit-code entry.exit-code :subgroup r.subgroup :detail entry.detail))
 
 
 (defk start-ticks-of [pid]
@@ -262,14 +276,54 @@
   (next (gfor row rows :if (= row.pid pid) row.start-ticks) None))
 
 
+(defk placeable-refusal [procs child]
+  {:pre [(: procs str) (: child bool)] :post [(: % (| HostedRefused None))] :tags {:context "worker" :role "protocol"}}
+  "移る先の cgroup.procs(procs)へ process を置けるかを、起こす前に読むため。child = 層の下の子を頼んだ(子の dir が無ければ作る —
+   作れなければ path と訳で断る)。移る先の cgroup.subtree_control が子に controller を配っていれば断る(hosted_rules の
+   inner-node-refusal)。subtree_control を読めない移る先(cgroup の無い代役の file)は読みの答えを持たないので断らない。"
+  (val group (posixpath.dirname procs))
+  (when child
+    (<- made (| FileFailed None) (MakeDirectory group))
+    (when (isinstance made FileFailed)
+      (return (HostedRefused :detail (.format "層の下の子 {} を作れない: {}" group made.detail)))))
+  (<- controllers (| str FileFailed) (ReadText (posixpath.join group "cgroup.subtree_control")))
+  (when (isinstance controllers FileFailed)
+    (return None))
+  (<- refused (| HostedRefused None) (inner-node-refusal procs controllers))
+  refused)
+
+
+(defk unplaced-of [entry code]
+  {:pre [(: entry HostedEntry) (: code (| int None))] :post [(: % (| str None))] :tags {:context "worker" :role "protocol"}}
+  "終わった自分の子が層へ移れずに終わった訳を、出力の file から読むため(hosted_rules の unplaced-detail — 他の終わりは None)。読めた時は
+   log の 1 行(hosted-unplaced)も出す。"
+  (when (!= code UNPLACED-CODE)
+    (return None))
+  (<- output (| str FileFailed) (ReadText (+ entry.record.place "/" OUTPUT-NAME)))
+  (<- detail (| str None) (unplaced-detail code (if (isinstance output str) output "")))
+  (when (is-not detail None)
+    (<- (slog (.format "worker: hosted-unplaced id={} pid={} owner={} detail={}" entry.record.id entry.record.pid entry.record.owner detail)
+              :level "warning")))
+  detail)
+
+
 (defk launched [settings launch]
   {:pre [(: settings HostedSettings) (: launch HostedLaunch)] :post [(: % (| HostedEntry HostedRefused))]
    :tags {:context "worker" :role "protocol"}}
-  "LaunchHosted を汎用の効果で答えるため(頭の註の起こし方と覚え方): 層を選び、置き場を作り、子を起こし、記録を書く。起こせなければ
-   置き場を消して断る。"
-  (<- procs (| str None HostedRefused) (hosted-layer-procs settings.layers launch.layer))
-  (when (isinstance procs HostedRefused)
-    (return procs))
+  "LaunchHosted を汎用の効果で答えるため(頭の註の起こし方と覚え方): 層(と層の下の子)を選び、移る先が process を置ける cgroup かを
+   確かめ、置き場を作り、子を起こし、記録を書く。起こせなければ置き場を消して断る。"
+  (<- layer-procs (| str None HostedRefused) (hosted-layer-procs settings.layers launch.layer))
+  (when (isinstance layer-procs HostedRefused)
+    (return layer-procs))
+  (var procs layer-procs)
+  (when (is-not layer-procs None)
+    (<- chosen (| str HostedRefused) (hosted-subgroup-procs layer-procs launch.subgroup))
+    (when (isinstance chosen HostedRefused)
+      (return chosen))
+    (:= procs chosen)
+    (<- refused (| HostedRefused None) (placeable-refusal procs (is-not launch.subgroup None)))
+    (when (is-not refused None)
+      (return refused)))
   (<- noise bytes (RandomBytes ID-BYTES))
   (<- id str (hosted-id-of noise))
   (<- place str (hosted-place-of settings.root id))
@@ -279,7 +333,7 @@
   (val env (+ launch.env #((EnvEntry :name PLACE-VAR :value place) (EnvEntry :name ID-VAR :value id))))
   (var argv launch.argv)
   (when (is-not procs None)
-    (<- wrapped tuple (placed-argv procs launch.argv))
+    (<- wrapped tuple (hosted-placed-argv procs launch.argv))
     (:= argv wrapped))
   (val output (+ place "/" OUTPUT-NAME))
   (<- now int (now-epoch-ms))
@@ -293,12 +347,14 @@
   ;; 印の違う process へ送らない)。
   (<- ticks (| int None) (start-ticks-of answer.pid))
   (val record (HostedRecord :id id :pid answer.pid :start-ticks (if (is ticks None) 0 ticks) :owner launch.owner
-                            :layer (if (is procs None) None launch.layer) :place place :started-ms now :generation settings.generation))
+                            :layer (if (is procs None) None launch.layer) :place place :started-ms now :generation settings.generation
+                            :subgroup (if (is procs None) None launch.subgroup)))
   (<- body str (record-text record))
   (<- written (| FileFailed None) (WriteText (+ place "/" RECORD-NAME) body :replace True))
   (when (isinstance written FileFailed)
     (<- (slog (.format "worker: hosted-record-unwritten id={} pid={} detail={}" id answer.pid written.detail) :level "warning")))
-  (<- (slog (.format "worker: hosted-start id={} pid={} owner={} layer={} place={}" id answer.pid launch.owner record.layer place)))
+  (<- (slog (.format "worker: hosted-start id={} pid={} owner={} layer={} subgroup={} place={}" id answer.pid launch.owner record.layer
+                     record.subgroup place)))
   (HostedEntry :record record :own True))
 
 
@@ -336,7 +392,8 @@
         (:= polled answer))
       (cond
         (isinstance polled ProcessExited)
-          (:= changed (| changed {entry.record.id (replace entry :ended True :exit-code polled.exit-code)}))
+          (do (<- detail (| str None) (unplaced-of entry polled.exit-code))
+              (:= changed (| changed {entry.record.id (replace entry :ended True :exit-code polled.exit-code :detail detail)})))
         (isinstance polled ProcessRunning) None
         True
           (do (when (is rows None)

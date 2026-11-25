@@ -23,19 +23,23 @@
 (defrecord HostedLaunch
   "預かりの process 1 本の起こし方: argv = 命令・env = 環境変数の全部(worker の環境は継がない — 頼み手が渡した物と、worker が足す
    置き場の 2 つだけ)・layer = 置く cgroup の層の名(機体の配備の層の宣言の名 — 例 clis。None = worker の今の置き方のまま)・owner =
-   持ち主の job の名(worker が持ち主の有無を判じる名 — 入れ替えの前と後で同じ名)。"
+   持ち主の job の名(worker が持ち主の有無を判じる名 — 入れ替えの前と後で同じ名)・subgroup = 層の下の子の cgroup の名(英数字・-・_ —
+   None = 層そのものに置く)。cgroup v2 は子に controller を配る cgroup に process を置かないので、層の子に controller を配る機体
+   (例: 会話ごとの子に CPU の重みを掛ける層)では子を名指す(worker は子が無ければ作ってから移る)。"
   {:check [(> (len argv) 0) (> (len owner) 0)]}
   (#^ (get tuple #(str ...)) argv)
   (#^ str owner)
   (setv #^ (get tuple #(EnvEntry ...)) env #())
-  (setv #^ (| str None) layer None))
+  (setv #^ (| str None) layer None)
+  (setv #^ (| str None) subgroup None))
 
 
 (defrecord HostedProcess
   "worker が覚えている預かりの process 1 本の今: id = worker が振った名(h- と 16 進 16 字)・pid・owner = 持ち主の job の名・layer = 置いた
    層の名(None = 置き分けていない)・place = worker が作った置き場の dir(process の cwd — process は環境変数 DOEFF_HOSTED_PLACE でも
    読む。socket や spool はここに置く)・started-ms = 起こした刻(epoch ms)・ended = 終わりを観測した・exit-code = 終わりの code
-   (この worker の世代が起こした子だけが持つ — 起き直しで覚え直した process の終わりは code が分からず None)。"
+   (この worker の世代が起こした子だけが持つ — 起き直しで覚え直した process の終わりは code が分からず None)・subgroup = 置いた層の下の
+   子の名(None = 層そのもの)・detail = 層へ移れずに命令を走らせずに終わった時の訳(移る先の path と kernel の断りの文 — それ以外は None)。"
   (#^ str id)
   (#^ int pid)
   (#^ str owner)
@@ -43,7 +47,9 @@
   (#^ str place)
   (#^ int started-ms)
   (setv #^ bool ended False)
-  (setv #^ (| int None) exit-code None))
+  (setv #^ (| int None) exit-code None)
+  (setv #^ (| str None) subgroup None)
+  (setv #^ (| str None) detail None))
 
 
 (defrecord HostedRefused

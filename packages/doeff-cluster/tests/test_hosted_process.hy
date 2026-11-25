@@ -357,3 +357,58 @@
   (assert (in kept.pid (get seen "live")) seen)
   (assert (not-in gone.pid (get seen "live")) seen)
   (assert (not-in old.pid (get seen "live")) seen))
+
+
+(defk ended-view [id seconds]
+  {:pre [(: id str) (: seconds int)] :post [(: % HostedProcess)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "一覧の id の 1 本が終わるまで待って、その姿を返すため(上限 seconds 秒)。"
+  (for [_ (range (* seconds 20))]
+    (<- listed tuple (ListHosted))
+    (val seen (lfor p listed :if (and (= p.id id) p.ended) p))
+    (when seen
+      (return (get seen 0)))
+    (<- (Delay 0.05)))
+  (raise (AssertionError (.format "預かりの {} が {} 秒の内に終わらない" id seconds))))
+
+
+(defk inner-layer-scene []
+  {:pre [] :post [(: % dict)] :tags {:context "doeff-cluster-test" :role "program"}}
+  "筋書き 4(子に controller を配る層): 層そのものへの頼みは起こす前に断られ、子を名指す頼みは子の cgroup.procs へ移ってから起き、
+   子の cgroup.procs へ書けない頼みは命令を走らせずに終わって、移る先と断りの文が一覧の detail に載る。"
+  (<- direct (| HostedProcess HostedRefused) (launched-one "turn-host" "clis"))
+  (<- placed HostedProcess
+      (LaunchHosted (HostedLaunch :argv #("sleep" "300") :owner "turn-host" :layer "clis" :subgroup "c-one"
+                                  :env #((EnvEntry :name "PATH" :value (os.environ.get "PATH" ""))))))
+  (<- broken HostedProcess
+      (LaunchHosted (HostedLaunch :argv #("sleep" "300") :owner "turn-host" :layer "clis" :subgroup "c-broken"
+                                  :env #((EnvEntry :name "PATH" :value (os.environ.get "PATH" ""))))))
+  (<- unplaced HostedProcess (ended-view broken.id WAIT-SECONDS))
+  (<- (StopHosted placed.id))
+  (<- (StopHosted broken.id))
+  {"direct" direct "placed" placed "unplaced" unplaced})
+
+
+(deftest test-a-layer-that-hands-cpu-to-children-places-a-hosted-process-only-in-a-named-child [tmp-path]
+  {:skip-if (not LINUX) :skip-reason NOT-LINUX}
+  ;; 層 clis の代役: 子に cpu を配る cgroup(cgroup.subtree_control = cpu)。子 c-broken の cgroup.procs は dir にして書きを断らせる
+  ;; (kernel の EBUSY の代役 — 書けない移る先)。
+  (val layer (/ tmp-path "clis"))
+  (.mkdir (/ layer "c-broken" "cgroup.procs") :parents True)
+  (.write-text (/ layer "cgroup.subtree_control") "cpu\n")
+  (.write-text (/ layer "cgroup.procs") "")
+  (<- settings HostedSettings (settings-of tmp-path {"clis" (str (/ layer "cgroup.procs"))}))
+  (val seen (! (on-real-host tmp-path settings (HostedCell) (inner-layer-scene))))
+  (val direct (get seen "direct"))
+  (val placed (get seen "placed"))
+  (val unplaced (get seen "unplaced"))
+  ;; 11-26 の形: 層そのものへの頼みは、起こす前に移る先の path と訳で断られる(待たせずに頼み手へ返る)。
+  (assert (isinstance direct HostedRefused) direct)
+  (assert (in (str layer) direct.detail) direct)
+  (assert (= (.read-text (/ layer "cgroup.procs")) "") "層そのものに process が書かれた")
+  ;; 子を名指す頼みは、子の cgroup.procs に自分の pid を書いてから起きる。
+  (assert (= placed.subgroup "c-one") placed)
+  (assert (= (.split (.read-text (/ layer "c-one" "cgroup.procs"))) [(str placed.pid)]) placed)
+  ;; 書けない子: 命令を走らせずに終わり、移る先の path と断りの文が detail に載る。
+  (assert (= unplaced.exit-code 125) unplaced)
+  (assert (is-not unplaced.detail None) unplaced)
+  (assert (in (str (/ layer "c-broken" "cgroup.procs")) unplaced.detail) unplaced))
