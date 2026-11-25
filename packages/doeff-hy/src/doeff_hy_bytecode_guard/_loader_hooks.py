@@ -52,6 +52,10 @@ _installation = {"installed": False, "dataclasses": False}
 #: threading is not loaded at startup, so this is created when Hy source is first encountered.
 _compile_counts: dict[str, object] = {}
 
+#: Path of every Hy source compiled in this process, in order (across threads; a forked child inherits the parent's) -- read by
+#: :func:`hy_compile_count`.
+_compiled_paths: list[str] = []
+
 #: Bytes of the Hy source last read in this thread (per path) -- so the compiled bytes can be used for the store key.
 #: Discarded for that path when get_code finishes (the source is not held for the life of the process).
 _source_reads: dict[str, object] = {}
@@ -295,6 +299,7 @@ def _recording_source_to_code(previous: SourceToCode):
         code = records.canonical_gensyms(code)
         counts = _counts()
         counts[path] = counts.get(path, 0) + 1
+        _compiled_paths.append(path)
         module = _module_being_loaded(self, path)
         if module is None:
             # A compile outside a module (py_compile, image-assembly warm) -- what macros were required is
@@ -831,6 +836,17 @@ def _counts() -> dict[str, int]:
     if not isinstance(local, threading.local):
         local = _compile_counts.setdefault("local", threading.local())
     return vars(local).setdefault("counts", {})
+
+
+def hy_compile_count() -> int:
+    """How many times Hy source was compiled in this process (0 means every Hy module came from bytecode)."""
+    return len(_compiled_paths)
+
+
+def hy_module_count() -> int:
+    """How many Hy modules this process has loaded."""
+    origins = (getattr(getattr(module, "__spec__", None), "origin", None) for module in tuple(sys.modules.values()))
+    return sum(1 for origin in origins if isinstance(origin, str) and is_hy_source(origin))
 
 
 def _hy_version() -> str:

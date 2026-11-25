@@ -45,6 +45,7 @@
 (import doeff_cluster._shared.intent.run_context [RunContext])
 (import doeff_cluster._shared.core.run_context_rules [runtime-env-of-context])
 (import doeff_cluster._shared.entry.run_context_env [context-from-env])
+(import doeff_hy_bytecode_guard._loader_hooks [hy-compile-count hy-module-count])
 ;; 結果の届け(worker/entry/result_delivery — 本物の HTTP の handler と httpx を読む)は task の道だけが要るので、run-task の中で読む。
 ;; 頭で読むと、届けを使わない service の子まで起動で読んでいた。
 
@@ -139,7 +140,12 @@
   "task の入口: 結果を必ず file に書き、終わる前に coordinator へ直に届けてから 0 で終わる(届かなければ worker の heartbeat が file の
    結果を運ぶ)。"
   (setv ctx (context-from-env))
+  ;; 待ちの子(warm_child)が fork の前に読み込んだ分は、この process の分と分けて数える。
+  (setv compiled-before (hy-compile-count))
   (setv outcome (task-outcome args.program ctx))
+  (print (.format "task: {} の Hy module: 読んだ数 {}・task の compile {}・fork 前の compile {}" ctx.job (hy-module-count)
+                  (- (hy-compile-count) compiled-before) compiled-before)
+         :file sys.stderr :flush True)
   (setv encoded (encode-outcome outcome))
   ;; 別名に書いてから置き換える(書きかけを worker に読ませない)— effect WriteText :replace True(答え手 = os-file-handler・#3014)。
   (run (with_handlers [os-file-handler] (file-done (WriteText args.result encoded :replace True))))

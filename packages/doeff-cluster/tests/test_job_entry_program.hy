@@ -10,6 +10,7 @@
 (require doeff-hy.macros [deftest defk <- val])
 (import json)
 (import os)
+(import re)
 (import subprocess)
 (import sys)
 (import pathlib [Path])
@@ -72,6 +73,19 @@
   (<- missing (entry "doeff_cluster._worker.entry.job_entry" "service" "--identity" (* "0" 16) "--program" (str (/ tmp-path "absent.json"))))
   (assert (= missing.returncode 3) missing.stderr)
   (assert (in "Program の file" missing.stderr) missing.stderr))
+
+
+;; Hy module の読みの行: 2 度目の task は全部を bytecode から読む(compile 0)。
+(deftest test-a-task-reports-how-many-hy-modules-it-read-and-compiled [tmp-path]
+  (<- path (program-file (/ tmp-path "p.json") (self-contained-program 5) (! (process-versions os.environ))))
+  (val pattern "task: entry-probe の Hy module: 読んだ数 ([0-9]+)・task の compile ([0-9]+)・fork 前の compile ([0-9]+)")
+  (<- first (entry "doeff_cluster._worker.entry.job_entry" "task" "--program" path "--result" (str (/ tmp-path "a"))))
+  (assert (is-not (re.search pattern first.stderr) None) first.stderr)
+  (<- done (entry "doeff_cluster._worker.entry.job_entry" "task" "--program" path "--result" (str (/ tmp-path "b"))))
+  (val found (re.search pattern done.stderr))
+  (assert (is-not found None) done.stderr)
+  (assert (> (int (.group found 1)) 0) done.stderr)
+  (assert (= (.group found 2) "0") done.stderr))
 
 
 (deftest test-the-probe-decodes-the-program-without-running-it [tmp-path]
