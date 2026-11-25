@@ -20,7 +20,9 @@
 (import hashlib)
 (import re)
 (import doeff_cluster._shared.intent.hosted_model [HostedRefused])
+(import posixpath)
 (import doeff_cluster._worker.core.warm_rules [SOCKET-PATH-LIMIT WARM-SOCKET-ROOT])
+(import doeff_cluster._worker.core.job_cgroup [SUBGROUP-NAME-MAX])
 
 ;; 分け合う dir の下の置き場の根の名。
 (val HOSTED-DIR "hosted")
@@ -40,12 +42,24 @@
 (val STOP-GRACE-MS 5000)
 ;; 口の socket の dir の名に入れる、置き場の根の sha256 の頭の桁数(warm_rules の WARM-SOCKET-DIGITS と同じ 96 bit)。
 (val SOCKET-DIGITS 24)
+;; 層の下の子の名の形(job_cgroup の job-subgroup-name と同じ字の組 — 名の長さの上限も同じ SUBGROUP-NAME-MAX)。
+(val SUBGROUP-PATTERN (re.compile "[A-Za-z0-9_-]+"))
+;; 層へ移れなかった預かりの process の終わりの code と、出力の file に書く訳の 1 行の頭(unplaced-detail が読む)。
+(val UNPLACED-CODE 125)
+(val UNPLACED-MARK "doeff-hosted-unplaced:")
+;; 預かりの process を移る先へ移してから exec する sh($0 = 移る先の cgroup.procs)。sh の echo の書きの失敗は errno の文を落とす
+;; (dash は何の断りも「I/O error」と出す)ので、書きは tee に任せ、tee の断りの文(path と strerror)を訳の 1 行にする。tee は $$(この
+;; sh の pid — 部分 shell の中でも元の sh)を書くので、移るのはこの sh で、exec の後の命令も同じ cgroup に居る。
+(val UNPLACED-SCRIPT
+  (+ "why=$(echo $$ | tee \"$0\" 2>&1 >/dev/null) || { echo \"" UNPLACED-MARK " ${why:-$0 に書けない}\"; exit "
+     (str UNPLACED-CODE) "; }; exec \"$@\""))
 
 
 (defrecord HostedRecord
   "置き場の中の worker の記録 1 つ(起こした世代が書き、起き直した世代が読んで覚え直す): id・pid・start-ticks = process の起こした刻の印
    (machine の process の表の start-ticks — pid の使い回しを見分け、別の process へ合図を送らない)・owner = 持ち主の job の名・layer =
-   置いた層の名(None = 置き分けていない)・place = 置き場の dir・started-ms = 起こした刻(epoch ms)・generation = 起こした worker の世代の印。"
+   置いた層の名(None = 置き分けていない)・place = 置き場の dir・started-ms = 起こした刻(epoch ms)・generation = 起こした worker の世代の印・
+   subgroup = 置いた層の下の子の名(None = 層そのもの)。"
   {:tags {:context "worker" :role "type"}}
   (#^ str id)
   (#^ int pid)
@@ -54,7 +68,8 @@
   (#^ (| str None) layer)
   (#^ str place)
   (#^ int started-ms)
-  (#^ str generation))
+  (#^ str generation)
+  (setv #^ (| str None) subgroup None))
 
 
 (defk hosted-root-of [shared]
@@ -109,6 +124,46 @@
     (or (is layer None) (is layers None)) None
     (in layer layers) (get layers layer)
     True (HostedRefused :detail (.format "この worker に cgroup の層 {!r} が無い(在る層: {})" layer (.join "," (sorted layers))))))
+
+
+(defk hosted-subgroup-procs [procs subgroup]
+  {:pre [(: procs str) (: subgroup (| str None))] :post [(: % (| str HostedRefused))] :tags {:context "worker" :role "judgment"}}
+  "層の cgroup.procs(procs — hosted-layer-procs の答え)と頼みの子の名から、移る先の cgroup.procs を選ぶため。子の名が無ければ層そのもの。
+   形の外の名(英数字・-・_ の外の字・空・SUBGROUP-NAME-MAX を越える)は断る(層の外や cgroup の file を指さない)。"
+  (cond
+    (is subgroup None) procs
+    (and (<= (len subgroup) SUBGROUP-NAME-MAX) (is-not (.fullmatch SUBGROUP-PATTERN subgroup) None))
+      (posixpath.join (posixpath.dirname procs) subgroup "cgroup.procs")
+    True (HostedRefused :detail (.format "層の下の子の名の形でない: {!r}(英数字・-・_ で {} 字まで)" subgroup SUBGROUP-NAME-MAX))))
+
+
+(defk inner-node-refusal [procs controllers]
+  {:pre [(: procs str) (: controllers str)] :post [(: % (| HostedRefused None))] :tags {:context "worker" :role "judgment"}}
+  "移る先の cgroup の cgroup.subtree_control の中身(controllers)から、そこへ process を置けるかを判じるため。cgroup v2 は子に controller を
+   配る cgroup(中の node)へ process を移させない(no internal process — 書きは EBUSY で断られる)。配っていれば、移る前に path と訳で
+   断る(失敗ケース: 層 clis の子に cpu を配る機体で、預けた process は移りの書きで落ち、頼み手は起動の合図の待ちが切れるまで知らなかった)。"
+  (val handed (.split controllers))
+  (when handed
+    (return (HostedRefused :detail (.format "移る先 {} は子に controller({})を配る cgroup で、cgroup v2 は process を置かない(移りは EBUSY で断られる)— 層の下の子を名指す"
+                                            (posixpath.dirname procs) (.join " " handed)))))
+  None)
+
+
+(defk hosted-placed-argv [procs argv]
+  {:pre [(: procs str) (: argv tuple)] :post [(: % tuple)] :tags {:context "worker" :role "judgment"}}
+  "預かりの process の argv を、移る先の cgroup.procs へ移ってから元の argv を exec する sh で包むため(UNPLACED-SCRIPT)。移れなければ
+   sh は命令を走らせず、移る先の path と kernel の断りの文を UNPLACED-MARK の 1 行で出力の file へ書き、UNPLACED-CODE で終わる。"
+  (+ #("/bin/sh" "-c" UNPLACED-SCRIPT procs) argv))
+
+
+(defk unplaced-detail [code output]
+  {:pre [(: code (| int None)) (: output str)] :post [(: % (| str None))] :tags {:context "worker" :role "judgment"}}
+  "終わった預かりの process の終わりの code と出力の file の中身から、層へ移れずに終わった訳を読むため(UNPLACED-SCRIPT の 1 行 — 他の
+   終わりは None)。"
+  (when (!= code UNPLACED-CODE)
+    (return None))
+  (val lines (lfor line (.splitlines output) :if (.startswith line UNPLACED-MARK) (.strip (cut line (len UNPLACED-MARK) None))))
+  (if lines (get lines -1) None))
 
 
 (defk hosted-owners [jobs processes]
