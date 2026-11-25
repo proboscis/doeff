@@ -1,9 +1,9 @@
 # spire.py — a small deck-building battle (in the spirit of Slay the Spire), as one doeff program.
 # `battle` says only what it needs from the outside world: Roll (a random number), Choose (the
 # player's move), Show (the screen) and Played (a statistic). A Poison card lasts three turns: it is
-# a task of its own that waits for the end of each turn (TurnEnds), under the turn clock `turns()` and
-# doeff's scheduler `scheduled`. Each layer below gives those effects a meaning, and the same `battle`
-# runs under every one of them:
+# a loop that waits for the end of each turn (TurnEnds), and the game's turn clock `turns()` keeps its
+# k until the turn ends. Each layer below gives those effects a meaning, and the same `battle` runs
+# under every one of them:
 #   1. a scripted player and a screen        4. a Monte Carlo bot: its handler runs `battle` itself
 #   2. a random bot                          5. 100 fights, one task each, for a win rate
 #   3. record and replay of a fight          6. a damage count per card
@@ -16,7 +16,7 @@ import random
 import sys
 from dataclasses import dataclass, replace
 
-from doeff import CompletePromise, CreatePromise, EffectBase, Gather, Resume, Spawn, Wait, do, handler, run
+from doeff import EffectBase, Gather, Resume, Spawn, do, handler, run
 from doeff_core_effects import scheduled
 
 
@@ -52,6 +52,11 @@ class TurnEnds(EffectBase):  # a lasting card effect: "wait for the end of the t
 @dataclass(frozen=True)
 class Hurt(EffectBase):  # a lasting card effect deals damage to the enemy
     n: int
+
+
+@dataclass(frozen=True)
+class Lasting(EffectBase):  # the fight: "run this card effect over the next turns"
+    program: object
 
 
 @dataclass(frozen=True)
@@ -133,11 +138,11 @@ def battle(s: Fight = Fight()):
             s = replace(dealt.state, discard=dealt.state.discard + (card,))
             yield Played(card, dealt.damage)
             if card == "Poison":
-                yield Spawn(poison(3, turns=3), daemon=True)  # a task of its own: it outlives this turn
+                yield Lasting(poison(3, turns=3))  # it outlives this turn
             if s.enemy_hp <= 0:
                 return "win", s.turn
         s = replace(s, discard=s.discard + hand)
-        poisoned = yield EndTurn()  # every lasting effect that waits runs up to its next wait
+        poisoned = yield EndTurn()  # every card effect that waits runs up to its next wait
         if poisoned:
             s = replace(s, enemy_hp=s.enemy_hp - poisoned)
             yield Played("Poison", poisoned)
@@ -162,24 +167,28 @@ def affordable(effect: Choose) -> list[int]:
     return [i for i, c in enumerate(effect.hand) if CARDS[c][0] <= effect.energy]
 
 
-# ---- The turn clock: a lasting effect waits on the turn's promise, and the scheduler keeps its task.
+# ---- The turn clock: it keeps the k of each card effect that waits, and resumes them when a turn ends.
 def turns():
-    bell, dealt = None, 0  # the promise of the turn that is on, and what the lasting effects dealt
+    waiting, dealt = (), 0  # the k of each card effect that waits for the end of the turn, and what they dealt
 
     @handler
-    def turn_clock(effect: TurnEnds | Hurt | EndTurn, k):
-        nonlocal bell, dealt
-        if isinstance(effect, TurnEnds):
-            if bell is None:
-                bell = yield CreatePromise()
-            yield Wait(bell.future)  # the scheduler keeps this task until the fight ends the turn
-            return (yield Resume(k, None))
+    def lasting(effect: TurnEnds | Hurt, k):  # around each card effect
+        nonlocal waiting, dealt
         if isinstance(effect, Hurt):
             dealt += effect.n
             return (yield Resume(k, None))
-        over, bell = bell, None
-        if over is not None:
-            yield CompletePromise(over, None)  # every task that waits runs up to its next wait
+        waiting = (*waiting, k)  # it waits for the end of the turn: keep its k, and go back to the fight
+
+    @handler
+    @do(non_tail=True)  # it goes on after each card effect it resumes
+    def turn_clock(effect: Lasting | EndTurn, k):
+        nonlocal waiting, dealt
+        if isinstance(effect, Lasting):
+            yield lasting(effect.program)  # the card effect runs up to its first wait
+            return (yield Resume(k, None))
+        ready, waiting, dealt = waiting, (), 0
+        for card_effect in ready:  # the turn ends: each card effect runs up to its next wait
+            yield Resume(card_effect, None)
         total, dealt = dealt, 0
         return (yield Resume(k, total))
 
@@ -281,7 +290,7 @@ def monte_carlo(playouts: int):
                 if s.enemy_hp <= 0:
                     wins += 1
                     continue
-                result, _ = run(scheduled(quiet_stats(silent(dice(n)(random_bot(turns()(battle(s))))))))
+                result, _ = run(quiet_stats(silent(dice(n)(random_bot(turns()(battle(s)))))))
                 wins += result == "win"
             if wins / playouts > best_score:
                 best, best_score = i, wins / playouts
@@ -328,12 +337,12 @@ def play() -> None:
     """A fight against the enemy, played by a person; the dice are seeded by the system."""
     seed = random.SystemRandom().randrange(10**6)
     print(f"seed {seed}")
-    print("->", run(scheduled(quiet_stats(printed(dice(seed)(human(turns()(battle()))))))))
+    print("->", run(quiet_stats(printed(dice(seed)(human(turns()(battle())))))))
 
 
 def at_terminal(seed: int) -> None:
     """The fight of `seed` at the terminal: printed answers Show, human answers Choose."""
-    print("->", run(scheduled(quiet_stats(printed(dice(seed)(human(turns()(battle()))))))))
+    print("->", run(quiet_stats(printed(dice(seed)(human(turns()(battle())))))))
 
 
 # ---- Production again: the same person in a window. Two handlers change; `battle` does not.
@@ -422,7 +431,7 @@ def window():
 def in_window(seed: int) -> None:
     """The fight of `seed` in a window: drawn answers Show, clicked answers Choose."""
     drawn, clicked, end = window()
-    result = run(scheduled(quiet_stats(drawn(dice(seed)(clicked(turns()(battle())))))))
+    result = run(quiet_stats(drawn(dice(seed)(clicked(turns()(battle()))))))
     print("->", result, flush=True)
     end(result)
 
@@ -431,19 +440,19 @@ def tour() -> None:
     """Layers 1 to 6 in order. Fixed seeds: the output is the same on every run."""
     print("1. a scripted player on seed 7, on screen")
     moves = [0, 0, 0, None] * 20
-    print("  ->", run(scheduled(quiet_stats(printed(dice(7)(scripted(moves)(turns()(battle()))))))))
+    print("  ->", run(quiet_stats(printed(dice(7)(scripted(moves)(turns()(battle())))))))
 
     print("2. a random bot on seed 3")
-    print("  ->", run(scheduled(quiet_stats(silent(dice(3)(random_bot(turns()(battle()))))))))
+    print("  ->", run(quiet_stats(silent(dice(3)(random_bot(turns()(battle())))))))
 
     print("3. record that fight, then replay it with no dice and no player")
     tape: list = []
-    first = run(scheduled(quiet_stats(silent(dice(3)(random_bot(record(tape)(turns()(battle()))))))))
-    again = run(scheduled(quiet_stats(silent(replay(tape)(turns()(battle()))))))
+    first = run(quiet_stats(silent(dice(3)(random_bot(record(tape)(turns()(battle())))))))
+    again = run(quiet_stats(silent(replay(tape)(turns()(battle())))))
     print("  ->", first, again, "same:", first == again, "tape:", len(tape), "answers")
 
     print("4. a Monte Carlo bot on seed 3")
-    print("  ->", run(scheduled(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(turns()(battle()))))))))
+    print("  ->", run(quiet_stats(silent(dice(3)(monte_carlo(PLAYOUTS)(turns()(battle())))))))
 
     print("5. 100 fights, one task each: random bot vs Monte Carlo bot")
     print("  -> random bot wins", run(scheduled(quiet_stats(win_rate(random_bot, 100)))))

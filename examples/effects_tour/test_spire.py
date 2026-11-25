@@ -1,6 +1,5 @@
 # test_spire.py
 from doeff import Resume, handler, run
-from doeff_core_effects import scheduled
 
 from spire import Fight, Played, battle, dice, quiet_stats, scripted, silent, turns
 
@@ -14,14 +13,14 @@ def played_in(fight):
         played.append((effect.card, effect.damage))
         return (yield Resume(k, None))
 
-    run(scheduled(log(silent(dice(7)(fight)))))
+    run(log(silent(dice(7)(fight))))
     return played
 
 
 def test_a_strike_finishes_an_enemy_on_6_hit_points():
     # seed 7 deals Defend Strike Bash Defend Strike, and the script plays the Strike
     fight = scripted([1])(turns()(battle(Fight(enemy_hp=6))))
-    assert run(scheduled(quiet_stats(silent(dice(7)(fight))))) == ("win", 1)
+    assert run(quiet_stats(silent(dice(7)(fight)))) == ("win", 1)
 
 
 def test_bash_makes_the_next_strike_hit_harder():
