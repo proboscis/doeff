@@ -9,6 +9,7 @@
 //!            (layer intent … :types-only true) (layer protocol …) (layer foundation …)
 //!            (layer entry … :dependency-layers [intent protocol])]   ; which layers of a dependency target may be read (default = :open-layers)
 //!   :shared "shared"                 ; a location every service can read (root/shared/<layer>/)
+//!   :forbid-shared-service-imports True  ; optional (default false): forbid modules under :shared from importing any service (DOEFF116)
 //!   :foundation "foundation"         ; a layer outside services (root/foundation/) — :layers needs a layer with the same name
 //!   :verification-environment "agora_sim"  ; location of the emulated environment (one root/<dir>/) — a location that is not a service and is not subject to DOEFF114/115. Other rules still apply
 //!   :root-modules ["macros"]         ; names (file stems) of public modules allowed directly under root — not DOEFF114. A file with no name is DOEFF114 as before
@@ -817,6 +818,9 @@ pub struct Architecture {
     pub root: String,
     pub layers: Vec<ArchLayer>,
     pub shared: Option<String>,
+    /// Whether modules under `:shared` are forbidden from importing any service (`:forbid-shared-service-imports True`, default `false`).
+    /// When `true`, DOEFF116 also checks modules under `:shared` and rejects imports targeting any service.
+    pub forbid_shared_service_imports: bool,
     pub foundation: Option<String>,
     /// The location of the emulated environment (one dir directly under root, `:verification-environment "agora_sim"`) — a verification environment that runs all services by swapping only
     /// the handlers while keeping the production assembly reads the core and entry of every service, so it belongs to no service (the same reasoning as R8's scripts/).
@@ -1400,6 +1404,7 @@ impl<'a> Parser<'a> {
             root: String::new(),
             layers: Vec::new(),
             shared: None,
+            forbid_shared_service_imports: false,
             foundation: None,
             verification_environment: None,
             root_modules: Vec::new(),
@@ -1466,6 +1471,11 @@ impl<'a> Parser<'a> {
                     }
                 }
                 ":shared" => arch.shared = self.required_string(value, ":shared"),
+                ":forbid-shared-service-imports" => match self.symbol(value) {
+                    Some("True" | "true") => arch.forbid_shared_service_imports = true,
+                    Some("False" | "false") => arch.forbid_shared_service_imports = false,
+                    _ => self.problem(value, ":forbid-shared-service-imports must be True or False"),
+                },
                 ":foundation" => arch.foundation = self.name(value),
                 ":verification-environment" => arch.verification_environment = self.required_string(value, ":verification-environment"),
                 ":root-modules" => arch.root_modules = self.names(value, ":root-modules"),
@@ -3531,6 +3541,9 @@ fn check(arch: &Architecture, at: &str) -> Vec<String> {
             push(&mut problems, format!("there is no layer in :layers with the same name as :foundation {}", foundation));
         }
     }
+    if arch.forbid_shared_service_imports && arch.shared.is_none() {
+        push(&mut problems, ":forbid-shared-service-imports requires :shared (there is no shared location to forbid service imports from)".to_string());
+    }
     if let Some(decl) = &arch.environment_branches {
         for layer in decl.layers.iter().filter(|layer| !layers.contains(layer.as_str())) {
             push(&mut problems, format!("{} in :layers of :environment-branches is not in :layers", layer));
@@ -4119,5 +4132,20 @@ mod tests {
             let theirs = regex::Regex::new(bad).expect_err(bad).to_string();
             assert_eq!(ours, theirs, "{bad} refusal text differs from before");
         }
+    }
+
+    #[test]
+    fn forbid_shared_service_imports_parses_and_requires_shared() {
+        assert!(!Architecture::parse(GOOD, Path::new("architecture.hy")).unwrap().forbid_shared_service_imports);
+        let enabled = GOOD.replace(":shared \"shared\"", ":shared \"shared\"\n  :forbid-shared-service-imports True");
+        assert!(Architecture::parse(&enabled, Path::new("architecture.hy")).unwrap().forbid_shared_service_imports);
+        let disabled = GOOD.replace(":shared \"shared\"", ":shared \"shared\"\n  :forbid-shared-service-imports False");
+        assert!(!Architecture::parse(&disabled, Path::new("architecture.hy")).unwrap().forbid_shared_service_imports);
+        let bad_val = GOOD.replace(":shared \"shared\"", ":shared \"shared\"\n  :forbid-shared-service-imports \"yes\"");
+        let err = Architecture::parse(&bad_val, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(err.contains(":forbid-shared-service-imports must be True or False"), "{err}");
+        let no_shared = GOOD.replace(":shared \"shared\"", ":forbid-shared-service-imports True");
+        let err = Architecture::parse(&no_shared, Path::new("architecture.hy")).unwrap_err().join("\n");
+        assert!(err.contains(":forbid-shared-service-imports requires :shared"), "{err}");
     }
 }

@@ -263,6 +263,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
         root,
         layers,
         shared,
+        forbid_shared_service_imports,
         foundation,
         verification_environment,
         root_modules,
@@ -322,10 +323,11 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
     for service in services {
         service_slots(service, out);
     }
-    let fields: [(&str, Decl, String); 32] = [
+    let fields: [(&str, Decl, String); 33] = [
         ("roles", Decl::LayerRoles, shape(role_descriptions)),
         ("outside-writers", Decl::OutsideWriters, shape(outside_writers)),
         ("open-layers", Decl::OpenLayers, shape(open_layers)),
+        ("forbid-shared-service-imports", Decl::ServiceDependencies, shape(forbid_shared_service_imports)),
         ("placed-dependencies", Decl::PlacedDependencies, shape(placed_dependencies)),
         ("blind-definitions", Decl::BlindDefinitions, shape(blind_definitions)),
         ("allowed-heads", Decl::AllowedHeads, shape(allowed_heads)),
@@ -503,6 +505,11 @@ mod tests {
         // Where files sit is read by every rule.
         assert_eq!(changed(&ARCHITECTURE.replace(":root \"app\"", ":root \"src\""), CONFIG), vec!["Item(Population)"]);
         assert_eq!(changed(ARCHITECTURE, &format!("{}exclude = [\"tests\"]\n", CONFIG)), vec!["Item(Population)"]);
+        // Toggling :forbid-shared-service-imports changes only ServiceDependencies (promotes DOEFF116).
+        let with_shared = ARCHITECTURE.replace(":root \"app\"", ":root \"app\"\n  :shared \"shared\"");
+        let shared_base = view(&with_shared, CONFIG, &[]);
+        let shared_forbid = with_shared.replace(":shared \"shared\"", ":shared \"shared\"\n  :forbid-shared-service-imports True");
+        assert_eq!(items(&changes(&shared_base, &view(&shared_forbid, CONFIG, &[]))), vec!["Item(ServiceDependencies)"]);
     }
 
     /// A registry row removed names its rule (the hit becomes an error); a row added names DOEFF166's item (it may match nothing). A key naming a law names that law's rules.
