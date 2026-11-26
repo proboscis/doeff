@@ -278,6 +278,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
         rejected_plain_callable_reasons,
         wire_modules,
         world_handlers,
+        world_handler_places,
         stand_ins,
         boundary_parts,
         raw_io_roots,
@@ -322,7 +323,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
     for service in services {
         service_slots(service, out);
     }
-    let fields: [(&str, Decl, String); 32] = [
+    let fields: [(&str, Decl, String); 33] = [
         ("roles", Decl::LayerRoles, shape(role_descriptions)),
         ("outside-writers", Decl::OutsideWriters, shape(outside_writers)),
         ("open-layers", Decl::OpenLayers, shape(open_layers)),
@@ -334,6 +335,7 @@ fn architecture_slots(architecture: &Architecture, out: &mut Slots) {
         ("plain-callable-reasons", Decl::PlainCallableReasons, shape(&(plain_callable_reasons, rejected_plain_callable_reasons))),
         ("wire-modules", Decl::WireModules, shape(wire_modules)),
         ("world-handlers", Decl::WorldReach, shape(world_handlers)),
+        ("world-handler-places", Decl::WorldReach, shape(world_handler_places)),
         ("stand-ins", Decl::WorldReach, shape(stand_ins)),
         ("edge", Decl::WorldReach, shape(&(edge_mark, static_readers, systems, edge_touches))),
         ("boundary-parts", Decl::BoundaryParts, shape(boundary_parts)),
