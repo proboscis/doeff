@@ -27,13 +27,12 @@ from doeff_stream import (
     Raised,
     Run,
     merge,
-    simulate_fold,
     subscribe,
     timers,
 )
 from doeff_stream._fold import _watch_cancelled
 from doeff_stream._source import RunEnded
-from stream_test_support import T0, Kick, Started, forever, on_bus, run_on_sim
+from stream_test_support import T0, Kick, Started, forever, on_bus, run_on_sim, simulate_fold
 
 from doeff import do
 

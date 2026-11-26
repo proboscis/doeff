@@ -3,7 +3,7 @@
 The fold and the replay evaluate the step's Program the same way: under the handler that refuses every effect, through
 ``step_answer``. So a Program step gives the same trace as the plain step it is written from, and a step that performs
 an effect — whichever effect, ``Ask`` and the clock included — ends with ``StepYieldedEffectError``, which the step itself
-cannot catch. A plain step's replay still runs without the VM.
+cannot catch.
 """
 
 from collections.abc import Callable
@@ -21,13 +21,10 @@ from doeff_stream import (
     Run,
     StepYieldedEffectError,
     merge,
-    replay,
-    simulate_fold,
     subscribe,
 )
-from doeff_stream import _harness as harness
 from doeff_time import Delay
-from stream_test_support import T0, Kick, forever
+from stream_test_support import T0, Kick, forever, replay, simulate_fold
 
 from doeff import Ask, Get, Program, Pure, do
 
@@ -231,14 +228,6 @@ def test_a_program_step_answers_only_a_next() -> None:
         with pytest.raises(TypeError) as refused:
             replay(step, Shop(), [Order("tea")])  # type: ignore[arg-type]  # the check under test
         assert not isinstance(refused.value, StepYieldedEffectError)
-
-
-def test_a_plain_step_replays_without_the_vm(monkeypatch: pytest.MonkeyPatch) -> None:
-    def no_vm(program: Program[object]) -> object:
-        raise AssertionError("the replay of a plain step ran the VM")
-
-    monkeypatch.setattr(harness, "run", no_vm)
-    assert replay(shop, Shop(), SHOP_INPUTS).finished == Finish(("rice", "tea"))
 
 
 def test_a_step_effect_in_the_fold_cancels_the_runs_and_raises() -> None:

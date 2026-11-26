@@ -8,8 +8,8 @@ count as one site ``fold``); a runtime that reads the name of an unnamed run as 
 
 import pytest
 from doeff_core_effects import CloseStepTally, OpenStepTally, StepTally, step_tally_handler
-from doeff_stream import Answered, Finish, Next, Run, merge, simulate_fold, subscribe
-from stream_test_support import T0, Kick
+from doeff_stream import Answered, Finish, Next, Run, merge, subscribe
+from stream_test_support import T0, Kick, simulate_fold
 
 from doeff import do
 

@@ -650,96 +650,6 @@
    "reason": "Name added by ordinary development after the table was re-split into groups in R15 (06df12fc0) (doeff main d4fe279f3, ADR-DOE-CLUSTER-004 — not in the table in the inventory of doeff main 5b57bdc8a). It disappears from the inventory when the child card of step 1 of ADR-DOE-API-001 R15 hides the section with _ and step 3 removes the forwarding module"
   },
   {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Answered",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Arm",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "CancelRun",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Cancelled",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Disarm",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Finish",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Next",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Raised",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Run",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "RunEnd",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "StepEffect",
-   "reason": "Values that a fold step (a pure function state × input → next state + list of effects) reads and writes. A step does not yield effects but returns values, and the runtime runs them as tasks and returns the ends as inputs, so they fit none of the groups of effect classes, handler settings, or builder return types (ADR-DOE-API-001 has no group of values for the pure-reducer contract)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Replay",
-   "reason": "Trace values returned by the test harness replay (the step's inputs, states and list of effects). replay is in the group of conversion functions, and there is no group to place the classes it returns"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Stepped",
-   "reason": "Trace values returned by the test harness replay (the step's inputs, states and list of effects). replay is in the group of conversion functions, and there is no group to place the classes it returns"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "replay",
-   "reason": "Test harness: feeds a list of inputs to a step without the VM, checks the answers with the same check as fold (whether a Run's program is a Program or an effect), and returns the trace. The check reads EffectBase, so it does not fit the shape of a conversion function, and there is no group to place the harness"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "simulate_fold",
-   "reason": "Simulation base: assembles the fold in the same shape as production, runs it with run using sim_time_handler for the clock and a memory EventBus for the bus, and returns the fold's answer. It is public so that users who measure a job with the caller's simulated handlers (the re-hosting of agora's jobs) need not copy the assembly. It runs a program and returns a value, so it fits none of the groups of effect, handler, or program helper. The assembly is pinned by packages/doeff-stream/tests/test_simulate_fold.py"
-  },
-  {
    "package": "doeff-cluster",
    "module": "doeff_cluster",
    "name": "WORKSPACE_SITE",
@@ -750,30 +660,6 @@
    "module": "doeff_cluster.shared.intent.detached_model",
    "name": "OUTBOX_RERAN",
    "reason": "Row kind (reran) of the notification-destination outbox added by re-running a detached task. As with OUTBOX_ENDED and OUTBOX_QUEUED_OVERDUE of the same module, it is a value passed to :kinds of AwaitDetachedOutbox, and users read it from the entry point (it is not listed in the fixed name list of the old path)"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "fold",
-   "reason": "The runtime entry of doeff-stream. When a step returns a Program, fold itself wraps that Program with a handler (_refuse_every_effect) that refuses every effect — if callers had to wrap it, a step that forgot would be able to emit effects, so fold wraps it, on the condition set by the owners of cli_host and scheduling. It wraps only around the step's Program and touches neither run nor the caller's handlers. That it refuses is pinned by packages/doeff-stream/tests/test_program_step.py"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "Clocked",
-   "reason": "Value that a fold_clocked step reads: an input together with the instant the fold took it (timezone-aware, never going back). It is one of the values a fold step reads and writes, like Next and Answered, and stays here with them until the shape of doeff-stream's fold is decided"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "fold_clocked",
-   "reason": "fold that gives the step every input as Clocked, reading GetTime once right before each step. It runs the same loop as fold and wraps the step's Program the same way, so it does not fit the helper shape of R18 for the same reason as fold, and stays here with fold until the shape of doeff-stream's fold is decided"
-  },
-  {
-   "package": "doeff-stream",
-   "module": "doeff_stream",
-   "name": "replay_clocked",
-   "reason": "Test harness for a fold_clocked step: feeds a list of Clocked inputs to the step without the VM and returns the trace. It is replay for a step of fold_clocked, so there is no group to place it, as with replay"
   }
  ]
 }

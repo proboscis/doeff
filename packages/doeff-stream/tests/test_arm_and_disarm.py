@@ -23,21 +23,9 @@ from doeff_events import (
     subscribed_event_handler,
     timer_handler,
 )
-from doeff_stream import (
-    Arm,
-    Disarm,
-    Finish,
-    Inputs,
-    Next,
-    fold,
-    merge,
-    replay,
-    simulate_fold,
-    subscribe,
-    timers,
-)
+from doeff_stream import Arm, Disarm, Finish, Inputs, Next, merge, subscribe, timers
 from doeff_time import Delay, GetTime
-from stream_test_support import T0, Kick, on_bus, run_on_sim
+from stream_test_support import T0, Kick, folded, on_bus, replay, run_on_sim, simulate_fold
 
 from doeff import Program, do
 
@@ -88,7 +76,7 @@ def _kicked_with_time(step: Step, inputs: Inputs) -> _Kicked:
 
     @do
     def kick_then():
-        task = yield Spawn(fold(step, (), inputs))
+        task = yield Spawn(folded(step, (), inputs))
         yield Delay(1.0)
         yield Publish(Kick())
         return (yield Wait(task))
@@ -173,12 +161,12 @@ def test_the_deadline_of_another_fold_does_not_reach_the_step(
     def both():
         first = yield Spawn(
             subscribed_event_handler(bus, "first", INPUTS.event_types)(
-                _then_time(fold(shaped(ending_at(5)), (), INPUTS))
+                _then_time(folded(shaped(ending_at(5)), (), INPUTS))
             )
         )
         second = yield Spawn(
             subscribed_event_handler(bus, "second", INPUTS.event_types)(
-                _then_time(fold(shaped(ending_at(10)), (), INPUTS))
+                _then_time(folded(shaped(ending_at(10)), (), INPUTS))
             )
         )
         yield Delay(1.0)
@@ -209,7 +197,7 @@ def test_the_fold_disarms_the_deadlines_still_set_when_it_ends() -> None:
 
     @do
     def kick_then_list():
-        task = yield Spawn(fold(step, (), INPUTS))
+        task = yield Spawn(folded(step, (), INPUTS))
         yield Delay(1.0)
         yield Publish(Kick())
         value = yield Wait(task)

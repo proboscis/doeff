@@ -2,7 +2,8 @@
 ;; and a defk step that yields an effect stops with StepYieldedEffectError.
 (require doeff-hy.macros [defk <-])
 (import doeff [Ask Pure])
-(import doeff_stream [Answered Finish Next Run StepYieldedEffectError replay])
+(import doeff_stream [Answered Finish Next Run StepYieldedEffectError])
+(import stream_test_support [replay])
 (import pytest)
 
 

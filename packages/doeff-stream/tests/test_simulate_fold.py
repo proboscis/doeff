@@ -13,19 +13,9 @@ from datetime import timedelta
 
 from doeff_core_effects import Spawn, TaskPriority
 from doeff_events import Publish
-from doeff_stream import (
-    Answered,
-    Cancelled,
-    CancelRun,
-    Finish,
-    Next,
-    Run,
-    merge,
-    simulate_fold,
-    subscribe,
-)
+from doeff_stream import Answered, Cancelled, CancelRun, Finish, Next, Run, merge, subscribe
 from doeff_time import Delay, GetTime
-from stream_test_support import T0, Kick, forever
+from stream_test_support import T0, Kick, forever, simulate_fold
 
 from doeff import EffectBase, K, Pass, Pure, Resume, do, handler
 

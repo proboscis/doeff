@@ -3,7 +3,7 @@
 A runtime that merges input sources into a single stream and folds it with a pure step.
 
 ```
-host = fold(step, initial_state, merge(subscribe(...), timers()))
+host = fold_handler(Fold(step, initial_state, merge(subscribe(...), timers())))
 ```
 
 - A step is either a pure function `step(state, input) -> Next(state, effects)` or a function that returns a Program answering that `Next` (a defk that only calls other defks with `<-`). Effects are values, and the runtime executes them. A step's Program cannot yield any effect (see the section "Writing a step as a Program").
@@ -11,15 +11,15 @@ host = fold(step, initial_state, merge(subscribe(...), timers()))
   Finishing with a value gives `Answered(key, value)`, finishing with an exception gives `Raised(key, error)`, and being stopped by the step's `CancelRun(key)` gives `Cancelled(key)`.
 - The fold does not wait for effect answers. It waits only for the next input.
 
-There are only four parts. There is no family of operators such as map, window, or backpressure.
+There are only five parts. There is no family of operators such as map, window, or backpressure.
 
 | Part | Entry point | Contents |
 |---|---|---|
 | Source | `subscribe(*types)`, `timers()` | Events that outside tasks publish to the bus, and the deadlines (`TimerFired`) that the step has set. Effect answers, task endings, the stop signal (`StopArrived`), and failures of the signal's source (`SourceFailed`) are the runtime's own sources and are always included in every merge |
 | merge | `merge(*sources) -> Inputs` | Turns sources into a single stream of inputs. `Inputs.event_types` is the full set of types the fold waits for |
-| fold | `fold(step, initial, inputs)` | Passes inputs to the step one at a time and executes the answered effects in order. `Finish(value)` answers `value` |
-| test harness | `replay(step, initial, inputs) -> Replay` | Feeds a sequence of inputs to the step and returns the sequence of states (`states`, `final`) and effects (`effects`). A plain-function step does not use the VM. A step that returns a Program is run on the VM once per input, using the same evaluation as the fold (a handler that rejects every effect) |
-| simulation base | `simulate_fold(step, initial, inputs, *, events, handlers, start_time)` | Assembles the fold in the same shape as production, runs it with a simulated clock (`sim_time_handler`) and an in-memory `EventBus`, and returns the fold's answer (see the section "Running on the simulation base") |
+| Fold | `Fold(step, initial, inputs, clocked=False)` | The effect that runs the step: passes inputs to the step one at a time and executes the answered effects in order. `Finish(value)` answers `value`. `clocked=True` gives the step each input inside a `Clocked(at, input)` (see "A step that reads the time") |
+| runtime | `fold_handler` | The handler (a value) that answers `Fold` with the loop below. Installed innermost, inside the handlers the runs need (see "Assembly") |
+| test harness | `ReplayFold(step, initial, inputs, clocked=False)` answered by `replay_handler` | Feeds a sequence of inputs to the step and answers the trace (`Replay`): the sequence of states (`states`, `final`) and effects (`effects`). A step that returns a Program is evaluated the same way as in the fold (a handler that rejects every effect) |
 
 ## Effects a step returns
 
@@ -56,12 +56,13 @@ is told apart from this fold's own and discarded.
 
 ## Assembly
 
-The only handler the fold wraps is the single one around the step's Program (the one that rejects every effect). It does not wrap runs. The caller places the bus handler that subscribes to `inputs.event_types` (`subscribed_event_handler`), and, when `timers()` is used, the timer handler inside it, and runs the whole thing under `scheduled`.
+The only handler the fold wraps is the single one around the step's Program (the one that rejects every effect). It does not wrap runs. The caller places, from the outside in, the bus handler that subscribes to `inputs.event_types` (`subscribed_event_handler`), and, when `timers()` is used, the timer handler inside it, the handlers the runs need, and `fold_handler` innermost, and runs the whole thing under `scheduled`. `fold_handler` runs the loop in its own body, so the runs it spawns and the waits it makes reach only the handlers around it: a handler placed between `fold_handler` and the `Fold` is not seen by the runs. The fold's value, and its exception, come back where `Fold` was performed.
 
 ```python
 from doeff_core_effects import scheduled
 from doeff_events import EventBus, subscribed_event_handler, timer_handler
-from doeff_stream import Answered, Finish, Next, Run, fold, merge, subscribe, timers
+from doeff import with_handlers
+from doeff_stream import Answered, Finish, Fold, Next, Run, fold_handler, merge, subscribe, timers
 
 def step(state, event):
     match event:
@@ -74,7 +75,8 @@ def step(state, event):
 
 inputs = merge(subscribe(Poke), timers())
 host = subscribed_event_handler(EventBus(), "host", inputs.event_types)(
-    timer_handler()(fold(step, None, inputs))
+    # fetch_handler answers what fetch() performs: it sits around fold_handler, so the run sees it
+    timer_handler()(with_handlers([fetch_handler, fold_handler], Fold(step, None, inputs)))
 )
 result = run(scheduled(sim_time_handler(start_time=T0)(host)))
 ```
@@ -106,6 +108,10 @@ def fold_instruments(effect: FoldMeasured, k):
 
 The fold reads once, when it starts, whether a handler around it names `FoldMeasured` (a handler that admits every effect is not read as one). Without one it measures nothing — the measures are dropped by default, and the fold performs no `CountQueued` and reads no clock.
 
+## A step that reads the time
+
+A step has no clock. `Fold(…, clocked=True)` reads the clock once (`GetTime`, the caller's clock handler) right before each step and gives the step `Clocked(at, input)` for every input alike — an event, the end of a run, a `TimerFired`. `at` never goes back: a clock read earlier than the instant given before (a wall clock set back) gives that instant again. A step that judges deadlines reads "now" from `at` alone, whichever input woke it.
+
 ## Writing a step as a Program
 
 Instead of a `Next` value, a step may return a Program that answers `Next`. This is the shape where a reducer written with defk calls other defks with `<-` to build its answer.
@@ -124,46 +130,26 @@ def step(state, event):
             return Next(state)
 ```
 
-- When a step's answer is a Program, the fold evaluates it under a handler that rejects every effect and validates the resulting value as a `Next`. `replay` goes through the same evaluation path (`step_answer`), so the same input sequence produces the same sequence of states and effects.
+- When a step's answer is a Program, the fold evaluates it under a handler that rejects every effect and validates the resulting value as a `Next`. `replay_handler` goes through the same evaluation path (`step_answer`), so the same input sequence produces the same sequence of states and effects.
 - What is rejected is every effect, not an enumerated list. When a step's Program yields an effect, evaluation ends on the spot without resuming the continuation, and `StepYieldedEffectError` is raised (`effect` = the effect yielded, `step` = the step's name). A `try` inside the step cannot catch this rejection. In a fold, as with other step exceptions, the running runs are cancelled before the exception propagates.
 - A step's answer is either a `Next` or a Program that answers a `Next`, nothing else. It is a `TypeError` if the Program answers something other than `Next` (a tuple or another Program), or if `effects` contains a value that is not a `StepEffect` (such as a bare Program).
-- A plain-function step behaves as before, and `replay` does not use the VM for it.
 
-Cost (2026-11-03, x86_64, Python 3.14, one call of a plain-function step is about 0.5 µs): evaluating one step as a Program takes about 5 µs inside a fold with one level of composition, about 6 µs in `replay` including the per-input `run`, and about 25 µs when it calls 10 levels of other Programs (about 2 µs per level). If the overhead matters for a step that judges many candidates per input, the step can call that judgment as a plain function.
+Cost (2026-11-03, x86_64, Python 3.14, one call of a plain-function step is about 0.5 µs): evaluating one step as a Program takes about 5 µs inside a fold with one level of composition, and about 25 µs when it calls 10 levels of other Programs (about 2 µs per level). If the overhead matters for a step that judges many candidates per input, the step can call that judgment as a plain function.
 
 ## Test harness
 
 ```python
-from doeff_stream import Answered, Finish, Run, replay
+from doeff import run
+from doeff_stream import Answered, Finish, ReplayFold, Run, replay_handler
 
-trace = replay(step, None, [Poke(), Answered("fetch", 3)])
+trace = run(replay_handler(ReplayFold(step, None, (Poke(), Answered("fetch", 3)))))
 assert [type(effect) for effect in trace.effects] == [Run, Finish]
 assert trace.effects[-1] == Finish(3)
 assert trace.final == 3
 ```
 
-`replay` validates the step's answers with the same checks as the fold, and rejects inputs the runtime would never deliver (the ending of a key that is not running, and inputs after `Finish`).
+`replay_handler` validates the step's answers with the same checks as the fold, and rejects inputs the runtime would never deliver (the ending of a key that is not running, and inputs after `Finish`).
 
 `Arm` and `Disarm` appear in the `effects` sequence like other effects. For the case where a deadline arrives, the test writes `TimerFired(tag)` into the inputs. `Replay.armed` is the set of tags that have been set and have neither been removed nor fired yet.
 
-## Running on the simulation base
-
-`replay` measures only the step. To measure by running the fold including the run's programs, use `simulate_fold`.
-
-```python
-from doeff_stream import merge, simulate_fold, subscribe, timers
-
-result = simulate_fold(
-    step,
-    None,
-    merge(subscribe(Poke), timers()),
-    events=(Poke(),),                 # the fold's first inputs (in this order)
-    handlers=(simulated_fetch,),      # the caller's simulated handlers that answer the run's effects (first is outermost)
-    start_time=T0,                    # the start of the simulated clock (None uses sim_time_handler's default)
-)
-```
-
-- The assembly is the same as the production shape in the section "Assembly". There are only two differences, the clock and the bus: the clock is `sim_time_handler` (time advances only when every task is waiting), and the bus is an in-memory `EventBus` used only by this call. `scheduled`, `subscribed_event_handler` (subscribing to `inputs.event_types`), `timer_handler`, and `fold` are the same as in production.
-- `events` are published to the bus in order before the fold first waits, and become the step's first inputs. Their types are limited to the types `inputs` subscribes to. Later inputs come from run endings, timers the step set, and events the runs publish.
-- `handlers` are wrapped inside the bus and timer handlers (on the fold's side) in the order of `with_handlers`. The effects of a run's program reach these handlers first, and the handlers can use `Publish`, timer setting, and waits on the simulated clock.
-- Exceptions from the fold (step exceptions, `StepYieldedEffectError`, and so on) propagate out of this call as they are.
+For a step of `Fold(…, clocked=True)`, `ReplayFold(…, clocked=True)` takes `Clocked` inputs and gives them to the step as they are (the instants are part of the recorded inputs, so the same inputs answer the same trace); it rejects an input that is not a `Clocked` and an instant earlier than the one before.

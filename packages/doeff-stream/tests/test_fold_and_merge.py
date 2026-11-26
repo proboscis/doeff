@@ -36,15 +36,13 @@ from doeff_stream import (
     Next,
     Raised,
     Run,
-    fold,
     merge,
-    simulate_fold,
     subscribe,
     timers,
 )
 from doeff_stream._source import RunEnded
 from doeff_time import Delay, GetTime
-from stream_test_support import T0, Kick, forever, run_on_sim
+from stream_test_support import T0, Kick, folded, forever, run_on_sim, simulate_fold
 
 from doeff import do
 
@@ -149,7 +147,7 @@ def test_finish_cancels_the_runs_still_running_and_waits_for_them() -> None:
     def body(on_host):
         @do
         def program():
-            task = yield Spawn(on_host(fold(step, 0, inputs)))
+            task = yield Spawn(on_host(folded(step, 0, inputs)))
             yield Delay(1.0)
             yield Publish(Kick())
             answer = yield Wait(task)
@@ -190,7 +188,7 @@ def test_finish_waits_for_runs_that_take_time_to_unwind() -> None:
     def body(on_host):
         @do
         def program():
-            task = yield Spawn(on_host(fold(step, 0, inputs)))
+            task = yield Spawn(on_host(folded(step, 0, inputs)))
             yield Delay(1.0)
             yield Publish(Kick())
             yield Delay(1.0)
@@ -227,7 +225,7 @@ def test_a_step_that_raises_cancels_the_runs_still_running() -> None:
     def body(on_host):
         @do
         def program():
-            task = yield Spawn(on_host(fold(step, 0, inputs)))
+            task = yield Spawn(on_host(folded(step, 0, inputs)))
             yield Delay(1.0)
             yield Publish(Kick())
             try:
@@ -254,7 +252,7 @@ def test_a_cancelled_fold_cancels_the_runs_still_running_and_waits_for_them() ->
     def body(on_host):
         @do
         def program():
-            task = yield Spawn(on_host(fold(step, 0, inputs)))
+            task = yield Spawn(on_host(folded(step, 0, inputs)))
             yield Delay(1.0)
             yield Publish(Kick())
             yield Delay(1.0)
@@ -318,10 +316,10 @@ def test_two_folds_on_one_bus_get_the_ends_of_their_own_runs_only() -> None:
     @do
     def both():
         first = yield Spawn(
-            subscribed_event_handler(bus, "first", inputs.event_types)(fold(step, (), inputs))
+            subscribed_event_handler(bus, "first", inputs.event_types)(folded(step, (), inputs))
         )
         second = yield Spawn(
-            subscribed_event_handler(bus, "second", inputs.event_types)(fold(step, (), inputs))
+            subscribed_event_handler(bus, "second", inputs.event_types)(folded(step, (), inputs))
         )
         yield Delay(1.0)
         yield Publish(Kick())
@@ -337,7 +335,7 @@ def test_two_folds_on_one_bus_get_the_ends_of_their_own_runs_only() -> None:
 def test_a_bus_not_subscribed_to_the_inputs_is_named_at_the_first_wait() -> None:
     inputs = merge(subscribe(Kick))
     body = subscribed_event_handler(EventBus(), "host", (Kick,))(
-        fold(lambda s, _: Next(s), 0, inputs)
+        folded(lambda s, _: Next(s), 0, inputs)
     )
     with pytest.raises(ValueError, match="RunEnded"):
         run_on_sim(body)

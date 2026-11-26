@@ -1,23 +1,25 @@
 """The test harness: give a step a list of inputs and read the states and effects it answered.
 
-``replay`` calls the step the way ``fold`` does — no task, no bus — and checks the step's answers with the same
-check. A step that answers a value runs without the VM. A step that answers a Program is evaluated on the VM through
-the fold's own ``step_answer`` (the handler that refuses every effect), one ``run`` per input. It also holds the
-inputs to what the runtime can deliver: the end of a run comes only for a run that is
-running, and no input comes after ``Finish``. So a test writes the ends of the runs it expects
-(``Answered(key, value)``, ``Raised(key, error)``, ``Cancelled(key)``) among the other inputs and asserts the trace.
-``Arm`` and ``Disarm`` stand in the effects like the others; a test writes the ``TimerFired(tag)`` of a deadline it
-expects to come as an input (``Replay.armed`` = the tags set and not yet back).
+``ReplayFold(step, initial, inputs)`` is answered by ``replay_handler``, which calls the step the way ``fold`` does —
+no task, no bus — and checks the step's answers with the same check. A step that answers a Program is evaluated through
+the fold's own ``step_answer`` (the handler that refuses every effect). It also holds the inputs to what the runtime can
+deliver: the end of a run comes only for a run that is running, and no input comes after ``Finish``. So a test writes
+the ends of the runs it expects (``Answered(key, value)``, ``Raised(key, error)``, ``Cancelled(key)``) among the other
+inputs and asserts the trace. ``Arm`` and ``Disarm`` stand in the effects like the others; a test writes the
+``TimerFired(tag)`` of a deadline it expects to come as an input (``Replay.armed`` = the tags set and not yet back).
+
+    trace = run(replay_handler(ReplayFold(step, initial, inputs)))
 """
 
-from collections.abc import Callable, Hashable, Iterable
+from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Generic, TypeVar
 
 from doeff_events import TimerFired
 
-from doeff import Program, run
+from doeff import EffectBase, K, Program, Transfer, TransferThrow, do, handler
+from doeff_stream._effects import StepInput
 from doeff_stream._step import (
     Answered,
     Arm,
@@ -110,41 +112,63 @@ def _bare(event: object) -> object:
     return event.input if isinstance(event, Clocked) else event
 
 
-def replay(
-    step: Callable[[S, object], "Next[S] | Program[Next[S]]"], initial: S, inputs: Iterable[object]
-) -> Replay[S]:
-    """Give ``step`` each of ``inputs`` from ``initial`` and answer the trace.
+@dataclass(frozen=True)
+class ReplayFold(EffectBase[Replay[S]], Generic[S]):
+    """Give ``step`` each of ``inputs`` from ``initial`` the way ``Fold`` gives them, and answer the trace (``Replay``).
 
-    Refused like the runtime refuses it: an answer that is not a valid ``Next``, and a step's Program that performs
-    an effect (``StepYieldedEffectError``). Refused because the runtime never delivers it: the end of a run that is not
-    running, and an input after ``Finish``.
+    No task and no bus: the runs are not started, and a test writes the ends it expects (``Answered(key, value)``,
+    ``Raised(key, error)``, ``Cancelled(key)``) and the ``TimerFired(tag)`` of the deadlines it expects among the
+    inputs. ``clocked``: each input is a ``Clocked`` (the step of a ``Fold(…, clocked=True)``), given to the step as
+    it is — the instants are part of the recorded inputs, so the same inputs answer the same trace.
+
+    ``replay_handler`` answers it.
     """
-    return _replayed(step, initial, inputs, clocked=False)
+
+    step: "Callable[[S, StepInput], Next[S] | Program[Next[S]]]"
+    initial: S
+    inputs: tuple[StepInput, ...]
+    clocked: bool = False
+
+    def __post_init__(self) -> None:
+        # Checked here, not where the handler reads it: the test's mistake is named where it was made.
+        if not callable(self.step):
+            raise TypeError(f"ReplayFold takes a step function, got {type(self.step).__name__}")
+        if not isinstance(self.clocked, bool):
+            raise TypeError(f"ReplayFold takes a bool clocked, got {type(self.clocked).__name__}")
+        # A list or a generator of inputs is kept as the tuple it gives: the effect is a value a handler reads.
+        object.__setattr__(self, "inputs", tuple(self.inputs))
 
 
-def replay_clocked(
-    step: Callable[[S, Clocked], "Next[S] | Program[Next[S]]"], initial: S, inputs: Iterable[Clocked]
-) -> Replay[S]:
-    """``replay`` for a step of ``fold_clocked``: each input is a ``Clocked`` (the input with the instant the fold took
-    it), given to the step as it is. The instants are part of the recorded inputs, so the same inputs answer the same
-    trace. Refused besides what ``replay`` refuses, because ``fold_clocked`` never delivers it: an input that is not a
-    ``Clocked``, and an instant earlier than the one before.
+@handler
+def replay_handler(effect: ReplayFold, k: K):
+    """Answer ``ReplayFold`` with the trace of its step over its inputs.
+
+    Refused like the runtime refuses it, and thrown where ``ReplayFold`` was performed: an answer that is not a valid
+    ``Next``, and a step's Program that performs an effect (``StepYieldedEffectError``). Refused because the runtime
+    never delivers it: the end of a run that is not running, and an input after ``Finish`` — and, ``clocked``, an input
+    that is not a ``Clocked`` and an instant earlier than the one before.
     """
-    return _replayed(step, initial, inputs, clocked=True)
+    try:
+        trace = yield _replayed(effect)
+    except Exception as error:  # every refusal is the test's to read where it performed ReplayFold
+        return (yield TransferThrow(k, error))
+    return (yield Transfer(k, trace))
 
 
-def _replayed(
-    step: Callable[[S, Any], "Next[S] | Program[Next[S]]"], initial: S, inputs: Iterable[object], *, clocked: bool
-) -> Replay[S]:
-    """The loop of ``replay`` and ``replay_clocked`` (``clocked`` = the inputs are ``Clocked``)."""
+@do
+def _replayed(effect: "ReplayFold[S]") -> Generator[Any, Any, Replay[S]]:
+    """The loop of ``replay_handler``: the step called the way ``fold`` calls it, its answers checked the same way."""
+    step, initial, clocked = effect.step, effect.initial, effect.clocked
     trace: Replay[S] = Replay(initial, ())
     taken_at: datetime | None = None
-    for given in inputs:
+    for given in effect.inputs:
         if trace.finished is not None:
             raise ValueError(f"input {given!r} after Finish: the fold has ended")
         if clocked:
             if not isinstance(given, Clocked):
-                raise TypeError(f"replay_clocked takes Clocked inputs, got {type(given).__name__}")
+                raise TypeError(
+                    f"a clocked ReplayFold takes Clocked inputs, got {type(given).__name__}"
+                )
             if taken_at is not None and given.at < taken_at:
                 raise ValueError(
                     f"input {given!r} taken before the input before it ({taken_at}): the fold's instants never go back"
@@ -158,7 +182,7 @@ def _replayed(
             running = running - {event.key}
         answer = step(trace.final, given)
         if is_program_answer(answer):
-            answer = run(step_answer(step, answer))
+            answer = yield step_answer(step, answer)
         answer = checked_next(answer, running)
         trace = Replay(initial, (*trace.steps, Stepped(given, answer.state, answer.effects)))
     return trace

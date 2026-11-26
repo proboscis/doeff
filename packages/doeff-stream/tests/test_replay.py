@@ -1,6 +1,6 @@
 """The test harness: a list of inputs in, the states and effects out — and the same refusals as the runtime.
 
-``replay`` refuses what the runtime would refuse (a step answer that is not a valid ``Next``, a ``Run`` of a value that is
+``replay_handler`` refuses what the runtime would refuse (a step answer that is not a valid ``Next``, a ``Run`` of a value that is
 not a program, two ``Finish``) and what the runtime
 never delivers (the end of a run that is not running, an input after ``Finish``), so a test cannot assert a trace the
 fold could not produce.
@@ -10,18 +10,8 @@ from dataclasses import dataclass
 
 import pytest
 from doeff_core_effects import TaskPriority
-from doeff_stream import (
-    Answered,
-    Cancelled,
-    CancelRun,
-    Finish,
-    Next,
-    Raised,
-    Replay,
-    Run,
-    Stepped,
-    replay,
-)
+from doeff_stream import Answered, Cancelled, CancelRun, Finish, Next, Raised, Replay, Run
+from stream_test_support import replay
 
 from doeff import Pure
 
@@ -88,7 +78,6 @@ def test_replay_answers_the_state_and_effects_of_each_input() -> None:
     assert trace.finished == Finish(("rice", "tea"))
     assert trace.running == frozenset()
     first = trace.steps[0]
-    assert isinstance(first, Stepped)
     assert (first.input, first.state, shape(first.effects)) == (
         Order("tea"),
         Shop(frozenset({"tea"})),

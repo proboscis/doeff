@@ -8,9 +8,9 @@ exception end the fold (no ``Raised`` input); a runtime that runs the inline run
 import pytest
 from doeff_core_effects import Spawn
 from doeff_events import Publish
-from doeff_stream import Answered, Finish, Next, Raised, Run, merge, simulate_fold, subscribe
+from doeff_stream import Answered, Finish, Next, Raised, Run, merge, subscribe
 from doeff_stream._step import checked_next
-from stream_test_support import T0, Kick, Started
+from stream_test_support import T0, Kick, Started, simulate_fold
 
 from doeff import do
 

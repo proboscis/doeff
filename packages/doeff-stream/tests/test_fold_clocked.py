@@ -1,11 +1,11 @@
-"""``fold_clocked``: the step is given every input with the instant the fold took it.
+"""``Fold(…, clocked=True)``: the step is given every input with the instant the fold took it.
 
 - Every input — an event, the end of a run, a ``TimerFired`` — reaches the step as ``Clocked(at, input)``, ``at`` being
   the clock right before the step (the virtual clock here: the timer's input comes at its deadline).
 - ``at`` never goes back: a clock read earlier than the instant before gives that instant again.
-- ``replay_clocked`` gives the step the recorded ``Clocked`` inputs as they are, so the same inputs answer the same
-  trace; it refuses an input that is not a ``Clocked`` and an instant earlier than the one before.
-- ``fold`` and ``replay`` still give the bare inputs.
+- A clocked ``ReplayFold`` gives the step the recorded ``Clocked`` inputs as they are, so the same inputs answer the
+  same trace; it refuses an input that is not a ``Clocked`` and an instant earlier than the one before.
+- An unclocked ``Fold`` and ``ReplayFold`` still give the bare inputs.
 
 Failure cases: a fold that stamped only the bus events would give the run end and the ``TimerFired`` bare
 (``test_every_input_reaches_the_step_with_the_instant_the_fold_took_it`` fails); a fold that passed the clock as read
@@ -16,23 +16,9 @@ from datetime import datetime, timedelta
 
 import pytest
 from doeff_events import EventBus, Publish, TimerFired
-from doeff_stream import (
-    Answered,
-    Arm,
-    Clocked,
-    Finish,
-    Next,
-    Run,
-    fold,
-    fold_clocked,
-    merge,
-    replay,
-    replay_clocked,
-    subscribe,
-    timers,
-)
+from doeff_stream import Answered, Arm, Clocked, Finish, Next, Run, merge, subscribe, timers
 from doeff_time import GetTimeEffect
-from stream_test_support import T0, Kick, on_bus, run_on_sim
+from stream_test_support import T0, Kick, folded, on_bus, replay, replay_clocked, run_on_sim
 
 from doeff import Pass, Resume, do, handler, with_handlers
 
@@ -68,9 +54,9 @@ def _published_then(events, body):
 
 
 def _run_clocked(step, extra=()) -> tuple[Clocked, ...]:
-    """``fold_clocked(step)`` on the virtual clock from ``T0``, after one ``Kick``, under the handlers ``extra`` — the
-    inputs the step recorded (its ``Finish``)."""
-    body = with_handlers(extra, _published_then((Kick(),), fold_clocked(step, (), INPUTS)))
+    """``Fold(step, clocked=True)`` on the virtual clock from ``T0``, after one ``Kick``, under the handlers ``extra`` —
+    the inputs the step recorded (its ``Finish``)."""
+    body = with_handlers(extra, _published_then((Kick(),), folded(step, (), INPUTS, clocked=True)))
     seen = run_on_sim(on_bus(EventBus(), "fold", INPUTS, body))
     assert isinstance(seen, tuple), seen
     return tuple(given for given in seen if isinstance(given, Clocked))
@@ -133,5 +119,5 @@ def test_fold_and_replay_still_give_the_bare_inputs() -> None:
 
     traced = replay(bare_step, (), (Kick(),))
     assert traced.final == (Kick(),)
-    body = _published_then((Kick(),), fold(bare_step, (), INPUTS))
+    body = _published_then((Kick(),), folded(bare_step, (), INPUTS))
     assert run_on_sim(on_bus(EventBus(), "fold", INPUTS, body)) == (Kick(),)

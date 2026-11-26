@@ -1,12 +1,13 @@
 """The Programs a doeff-stream fold runs from the ``Run`` values its step builds, and a carrier handed a
 value made at run time.
 
-Regression target: ``fold`` spawns ``_reported(…, program)`` for each ``Run(key, program)`` the step answers,
+Regression target: the fold spawns ``_reported(…, program)`` for each ``Run(key, program)`` the step answers,
 ``program`` being a value taken out of the step's answer at run time. The step itself is never performed — the fold
 only calls it — so the reader did not see the Runs, and what their programs perform (and what the handlers answering
-them perform) was missing from every closure check of a Program that folds a stream. ``fold`` declares ``__doeff_runs_built__ =
-{"step": Spawn}`` and ``Run`` declares ``__doeff_runs_carried__ = {"program"}``: the reader reads each Run's program
-where the step (or a function it calls) builds it, carried by ``Spawn``.
+them perform) was missing from every closure check of a Program that folds a stream. The effect ``Fold`` declares
+``__doeff_runs_built__ = {"step": Spawn}`` and ``Run`` declares ``__doeff_runs_carried__ = {"program"}``: the reader reads each Run's program
+where the step (or a function it calls) builds it, carried by ``Spawn`` — where ``Fold`` is performed. Its handler
+``fold_handler`` runs those programs from the ``Fold`` it receives: read inside it, they add nothing.
 
 A carrier handed a Program the reader cannot follow (``Spawn(program)`` with ``program`` taken out of data) names it
 as a place it cannot follow instead of dropping it.
@@ -43,9 +44,9 @@ class Inline(EffectBase):
 """
 
 PROGRAMS_PY = """\
-from doeff import do
+from doeff import do, with_handlers
 from doeff_core_effects import Spawn
-from doeff_stream import Answered, Finish, Next, Run, fold
+from doeff_stream import Answered, Finish, Fold, Next, Run, fold_handler
 
 from {pkg}.effects import Helped, Inline, Planned, Tick, Work
 
@@ -85,17 +86,22 @@ def step_with_helpers(state, event):
 
 @do
 def folds(inputs):
-    return (yield fold(step, 0, inputs))
+    return (yield Fold(step, 0, inputs))
+
+
+@do
+def folds_under_its_handler(inputs):
+    return (yield with_handlers([fold_handler], folds(inputs)))
 
 
 @do
 def folds_through_helpers(inputs):
-    return (yield fold(step_with_helpers, 0, inputs))
+    return (yield Fold(step_with_helpers, 0, inputs))
 
 
 @do
 def folds_a_step_it_is_handed(step_given, inputs):
-    return (yield fold(step_given, 0, inputs))
+    return (yield Fold(step_given, 0, inputs))
 
 
 @do
@@ -145,6 +151,15 @@ def test_the_runs_are_carried_by_spawn_and_not_performed_by_the_fold_itself(pkg:
     left = analyze_program(f"{pkg}.programs:folds").residual
 
     assert not {"Work", "Tick", "Inline"} & _short(left.effect_names)
+
+
+def test_the_fold_handler_answers_fold_and_adds_no_place_it_cannot_follow(pkg: str) -> None:
+    # The handler runs the Runs of the Fold it receives: read where the Fold was performed, not again inside it.
+    left = analyze_program(f"{pkg}.programs:folds_under_its_handler").residual_with(SPAWN)
+
+    assert {"Work", "Tick", "Inline"} <= _short(left.effect_names)
+    assert "Fold" not in _short(left.effect_names)
+    assert left.unresolved == ()
 
 
 def test_runs_built_in_the_functions_the_step_calls_are_read_too(pkg: str) -> None:

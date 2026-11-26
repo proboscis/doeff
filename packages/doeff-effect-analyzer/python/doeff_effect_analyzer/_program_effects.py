@@ -2992,7 +2992,7 @@ class _Passed:
     argument: ast.expr
 
 
-def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) -> _Bound:
+def _call_bindings(function: types.FunctionType | type, call: ast.Call, scope: _Scope) -> _Bound:
     """``function``'s parameters bound to the arguments of ``call`` that are known here."""
     passed = _passed_arguments(function, call, scope)
     known = (Binding(p.name, _argument_value(p.argument, scope)) for p in passed)
@@ -3003,7 +3003,7 @@ def _call_bindings(function: types.FunctionType, call: ast.Call, scope: _Scope) 
 
 
 def _defaulted(
-    function: types.FunctionType, call: ast.Call, passed: frozenset[str]
+    function: types.FunctionType | type, call: ast.Call, passed: frozenset[str]
 ) -> tuple[Binding, ...]:
     """The parameters ``call`` leaves out, bound to their defaults when a default says what a
     call on the parameter does: ``None`` (calling it performs nothing — ``(read-intake fold)``
@@ -3033,7 +3033,7 @@ def _defaulted(
 
 
 def _passed_arguments(
-    function: types.FunctionType, call: ast.Call, scope: _Scope
+    function: types.FunctionType | type, call: ast.Call, scope: _Scope
 ) -> tuple[_Passed, ...]:
     """The parameters of ``function`` that ``call`` gives an argument (positional up to the
     first ``*spread``, then by keyword)."""
@@ -3644,6 +3644,11 @@ class _Reader:
         elif _is_effect_class(target):
             facts.effects.append((target, location, False))
             self._carried_arguments(target, call, scope, filename, facts)
+            if _runs_built_of(target):
+                # An effect whose handler runs the Programs the function it is handed builds
+                # (doeff-stream's ``Fold(step, …)``): read as a Program function declaring it is.
+                bound = _call_bindings(target, call, scope)
+                self._runs_built(target, target, bound, call, scope, filename, facts, location)
         elif (function := _function_of(target)) is not None and not _is_control_class(target):
             self._program_call(target, function, call, scope, filename, facts, location)
         elif not _is_control_class(target):
@@ -3755,7 +3760,7 @@ class _Reader:
     def _runs_built(
         self,
         target: Imported,
-        function: types.FunctionType,
+        function: types.FunctionType | type,
         bound: _Bound,
         call: ast.Call,
         scope: _Scope,
@@ -3771,6 +3776,10 @@ class _Reader:
         declared = _runs_built_of(target) or _runs_built_of(function)
         for parameter, carrier in declared.items():
             handed = bound.get(parameter)
+            if isinstance(handed, ReceivedEffect) and _runs_built_of(handed.cls):
+                # The effect a handler answers, handed to the loop that runs it (doeff-stream's
+                # ``fold(effect)`` in ``fold_handler``): its Runs were read where it was performed.
+                continue
             if isinstance(handed, _LocalFunction):
                 found = self._built_in(handed.node, handed.scope, filename).carried
             elif (builder := _function_of(handed)) is not None:

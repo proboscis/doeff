@@ -1,10 +1,11 @@
-"""The simulated host: ``fold`` assembled the way a host assembles it, on a virtual clock and a memory bus of its own.
+"""The simulated host: ``Fold`` answered the way a host answers it, on a virtual clock and a memory bus of its own.
 
-A host installs, around ``fold(step, initial, inputs)``, the bus handler subscribed to ``inputs.event_types`` and the
-timer handler inside it, under ``scheduled``. ``simulate_fold`` installs the same, with the two parts that touch the
+A host installs, around ``Fold(step, initial, inputs)``, the bus handler subscribed to ``inputs.event_types`` and the
+timer handler inside it, under ``scheduled``, and ``fold_handler`` innermost. ``simulate_fold`` installs the same, with the two parts that touch the
 outside world swapped for simulated ones: the clock is ``sim_time_handler`` (time moves only when every task waits)
 and the bus is a fresh in-memory ``EventBus``. The caller's handlers (the simulated answerers of the effects its runs
-perform) go inside both, so a run's effects reach them first — as in a host whose handlers sit around the fold.
+perform) go inside both and around ``fold_handler``, so a run's effects reach them first — as in a host whose handlers
+sit around the fold. doeff-stream's own tests run the fold this way; it is not shown to users.
 """
 
 from collections.abc import Callable, Generator, Iterable
@@ -16,7 +17,8 @@ from doeff_events import EventBus, Publish, subscribed_event_handler, timer_hand
 from doeff_time import sim_time_handler
 
 from doeff import Program, do, run, with_handlers
-from doeff_stream._fold import fold
+from doeff_stream._effects import Fold
+from doeff_stream._fold import fold_handler
 from doeff_stream._source import Inputs
 from doeff_stream._step import Next
 
@@ -45,8 +47,9 @@ def simulate_fold(
     events: Iterable[object] = (),
     handlers: Iterable[Callable[..., object]] = (),
     start_time: datetime | None = None,
+    clocked: bool = False,
 ) -> object:
-    """Run ``fold(step, initial, inputs)`` on the virtual clock and a bus of its own; answer the fold's value.
+    """Answer ``Fold(step, initial, inputs, clocked)`` on the virtual clock and a bus of its own; answer the fold's value.
 
     - ``events``: published on the bus before the fold's first wait, so they are the step's first inputs in this
       order (each must be of a type ``inputs`` subscribes). Later inputs come from the runs' ends, the timers the step
@@ -54,9 +57,11 @@ def simulate_fold(
     - ``handlers``: the caller's handlers, first outermost (as ``with_handlers``), installed inside the bus and timer
       handlers — they may ``Publish``, arm timers and wait on the virtual clock.
     - ``start_time``: where the virtual clock starts (``sim_time_handler``'s default when ``None``).
+    - ``clocked``: the step is given each input inside a ``Clocked`` (``Fold.clocked``).
 
     The fold's error (the step's, or ``StepYieldedEffectError``) is raised here.
     """
-    body = with_handlers(handlers, _published_then(tuple(events), fold(step, initial, inputs)))
+    folded = Fold(step, initial, inputs, clocked)
+    body = with_handlers((*handlers, fold_handler), _published_then(tuple(events), folded))
     hosted = subscribed_event_handler(EventBus(), "fold", inputs.event_types)(timer_handler()(body))
     return run(scheduled(sim_time_handler(start_time=start_time)(hosted)))

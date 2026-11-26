@@ -8,9 +8,9 @@
 """
 
 from doeff_events import CountQueuedEffect
-from doeff_stream import Finish, FoldMeasured, Next, Run, merge, simulate_fold, subscribe
+from doeff_stream import Finish, FoldMeasured, Next, Run, merge, subscribe
 from doeff_time import GetMonotonicEffect
-from stream_test_support import T0, Kick, forever
+from stream_test_support import T0, Kick, forever, simulate_fold
 
 from doeff import Pass, Resume, handler
 
