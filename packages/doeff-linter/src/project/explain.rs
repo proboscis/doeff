@@ -279,6 +279,8 @@ pub enum Explain {
         open_layers: Vec<String>,
         /// Whether this file's layer is a layer that :dependency-layers lets read wider than :open-layers (the assembly entry).
         widened: bool,
+        /// Whether the importing file is in the `:shared` location (forbidden by `:forbid-shared-service-imports True`).
+        from_shared: bool,
     },
     /// DOEFF117: a dependency that was declared but is not used.
     UnusedDependency { service: String, dependency: String },
@@ -947,7 +949,7 @@ impl<'a> Narrator<'a> {
                     format!("Dirs inside a service are cut only by layer (distance from the outside world). {} is not a declared layer, so the layer of the modules inside cannot be decided. Add it to the service's :layers or move it to a layer dir.", layer),
                 ),
             },
-            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers, widened, .. } => (
+            Explain::ServiceDependency { placement, own, target, target_service, target_layer, target_dir, declared, depends_on, open_layers, widened, from_shared, .. } => (
                 format!(
                     "import target {} is in service {}'s {} (path under {}/) — {}",
                     target,
@@ -956,7 +958,16 @@ impl<'a> Narrator<'a> {
                     target_dir,
                     self.file_subject(placement)
                 ),
-                if *declared {
+                if *from_shared {
+                    format!(
+                        "Shared location {} is read by services, and :forbid-shared-service-imports in architecture.hy forbids modules in {} from importing any service (here {}). Move the shared type into {}, or move this module into service {}.",
+                        own,
+                        own,
+                        target_service,
+                        own,
+                        target_service,
+                    )
+                } else if *declared {
                     format!(
                         "Service {} declares that it depends on {}, but modules in {} may read, of {}, only {}. Reading {}'s judgments or translations directly means that when the contents of {} change, {} breaks. Requests to {} go through {}'s intents.{}",
                         own,
@@ -1087,6 +1098,10 @@ impl<'a> Narrator<'a> {
             Explain::ClassRoleDoubt { .. } => Some(STATE_FIX.to_string()),
             Explain::ClassShape { verdict: ClassVerdict::DataOnly, .. } => Some("Make it a defrecord (declare context and role with :tags, check values with :check)".to_string()),
             Explain::UndeclaredPlace { destination, .. } => Some(format!("Move it to {} (a proposal inferred from the :context tag for the service and the definition's :role tag for the layer; the current location's layer only when it cannot be inferred)", destination)),
+            Explain::ServiceDependency { own, target, target_service, from_shared: true, .. } => Some(format!(
+                "Move the shared type {} into {} and read it from there, or move this module into service {} (shared cannot depend on a service)",
+                target, own, target_service
+            )),
             Explain::ServiceDependency { own, target, target_service, declared: false, reverse: true, .. } => Some(format!(
                 "{} already depends on {}, so adding it to :depends-on would make the dependency between services a cycle: move the type {} into {}'s intent or into shared and have {} read it there (align with the existing direction {} -> {})",
                 target_service, own, target, own, target_service, target_service, own

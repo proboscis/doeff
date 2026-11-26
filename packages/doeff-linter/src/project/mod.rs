@@ -2192,7 +2192,8 @@ impl<'a> LayerJudge<'a> {
 
     /// DOEFF116: service dependencies — when service A of this file reads a module of another service B, B must be in A's :depends-on,
     /// and what is read must be in a layer this file's layer may read in the dependency (the layer's :dependency-layers — the assembly entry gets intent and protocol —,
-    /// or, if absent, the intent of :open-layers). The shared location and foundation are not services, so they are not looked at.
+    /// or, if absent, the intent of :open-layers). Foundation is not a service, so it is not looked at. The shared location is also skipped unless
+    /// `:forbid-shared-service-imports True` is declared on `defarchitecture`, in which case any import from shared to a service is a breach.
     /// The pairs of other services read are returned for dependencies that were declared but not used (DOEFF117).
     fn service_dependencies(
         &self,
@@ -2203,10 +2204,11 @@ impl<'a> LayerJudge<'a> {
         direction_judged: bool,
     ) -> (Vec<Draft>, Vec<(String, String)>) {
         let Some(own_dir) = self.placement.service.as_deref() else { return (Vec::new(), Vec::new()) };
-        if architecture.shared.as_deref() == Some(own_dir) {
+        let is_shared = architecture.shared.as_deref() == Some(own_dir);
+        if is_shared && !architecture.forbid_shared_service_imports {
             return (Vec::new(), Vec::new());
         }
-        let own = architecture.service_by_dir(own_dir);
+        let own = if is_shared { None } else { architecture.service_by_dir(own_dir) };
         let own_name = own.map(|s| s.name.clone()).unwrap_or_else(|| own_dir.to_string());
         let mut first: BTreeMap<&str, ByteSpan> = BTreeMap::new();
         for import in &facts.imports {
@@ -2221,8 +2223,40 @@ impl<'a> LayerJudge<'a> {
                 continue;
             }
             let other_name = architecture.service_by_dir(other_dir).map(|s| s.name.clone()).unwrap_or_else(|| other_dir.to_string());
-            crossings.push((own_name.clone(), other_name.clone()));
+            if !is_shared {
+                crossings.push((own_name.clone(), other_name.clone()));
+            }
             if !judge || (direction_judged && self.breaks_direction(target, index)) {
+                continue;
+            }
+            if is_shared {
+                drafts.push(self.draft(
+                    ProjectRule::ServiceDependency,
+                    self.range(span),
+                    format!(
+                        "{} (shared location {}, layer {}) reads {} of service {} — :forbid-shared-service-imports forbids shared from importing services",
+                        self.file.file.rel,
+                        own_name,
+                        self.layer_name(self.placement.layer),
+                        target,
+                        other_name
+                    ),
+                    Some(target.to_string()),
+                    Explain::ServiceDependency {
+                        placement: self.placement.clone(),
+                        own: own_name.clone(),
+                        target: target.to_string(),
+                        target_service: other_name,
+                        target_layer: site.layer,
+                        target_dir: site.dir.clone(),
+                        declared: false,
+                        reverse: false,
+                        depends_on: Vec::new(),
+                        open_layers: Vec::new(),
+                        widened: false,
+                        from_shared: true,
+                    },
+                ));
                 continue;
             }
             let declared = own.is_some_and(|s| s.depends_on.contains(&other_name));
@@ -2265,6 +2299,7 @@ impl<'a> LayerJudge<'a> {
                     depends_on,
                     open_layers: readable.to_vec(),
                     widened: readable != architecture.open_layers.as_slice(),
+                    from_shared: false,
                 },
             ));
         }
