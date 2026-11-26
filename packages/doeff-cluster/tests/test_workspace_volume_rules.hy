@@ -15,10 +15,11 @@
 ;;;                     ごと — 負も足す)・冷やす順(2 時間を過ぎた物は全部・両方の線が需要の byte を覆うまで古い順に・冷やした volume が線ごとに
 ;;;                     空ける byte は名目 = spec.size・実 = actualSize・覆えなければ 2 時間を過ぎた物だけ)
 (require doeff-hy.macros [deftest <- val])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupView backup-volume-name DetachStep DiskRoom MountEntry MountHold NAME-MAX-LENGTH
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BackupStamp BackupView BundleStamp TargetPurgePlan
+                                                         all-backup-targets backup-volume-name DetachStep DiskRoom MountEntry MountHold NAME-MAX-LENGTH
                                                          NAME-PREFIX CoolingPlan RoomBytes WarmVolume attach-step cooling-name cooling-order
                                                          detach-step first-backup-due? first-name growing-name mount-entries mount-hold mounted-at newest-backup owner-refusal restore-node room-bytes
-                                                         room-covers? ticket-id using-tickets volume-holds volume-name volume-of-entry])
+                                                         room-covers? target-purge-plan ticket-id using-tickets volume-holds volume-name volume-of-entry])
 
 (val MODULE-TAGS {:context "doeff-cluster-test" :role "test"})
 
@@ -347,3 +348,44 @@
   (<- first (first-name longest 1793643381))
   (assert (= first (+ longest "-first-1793643381")) first)
   (assert (<= (len first) 63) (len first)))
+
+
+(deftest test-target-purge-plan-covers-expired-bundles-unowned-errors-and-mixed-age
+  (val day 86400.0)
+  (val now (* 20 day))
+  (<- targets (all-backup-targets "nemo-workspace" #("garage-workspace" "nemo-workspace" "" "old-2")))
+  (assert (= targets #("nemo-workspace" "garage-workspace" "old-2")) targets)
+  (val bundle (BundleStamp :name "ws-a-1-deadbeef" :stamp (* 1 day)))
+  ;; 1. 全部 keepDays 越え: 束と未所属(owned=False の Error・Completed)を両方消す。
+  (val old-owned (BackupStamp :name "b-old-owned" :state "Completed" :stamp (* 5 day) :owned True))
+  (val old-err (BackupStamp :name "b-old-err" :state "Error" :stamp (* 5 day) :owned False))
+  (val old-unowned (BackupStamp :name "b-old-unowned" :state "Completed" :stamp (* 5 day) :owned False))
+  (<- full TargetPurgePlan (target-purge-plan #(old-owned old-err old-unowned) #(bundle) now 7 False))
+  (assert (= full.bundles #("ws-a-1-deadbeef")) full)
+  (assert (= full.backups #("b-old-err" "b-old-unowned")) full)
+  (assert (is full.newest-age-days None) full)
+  ;; 2. 混在(keepDays 越え + 新しい Completed): 古い Backup だけを個別に消し、束と新しい Completed を残して newest-age-days を返す。
+  (val fresh-done (BackupStamp :name "b-fresh" :state "Completed" :stamp (* 18 day) :owned True))
+  (<- mixed TargetPurgePlan (target-purge-plan #(old-owned old-err fresh-done) #(bundle) now 7 False))
+  (assert (= mixed.bundles #()) mixed)
+  (assert (= mixed.backups #("b-old-owned" "b-old-err")) mixed)
+  (assert (= mixed.newest-age-days 2.0) mixed)
+  ;; 3. 新しいのが Error だけなら古い Completed は消さない(古い Error だけ消す)。
+  (val fresh-err (BackupStamp :name "b-fresh-err" :state "Error" :stamp (* 19 day) :owned False))
+  (<- err-only TargetPurgePlan (target-purge-plan #(old-owned old-err fresh-err) #(bundle) now 7 False))
+  (assert (= err-only.bundles #()) err-only)
+  (assert (= err-only.backups #("b-old-err")) err-only)
+  ;; 4. 生きた Volume が守る(protected=True)時は束も古い Completed も消さない(古い Error だけ消す)。
+  (<- held TargetPurgePlan (target-purge-plan #(old-owned old-err) #(bundle) now 7 True))
+  (assert (= held.bundles #()) held)
+  (assert (= held.backups #("b-old-err")) held)
+  ;; 5. 途中の backup が在れば何も消さず unfinished を返す。
+  (val running (BackupStamp :name "b-run" :state "InProgress" :stamp (* 20 day) :owned False))
+  (<- busy TargetPurgePlan (target-purge-plan #(old-owned running) #(bundle) now 7 False))
+  (assert (= busy.bundles #()) busy)
+  (assert (= busy.backups #()) busy)
+  (assert (= busy.unfinished #("b-run")) busy)
+  ;; 6. 空の束は keepDays 以上だけ消し、新しい空の束は残す。
+  (val fresh-bundle (BundleStamp :name "ws-a-2-12345678" :stamp (* 19 day)))
+  (<- empty-old TargetPurgePlan (target-purge-plan #() #(bundle fresh-bundle) now 7 False))
+  (assert (= empty-old.bundles #("ws-a-1-deadbeef")) empty-old))

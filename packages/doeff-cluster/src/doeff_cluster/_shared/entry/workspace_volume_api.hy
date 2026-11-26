@@ -11,11 +11,12 @@
 (import doeff_cluster._foundation.volume_notices [volume-notices])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep CoolWorkspaceVolume
                                                            CreateWorkspaceVolume DetachWorkspaceVolume MountWorkspaceVolume
+                                                           PurgeExpiredWorkspaceBackups PurgeSweep
                                                            PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceRoom WorkspaceVolumeSite])
 (import doeff_cluster._shared.protocol.workspace_volumes [attached-volume attached-volumes cooled-volume created-volume detached-volume
-                                                        idle-cooling mounted-volume place-read purged-volume unmounted-volume
+                                                        idle-cooling mounted-volume place-read purged-expired-backups purged-volume unmounted-volume
                                                         workspace-room])
 
 ;; 答え手の session の箱の鍵(検が相手役の箱を置く — 頭の註)。
@@ -48,6 +49,9 @@
   (PurgeWorkspaceVolume [owner]
     (<- outcome WorkspaceOutcome (purged-volume site owner))
     (resume outcome))
+  (PurgeExpiredWorkspaceBackups [excluded]
+    (<- sweep PurgeSweep (purged-expired-backups site excluded))
+    (resume sweep))
   (CoolIdleWorkspaceVolumes []
     (<- sweep CoolingSweep (idle-cooling site notices))
     (resume sweep))

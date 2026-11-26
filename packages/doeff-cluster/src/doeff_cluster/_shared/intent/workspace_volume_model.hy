@@ -145,6 +145,14 @@
   (setv #^ bool covered True))
 
 
+(defrecord PurgeSweep
+  "PurgeExpiredWorkspaceBackups の答え: purged-volumes = 消した BackupVolume の名・purged-backups = 個別に消した Backup の名(束に属さない
+   Error や未同期の Backup・新しい完了 backup と混在する keepDays 越えの Backup)・failed = 消せなかった物の「<名>: <訳>」。"
+  (#^ (get tuple #(str ...)) purged-volumes)
+  (#^ (get tuple #(str ...)) purged-backups)
+  (#^ (get tuple #(str ...)) failed))
+
+
 (defclass [(dataclass :frozen True)] CreateWorkspaceVolume [(get EffectBase WorkspaceOutcome)]
   "持ち主 owner の volume が無ければ作る・冷えていれば backup から戻す(頭の註)。"
   ;; 記録: 判断の外への報告(output — cluster の物を作る)。
@@ -194,6 +202,14 @@
   ;; 記録: 判断の外への報告(output — backup を消す)。
   (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT))
   (#^ str owner))
+
+
+(defclass [(dataclass :frozen True)] PurgeExpiredWorkspaceBackups [(get EffectBase PurgeSweep)]
+  "級の先と前の先(legacyBackupTargets)の作業場所の volume の backup のうち、keepDays を過ぎた物をまとめて消す(頭の註)。
+   excluded = この回に個別の PurgeWorkspaceVolume で既に扱った持ち主の id(小文字 — 二重に消さない)。"
+  ;; 記録: 判断の外への報告(output — backup を消す)。
+  (setv #^ (get ClassVar RecordSpec) __record-spec__ (RecordSpec :mode RecordMode.OUTPUT))
+  (setv #^ (get frozenset str) excluded (frozenset)))
 
 
 (defclass [(dataclass :frozen True)] ReadWorkspacePlace [(get EffectBase WorkspacePlace)]

@@ -115,8 +115,8 @@
 ;;; 値の storageClass を移す。その時、冷えた名の唯一の中身は前の先の Backup に在る(2026-11 に Garage から nemo へ替えた時 1,636 本)。
 ;;; 級の先だけを読むと、その名を空で作り直してしまう。そこで作る手順は、級の先に backup が無い名だけ前の先を順に読み、在れば前の先を
 ;;; 名指す volume として戻し(webhook は volume の先の束だけを見る)、戻し終えたら級の先へ替える。前の先を名指したまま残った volume も、
-;;; 次の作るの ALREADY の前に替える — 冷やす手順と最初の backup は volume の先へ書くので、替えなければ前の先へ書き続ける。前の先の
-;;; Backup は消さない(消す手順は級の先だけを読む)— 前の先を片付けるのはこの系の外の手。
+;;; 次の作るの ALREADY の前に替える — 冷やす手順と最初の backup は volume の先へ書くので、替えなければ前の先へ書き続ける。消す手順
+;;; (purged-volume・purged-expired-backups)は級の先と前の先の両方を読み、keepDays を過ぎた束と未所属の Backup・混在の古い Backup を消す。
 (require doeff-hy.macros [defhandler defk <- val var])
 (require doeff-hy.record [defrecord defwire])
 (import dataclasses [dataclass])  ; defrecord・defwire の展開が使う
@@ -133,15 +133,17 @@
 (import typing [Protocol runtime-checkable])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachedWorkspaceVolume AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
+                                                           MountWorkspaceVolume PurgeExpiredWorkspaceBackups PurgeSweep
+                                                           PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
                                                            WorkspaceVolumeSite])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactName])
-(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BACKUP-COMPLETED BackupView backup-volume-name CoolingPlan DetachStep DeviceRead
+(import doeff_cluster._shared.core.workspace_volume_rules [AttachStep AttachView BACKUP-COMPLETED BackupStamp BackupView BundleStamp
+                                                         TargetPurgePlan all-backup-targets backup-volume-name CoolingPlan DetachStep DeviceRead
                                                          device-read DiskRoom MountEntry MountHold NAME-PREFIX RoomBytes USED-AT-KEY WarmVolume attach-step cooling-name growing-name first-name
                                                          first-backup-due? cooling-order detach-step mount-entries mount-hold mounted-at restore-node room-bytes
-                                                         room-covers? newest-backup owner-refusal ticket-id TICKET-TYPE using-tickets
+                                                         room-covers? newest-backup owner-refusal target-purge-plan ticket-id TICKET-TYPE using-tickets
                                                          volume-holds volume-name volume-of-entry])
 (import doeff_cluster._shared.intent.supplied_model [WorkerFactMissing])
 (import doeff_cluster._shared.core.clock [datetime-of-epoch-ms now-epoch-ms])
@@ -336,12 +338,29 @@
   (setv #^ str name ""))
 
 
+(defwire OwnerRefWire
+  "k8s の metadata.ownerReferences の 1 要素のうち読む欄: name。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ str name ""))
+
+
+(defwire BackupMetaWire
+  "Longhorn の Backup・BackupVolume の metadata のうち読む欄: name・labels・creationTimestamp・deletionTimestamp・ownerReferences。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ str name "")
+  (setv #^ (| (get dict #(str str)) None) labels None)
+  (setv #^ str creation-timestamp "")
+  (setv #^ (| str None) deletion-timestamp None)
+  (setv #^ (| (get tuple #(OwnerRefWire ...)) None) owner-references None))
+
+
 (defwire BackupStatusWire
-  "Longhorn の Backup の status のうち読む欄: state・backupCreatedAt・url(戻す元)・error・volumeSize(backup を取った時の volume の名目の
+  "Longhorn の Backup の status のうち読む欄: state・backupCreatedAt・backupTargetName・url(戻す元)・error・volumeSize(backup を取った時の volume の名目の
    大きさ — byte の数の字)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
   (setv #^ str state "")
   (setv #^ str backup-created-at "")
+  (setv #^ str backup-target-name "")
   (setv #^ str url "")
   (setv #^ str error "")
   (setv #^ str volume-size ""))
@@ -350,7 +369,7 @@
 (defwire BackupWire
   "Longhorn の Backup の GET の答えのうち読む欄: metadata・status(作った直後は無い)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
-  (setv #^ (| NamedMetaWire None) metadata None)
+  (setv #^ (| BackupMetaWire None) metadata None)
   (setv #^ (| BackupStatusWire None) status None))
 
 
@@ -372,6 +391,13 @@
   (setv #^ (| (get tuple #(NamedWire ...)) None) items None))
 
 
+(defwire BundleSpecWire
+  "Longhorn の BackupVolume の spec のうち読む欄: volumeName・backupTargetName。"
+  {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
+  (setv #^ str volume-name "")
+  (setv #^ str backup-target-name ""))
+
+
 (defwire BundleStatusWire
   "Longhorn の BackupVolume の status のうち読む欄: lastBackupName(Longhorn が backup の先から読んだ束の最後の backup — 1 本の束の同期が書く)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
@@ -379,9 +405,10 @@
 
 
 (defwire BundleWire
-  "Longhorn の BackupVolume の一覧の 1 つのうち読む欄: metadata・status(作った直後は無い)。"
+  "Longhorn の BackupVolume の一覧の 1 つのうち読む欄: metadata・spec・status(作った直後は無い)。"
   {:tags {:context "doeff-cluster" :role "protocol" :reads "json"} :names :camel :unknown :ignore}
-  (setv #^ (| NamedMetaWire None) metadata None)
+  (setv #^ (| BackupMetaWire None) metadata None)
+  (setv #^ (| BundleSpecWire None) spec None)
   (setv #^ (| BundleStatusWire None) status None))
 
 
@@ -589,9 +616,14 @@
 
 (defrecord BundleRead
   "Longhorn の束 BackupVolume 1 つの読み: name = 束の名(<volume の名>-<hash>)・last-backup = status.lastBackupName(Longhorn が backup の先から
-   読んだ束の最後の backup の名 — 同期の前は空)。"
+   読んだ束の最後の backup の名 — 同期の前は空)・created-at = metadata.creationTimestamp・deleting = deletionTimestamp が立っているか・
+   volume = volume の名・target = backup の先の名。"
   (#^ str name)
-  (#^ str last-backup))
+  (#^ str last-backup)
+  (setv #^ str created-at "")
+  (setv #^ bool deleting False)
+  (setv #^ str volume "")
+  (setv #^ str target ""))
 
 
 (defk refused [owner doing reason]
@@ -1009,9 +1041,44 @@
 (defk backup-view-of [item]
   {:pre [(: item BackupWire)] :post [(: % BackupView)] :tags {:context "doeff-cluster" :role "protocol"}}
   "Backup の一覧の 1 つ item を、判断に渡す読みにするため(作った直後で status が無ければ、様子と刻と url は空)。"
+  (val meta (or item.metadata (BackupMetaWire)))
   (val status (or item.status (BackupStatusWire)))
-  (BackupView :name (. (or item.metadata (NamedMetaWire)) name) :state status.state :created-at status.backup-created-at :url status.url
-              :volume-size (if (.isdigit status.volume-size) (int status.volume-size) 0)))
+  (BackupView :name meta.name :state status.state :created-at status.backup-created-at :url status.url
+              :volume-size (if (.isdigit status.volume-size) (int status.volume-size) 0)
+              :creation-timestamp meta.creation-timestamp
+              :owned (bool meta.owner-references)
+              :deleting (is-not meta.deletion-timestamp None)))
+
+
+(defk bundle-read-of [item]
+  {:pre [(: item BundleWire)] :post [(: % BundleRead)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "BackupVolume の一覧の 1 つ item を BundleRead に読むため。"
+  (val meta (or item.metadata (BackupMetaWire)))
+  (val labels (or meta.labels {}))
+  (val spec (or item.spec (BundleSpecWire)))
+  (val status (or item.status (BundleStatusWire)))
+  (BundleRead :name meta.name :last-backup status.last-backup-name
+              :created-at meta.creation-timestamp
+              :deleting (is-not meta.deletion-timestamp None)
+              :volume (or (.get labels "backup-volume" "") spec.volume-name)
+              :target (or (.get labels "backup-target" "") spec.backup-target-name)))
+
+
+(defk backup-stamp-of [view]
+  {:pre [(: view BackupView)] :post [(: % BackupStamp)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "BackupView から消しの判断用の BackupStamp を得るため(status.backupCreatedAt と metadata.creationTimestamp の両方が読めれば古い方 —
+   Error や未同期で backupCreatedAt が空でも creationTimestamp で古さを測る)。"
+  (<- bca (| float None) (epoch-of view.created-at))
+  (<- cts (| float None) (epoch-of view.creation-timestamp))
+  (val stamps (tuple (gfor s #(bca cts) :if (is-not s None) s)))
+  (BackupStamp :name view.name :state view.state :stamp (if stamps (min stamps) None) :owned view.owned))
+
+
+(defk bundle-stamp-of [bundle]
+  {:pre [(: bundle BundleRead)] :post [(: % BundleStamp)] :tags {:context "doeff-cluster" :role "protocol"}}
+  "BundleRead から消しの判断用の BundleStamp を得るため。"
+  (<- cts (| float None) (epoch-of bundle.created-at))
+  (BundleStamp :name bundle.name :stamp cts))
 
 
 (defk backup-views [site owner doing name target]
@@ -2089,9 +2156,12 @@
   (<- held (| BundleListWire Malformed) (parse-json BundleListWire (! (text-field answer.text))))
   (when (isinstance held Malformed)
     (raise (! (malformed-refusal owner doing "BackupVolume の一覧"))))
-  (tuple (sorted (gfor item (or held.items #()) :if (and item.metadata item.metadata.name)
-                       (BundleRead :name item.metadata.name :last-backup (. (or item.status (BundleStatusWire)) last-backup-name)))
-                 :key (fn [read] read.name))))
+  (var reads #())
+  (for [item (or held.items #())]
+    (when (and item.metadata item.metadata.name)
+      (<- one BundleRead (bundle-read-of item))
+      (:= reads (+ reads #(one)))))
+  (tuple (sorted reads :key (fn [read] read.name))))
 
 
 (defk bundle-made [site owner doing name target]
@@ -2187,41 +2257,169 @@
 
 (defk purged-volume [site owner]
   {:pre [(: site WorkspaceVolumeSite) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "protocol"}}
-  "冷えた持ち主 owner の backup を消すため(README の節「寿命」の「消す」— 上に載る系が「もう使わない」と決めた時): その名の BackupVolume を
-   消す(Longhorn が束の backup を backup の先から消す。束が無く Backup だけが在れば Backup を 1 つずつ消す)— DONE。backup が無ければ
-   ALREADY。Longhorn の volume が在る(温かい・使っている)・途中の backup が在る・最後の backup から値の keepDays を過ぎていない時は断る。"
+  "冷えた持ち主 owner の backup を消すため(README の節「寿命」の「消す」— 上に載る系が「もう使わない」と決めた時): 級の先と前の先
+   (legacyBackupTargets)の両方を読み、keepDays を過ぎた束 BackupVolume と、束に属さない(ownerReferences の無い)Backup・新しい完了 backup と
+   混在する keepDays 越えの Backup を消す。消したら DONE・どの先にも backup と束が無ければ ALREADY。
+   Longhorn の volume が在る(温かい・使っている)・途中の backup が在る・最後の backup から値の keepDays を過ぎていない時は、安全に消せる
+   古い分(前の先の keepDays 越え・混在の古い Backup)を先に消した上で断る(呼び手が作業場の dir を消さない)。"
   (val doing "消す")
   (<- name str (checked-name owner doing))
   (<- read (| VolumeRead None) (volume-read site owner doing name))
-  (when (is-not read None)
-    (raise (! (refused owner doing "Longhorn の volume が在る(温かいか使っている — 先に冷やす)"))))
   (<- settings SettingsWire (workspace-settings site owner))
   (<- parameters dict (class-parameters owner settings.storage-class))
   (<- target str (class-backup-target owner doing parameters))
-  (<- backups tuple (backup-views site owner doing name target))
-  (<- reads tuple (bundle-reads site owner doing name target))
-  (val bundles (tuple (gfor read reads read.name)))
-  (when (and (not backups) (not bundles))
-    (return WorkspaceOutcome.ALREADY))
-  (val unfinished (lfor one backups :if (not-in one.state #("Completed" "Error")) one.name))
+  (<- targets tuple (all-backup-targets target settings.legacy-backup-targets))
+  (<- now datetime (GetTime))
+  (val now-sec (.timestamp now))
+  (var dropped-bundles #())
+  (var dropped-backups #())
+  (var unfinished #())
+  (var kept-days None)
+  (for [each targets]
+    (<- backups tuple (backup-views site owner doing name each))
+    (<- bundles tuple (bundle-reads site owner doing name each))
+    (val live-backups (tuple (gfor one backups :if (not one.deleting) one)))
+    (val live-bundles (tuple (gfor one bundles :if (not one.deleting) one)))
+    (var b-stamps #())
+    (for [one live-backups]
+      (<- bs BackupStamp (backup-stamp-of one))
+      (:= b-stamps (+ b-stamps #(bs))))
+    (var v-stamps #())
+    (for [one live-bundles]
+      (<- vs BundleStamp (bundle-stamp-of one))
+      (:= v-stamps (+ v-stamps #(vs))))
+    (val protected (and (is-not read None) (or (= each target) (= read.backup-target each))))
+    (<- plan TargetPurgePlan (target-purge-plan b-stamps v-stamps now-sec settings.keep-days protected))
+    (when plan.unfinished
+      (:= unfinished (+ unfinished plan.unfinished)))
+    (when (and (is-not plan.newest-age-days None) (or (is kept-days None) (< plan.newest-age-days kept-days)))
+      (:= kept-days plan.newest-age-days))
+    (for [bundle plan.bundles]
+      (<- (deleted-object site owner doing "backupvolumes" bundle))
+      (:= dropped-bundles (+ dropped-bundles #(bundle))))
+    (for [backup plan.backups]
+      (<- (deleted-object site owner doing "backups" backup))
+      (:= dropped-backups (+ dropped-backups #(backup)))))
+  (when (or dropped-bundles dropped-backups)
+    (<- (slog "持ち主の keepDays を過ぎた作業場所の volume の backup を消した" :owner owner :volume name
+              :bundles (len dropped-bundles) :backups (len dropped-backups))))
+  (when (is-not read None)
+    (raise (! (refused owner doing "Longhorn の volume が在る(温かいか使っている — 先に冷やす)"))))
   (when unfinished
     (raise (! (refused owner doing (+ "途中の backup が在る: " (.join "・" unfinished))))))
+  (when (is-not kept-days None)
+    (raise (! (refused owner doing (.format "最後の backup から {:.1f} 日(keepDays {} 日を過ぎるまで消さない)" kept-days settings.keep-days)))))
+  (if (or dropped-bundles dropped-backups) WorkspaceOutcome.DONE WorkspaceOutcome.ALREADY))
+
+
+(defk all-workspace-backups [site owner doing targets]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: targets (get frozenset str))]
+   :post [(: % (get dict #((get tuple #(str str)) (get tuple #(BackupView ...)))))]
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "Longhorn の Backup の一覧を 1 回読み、作業場所の volume(頭 NAME-PREFIX)かつ backup の先が targets に含まれる未削除の物を
+   (target, volume) ごとに名の順で束ねるため。"
+  (<- answer HttpResponse (kube-answer owner doing "GET" (! (longhorn-path site "backups")) None JSON-TYPE))
+  (when (!= (! (status-field answer.status)) 200)
+    (raise (! (status-refusal owner doing "Backup の一覧" answer))))
+  (<- held (| BackupListWire Malformed) (parse-json BackupListWire (! (text-field answer.text))))
+  (when (isinstance held Malformed)
+    (raise (! (malformed-refusal owner doing "Backup の一覧"))))
+  (val grouped {})
+  (for [item (or held.items #())]
+    (val meta (or item.metadata (BackupMetaWire)))
+    (val labels (or meta.labels {}))
+    (val status (or item.status (BackupStatusWire)))
+    (val volume (.get labels "backup-volume" ""))
+    (val target (or (.get labels "backup-target" "") status.backup-target-name))
+    (when (and (.startswith volume NAME-PREFIX) (in target targets))
+      (<- view BackupView (backup-view-of item))
+      (when (not view.deleting)
+        (val key #(target volume))
+        (setv (get grouped key) (+ (.get grouped key #()) #(view))))))
+  (dfor #(key views) (.items grouped) key (tuple (sorted views :key (fn [v] v.name)))))
+
+
+(defk all-workspace-bundles [site owner doing targets]
+  {:pre [(: site WorkspaceVolumeSite) (: owner str) (: doing str) (: targets (get frozenset str))]
+   :post [(: % (get dict #((get tuple #(str str)) (get tuple #(BundleRead ...)))))]
+   :tags {:context "doeff-cluster" :role "protocol" :reads "json"}}
+  "Longhorn の BackupVolume の一覧を 1 回読み、作業場所の volume(頭 NAME-PREFIX)かつ backup の先が targets に含まれる未削除の物を
+   (target, volume) ごとに名の順で束ねるため。"
+  (<- answer HttpResponse (kube-answer owner doing "GET" (! (longhorn-path site "backupvolumes")) None JSON-TYPE))
+  (when (!= (! (status-field answer.status)) 200)
+    (raise (! (status-refusal owner doing "BackupVolume の一覧" answer))))
+  (<- held (| BundleListWire Malformed) (parse-json BundleListWire (! (text-field answer.text))))
+  (when (isinstance held Malformed)
+    (raise (! (malformed-refusal owner doing "BackupVolume の一覧"))))
+  (val grouped {})
+  (for [item (or held.items #())]
+    (when (and item.metadata item.metadata.name)
+      (<- one BundleRead (bundle-read-of item))
+      (when (and (.startswith one.volume NAME-PREFIX) (in one.target targets) (not one.deleting))
+        (val key #(one.target one.volume))
+        (setv (get grouped key) (+ (.get grouped key #()) #(one))))))
+  (dfor #(key bundles) (.items grouped) key (tuple (sorted bundles :key (fn [b] b.name)))))
+
+
+(defk purged-expired-backups [site excluded]
+  {:pre [(: site WorkspaceVolumeSite) (: excluded (get frozenset str))] :post [(: % PurgeSweep)]
+   :tags {:context "doeff-cluster" :role "protocol"}}
+  "級の先と前の先(legacyBackupTargets)の作業場所の volume の backup を一覧で読み(3 回の GET — 個別に 1 本ずつ list しない)、keepDays を過ぎた
+   束 BackupVolume と未所属の Backup・混在の古い Backup をまとめて消すため(PurgeExpiredWorkspaceBackups)。
+   excluded に含まれる持ち主(小文字 — この回に個別の PurgeWorkspaceVolume で既に扱った持ち主)は飛ばす。1 件の失敗で残りを止めない。"
+  (val owner "全部")
+  (val doing "keepDays 越えの backup の消し")
+  (<- settings SettingsWire (workspace-settings site owner))
+  (<- parameters dict (class-parameters owner settings.storage-class))
+  (<- target str (class-backup-target owner doing parameters))
+  (<- targets tuple (all-backup-targets target settings.legacy-backup-targets))
+  (val target-set (frozenset targets))
+  (<- volumes tuple (volume-reads site owner doing))
+  (val live-volumes (dfor one volumes one.name one))
+  (<- backups-by-tv dict (all-workspace-backups site owner doing target-set))
+  (<- bundles-by-tv dict (all-workspace-bundles site owner doing target-set))
   (<- now datetime (GetTime))
-  (var stamps #())
-  (for [one backups]
-    (<- stamp (| float None) (epoch-of one.created-at))
-    (when (is-not stamp None)
-      (:= stamps (+ stamps #(stamp)))))
-  (when stamps
-    (val days (/ (- (.timestamp now) (max stamps)) 86400))
-    (when (< days settings.keep-days)
-      (raise (! (refused owner doing (.format "最後の backup から {:.1f} 日(keepDays {} 日を過ぎるまで消さない)" days settings.keep-days))))))
-  (if bundles
-      (for [bundle bundles]
-        (<- (deleted-object site owner doing "backupvolumes" bundle)))
+  (val now-sec (.timestamp now))
+  (val skip (frozenset (gfor one excluded (.lower one))))
+  (val keys (sorted (| (set (.keys backups-by-tv)) (set (.keys bundles-by-tv)))))
+  (var purged-volumes #())
+  (var purged-backups #())
+  (var failed #())
+  (for [#(each volume) keys]
+    (val unit-owner (cut volume (len NAME-PREFIX) None))
+    (when (not-in unit-owner skip)
+      (val backups (.get backups-by-tv #(each volume) #()))
+      (val bundles (.get bundles-by-tv #(each volume) #()))
+      (var b-stamps #())
       (for [one backups]
-        (<- (deleted-object site owner doing "backups" one.name))))
-  WorkspaceOutcome.DONE)
+        (<- bs BackupStamp (backup-stamp-of one))
+        (:= b-stamps (+ b-stamps #(bs))))
+      (var v-stamps #())
+      (for [one bundles]
+        (<- vs BundleStamp (bundle-stamp-of one))
+        (:= v-stamps (+ v-stamps #(vs))))
+      (val live (.get live-volumes volume))
+      (val protected (and (is-not live None) (or (= each target) (= live.backup-target each))))
+      (<- plan TargetPurgePlan (target-purge-plan b-stamps v-stamps now-sec settings.keep-days protected))
+      (for [bundle plan.bundles]
+        (try
+          (<- (deleted-object site unit-owner doing "backupvolumes" bundle))
+          (:= purged-volumes (+ purged-volumes #(bundle)))
+          (except [error WorkspaceVolumeRefused]
+            (:= failed (+ failed #((+ bundle ": " (str error))))))))
+      (for [backup plan.backups]
+        (try
+          (<- (deleted-object site unit-owner doing "backups" backup))
+          (:= purged-backups (+ purged-backups #(backup)))
+          (except [error WorkspaceVolumeRefused]
+            (:= failed (+ failed #((+ backup ": " (str error))))))))))
+  (<- (slog "keepDays を過ぎた作業場所の volume の backup をまとめて消した"
+            :targets (.join "," targets) :keep-days settings.keep-days
+            :purged-volumes (len purged-volumes) :purged-backups (len purged-backups) :failed (len failed)
+            :volumes-sample (.join "," (cut purged-volumes 0 10))
+            :backups-sample (.join "," (cut purged-backups 0 10))
+            :failed-sample (.join " / " (cut failed 0 5))))
+  (PurgeSweep :purged-volumes purged-volumes :purged-backups purged-backups :failed failed))
 
 
 (defk volume-reads [site owner doing]

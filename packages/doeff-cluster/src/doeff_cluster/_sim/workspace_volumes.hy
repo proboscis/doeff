@@ -40,12 +40,13 @@
 (import doeff_time [GetTime])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachedWorkspaceVolume AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
+                                                           MountWorkspaceVolume PurgeExpiredWorkspaceBackups PurgeSweep
+                                                           PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused])
 (import doeff_core_effects [FileFailed ListDirectory PathKind PathStat StatPath])
-(import doeff_cluster._shared.core.workspace_volume_rules [NAME-PREFIX CoolingPlan RoomBytes WarmVolume cooling-name cooling-order
-                                                         owner-refusal room-covers? ticket-id volume-name])
+(import doeff_cluster._shared.core.workspace_volume_rules [BackupStamp BundleStamp NAME-PREFIX CoolingPlan RoomBytes TargetPurgePlan WarmVolume
+                                                         cooling-name cooling-order owner-refusal room-covers? target-purge-plan ticket-id volume-name])
 
 
 (defrecord HeldVolume
@@ -374,20 +375,58 @@
 
 (defk sim-purged [world owner]
   {:pre [(: world WorkspaceVolumeWorld) (: owner str)] :post [(: % WorkspaceOutcome)] :tags {:context "doeff-cluster" :role "foundation"}}
-  "PurgeWorkspaceVolume を世界 world に当てるため(頭の註の契約)。"
+  "PurgeWorkspaceVolume を世界 world に当てるため(頭の註の契約 — 混在の keepDays 越えも先に消す)。"
   (val doing "消す")
   (val name (! (sim-name world owner doing True)))
   (val backups (! (held-backups world name)))
   (<- now float (sim-now))
-  (val days (if backups (/ (- now (max (gfor one backups one.created-at))) 86400) 0.0))
+  (val live (! (held-volume world name)))
+  (val b-stamps (tuple (gfor one backups (BackupStamp :name one.name :state one.state :stamp one.created-at :owned True))))
+  (val v-stamps (if backups #((BundleStamp :name name :stamp None)) #()))
+  (<- plan TargetPurgePlan (target-purge-plan b-stamps v-stamps now world.keep-days (is-not live None)))
+  (val dropped-bundle (bool plan.bundles))
+  (val dropped-names (frozenset plan.backups))
+  (when dropped-bundle
+    (setv world.backups (tuple (gfor one world.backups :if (!= one.volume name) one))))
+  (when dropped-names
+    (setv world.backups (tuple (gfor one world.backups :if (not-in one.name dropped-names) one))))
   (cond
-    (is-not (! (held-volume world name)) None)
+    (is-not live None)
     (raise (! (sim-refused owner doing "Longhorn の volume が在る(温かいか使っている — 先に冷やす)")))
-    (not backups) WorkspaceOutcome.ALREADY
-    (< days world.keep-days)
-    (raise (! (sim-refused owner doing (.format "最後の backup から {:.1f} 日(keepDays {} 日を過ぎるまで消さない)" days world.keep-days))))
-    True (do (setv world.backups (tuple (gfor one world.backups :if (!= one.volume name) one)))
-             WorkspaceOutcome.DONE)))
+    plan.unfinished
+    (raise (! (sim-refused owner doing (+ "途中の backup が在る: " (.join "・" plan.unfinished)))))
+    (is-not plan.newest-age-days None)
+    (raise (! (sim-refused owner doing (.format "最後の backup から {:.1f} 日(keepDays {} 日を過ぎるまで消さない)" plan.newest-age-days world.keep-days))))
+    (or dropped-bundle dropped-names) WorkspaceOutcome.DONE
+    True WorkspaceOutcome.ALREADY))
+
+
+(defk sim-purged-expired [world excluded]
+  {:pre [(: world WorkspaceVolumeWorld) (: excluded (get frozenset str))] :post [(: % PurgeSweep)] :tags {:context "doeff-cluster" :role "foundation"}}
+  "PurgeExpiredWorkspaceBackups を世界 world に当てるため(頭の註の契約)。"
+  (when world.down
+    (raise (WorkspaceClusterUnreachable "持ち主 全部 の volume を keepDays 越えの backup の消し できない — API server に届かない: 模擬の世界が down")))
+  (<- now float (sim-now))
+  (val skip (frozenset (gfor one excluded (.lower one))))
+  (val volumes (sorted (frozenset (gfor one world.backups :if (.startswith one.volume NAME-PREFIX) one.volume))))
+  (var purged-volumes #())
+  (var purged-backups #())
+  (for [name volumes]
+    (val unit-owner (cut name (len NAME-PREFIX) None))
+    (when (not-in unit-owner skip)
+      (val backups (! (held-backups world name)))
+      (val live (! (held-volume world name)))
+      (val b-stamps (tuple (gfor one backups (BackupStamp :name one.name :state one.state :stamp one.created-at :owned True))))
+      (val v-stamps (if backups #((BundleStamp :name name :stamp None)) #()))
+      (<- plan TargetPurgePlan (target-purge-plan b-stamps v-stamps now world.keep-days (is-not live None)))
+      (when plan.bundles
+        (setv world.backups (tuple (gfor one world.backups :if (!= one.volume name) one)))
+        (:= purged-volumes (+ purged-volumes plan.bundles)))
+      (when plan.backups
+        (val drop-set (frozenset plan.backups))
+        (setv world.backups (tuple (gfor one world.backups :if (not-in one.name drop-set) one)))
+        (:= purged-backups (+ purged-backups plan.backups)))))
+  (PurgeSweep :purged-volumes purged-volumes :purged-backups purged-backups :failed #()))
 
 
 (defk sim-idle-cooled [world]
@@ -449,6 +488,9 @@
   (PurgeWorkspaceVolume [owner]
     (<- outcome WorkspaceOutcome (sim-purged world owner))
     (resume outcome))
+  (PurgeExpiredWorkspaceBackups [excluded]
+    (<- sweep PurgeSweep (sim-purged-expired world excluded))
+    (resume sweep))
   (CoolIdleWorkspaceVolumes []
     (<- sweep CoolingSweep (sim-idle-cooled world))
     (resume sweep))

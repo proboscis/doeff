@@ -219,6 +219,9 @@ if TYPE_CHECKING:
         PurgeWorkspaceVolume as PurgeWorkspaceVolume,
     )
     from doeff_cluster._shared.intent.workspace_volume_model import (
+        PurgeExpiredWorkspaceBackups as PurgeExpiredWorkspaceBackups,
+    )
+    from doeff_cluster._shared.intent.workspace_volume_model import (
         AttachedWorkspaceVolume as AttachedWorkspaceVolume,
     )
     from doeff_cluster._shared.intent.workspace_volume_model import (
@@ -601,6 +604,7 @@ if TYPE_CHECKING:
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeRefused as WorkspaceVolumeRefused
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceVolumeSite as WorkspaceVolumeSite
     from doeff_cluster._shared.intent.workspace_volume_model import CoolingSweep as CoolingSweep
+    from doeff_cluster._shared.intent.workspace_volume_model import PurgeSweep as PurgeSweep
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoom as WorkspaceRoom
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceRoomShort as WorkspaceRoomShort
     from doeff_cluster._shared.intent.workspace_volume_model import WorkspaceClusterUnreachable as WorkspaceClusterUnreachable
@@ -962,6 +966,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "CoolIdleWorkspaceVolumes": "doeff_cluster._shared.intent.workspace_volume_model",
     "CoolWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "PurgeWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
+    "PurgeExpiredWorkspaceBackups": "doeff_cluster._shared.intent.workspace_volume_model",
     "AttachedWorkspaceVolume": "doeff_cluster._shared.intent.workspace_volume_model",
     "ReadAttachedWorkspaceVolumes": "doeff_cluster._shared.intent.workspace_volume_model",
     "ReadWorkspaceRoom": "doeff_cluster._shared.intent.workspace_volume_model",
@@ -1462,6 +1467,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WorkspaceVolumeRefused": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceVolumeSite": "doeff_cluster._shared.intent.workspace_volume_model",
     "CoolingSweep": "doeff_cluster._shared.intent.workspace_volume_model",
+    "PurgeSweep": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceRoom": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceRoomShort": "doeff_cluster._shared.intent.workspace_volume_model",
     "WorkspaceClusterUnreachable": "doeff_cluster._shared.intent.workspace_volume_model",

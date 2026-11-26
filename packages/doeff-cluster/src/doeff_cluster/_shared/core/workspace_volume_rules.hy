@@ -119,12 +119,42 @@
 (defrecord BackupView
   "Longhorn の Backup 1 つの読み: name = Backup の名・state = 様子(Completed・InProgress・Error ほか)・created-at = status.backupCreatedAt
    (ISO 8601 の UTC の字 — 字の順が刻の順。まだ無ければ空)・url = 戻す元の印(Volume の spec.fromBackup に書く字)・volume-size =
-   status.volumeSize(backup を取った時の volume の名目の大きさ byte — 戻す volume はこれより小さく作れない。読めなければ 0)。"
+   status.volumeSize(backup を取った時の volume の名目の大きさ byte — 戻す volume はこれより小さく作れない。読めなければ 0)・
+   creation-timestamp = metadata.creationTimestamp(ISO 8601 の UTC の字 — status.backupCreatedAt の無い Error や未同期の Backup の古さを
+   測る。無ければ空)・owned = metadata.ownerReferences を持つか(束 BackupVolume の削除に連なるか — 既定 True)・deleting = deletionTimestamp が
+   立っているか(Longhorn が既に消す途中 — 既定 False)。"
   (#^ str name)
   (#^ str state)
   (#^ str created-at)
   (#^ str url)
-  (setv #^ int volume-size 0))
+  (setv #^ int volume-size 0)
+  (setv #^ str creation-timestamp "")
+  (setv #^ bool owned True)
+  (setv #^ bool deleting False))
+
+
+(defrecord BackupStamp
+  "Backup 1 つの消しの判断用の読み: name = Backup の名・state = 様子・stamp = 古さを測る epoch 秒(無ければ None)・owned = 束 BackupVolume の
+   ownerReferences を持つか。"
+  (#^ str name)
+  (#^ str state)
+  (#^ (| float None) stamp)
+  (#^ bool owned))
+
+
+(defrecord BundleStamp
+  "BackupVolume 1 つの消しの判断用の読み: name = 束の名・stamp = metadata.creationTimestamp の epoch 秒(無ければ None)。"
+  (#^ str name)
+  (#^ (| float None) stamp))
+
+
+(defrecord TargetPurgePlan
+  "backup の先 1 つに対する消しの計画: bundles = 消す BackupVolume の名・backups = 個別に消す Backup の名(束に属さない物・混在の古い物)・
+   unfinished = 途中の Backup の名・newest-age-days = 残る最も新しい Backup からの経過日数(None = 残らない)。"
+  (#^ (get tuple #(str ...)) bundles)
+  (#^ (get tuple #(str ...)) backups)
+  (#^ (get tuple #(str ...)) unfinished)
+  (#^ (| float None) newest-age-days))
 
 
 (defrecord DiskRoom
@@ -419,3 +449,51 @@
       (:= chosen room.node)
       (:= most lines.nominal)))
   chosen)
+
+
+(defk all-backup-targets [current legacy]
+  {:pre [(: current str) current (: legacy (get tuple #(str ...)))] :post [(: % (get tuple #(str ...)))]}
+  "今の級の backup の先 current と、前の backup の先の組 legacy(legacyBackupTargets)を、重複を除いて current を先頭に並べた組にするため。"
+  (var seen #(current))
+  (for [target legacy]
+    (when (and target (not-in target seen))
+      (:= seen (+ seen #(target)))))
+  seen)
+
+
+(defk target-purge-plan [backups bundles now keep-days protected]
+  {:pre [(: backups (get tuple #(BackupStamp ...))) (: bundles (get tuple #(BundleStamp ...))) (: now float) (: keep-days int) (>= keep-days 0)
+         (: protected bool)]
+   :post [(: % TargetPurgePlan)]}
+  "backup の先 1 つの、ある volume の Backup の組 backups と束 BackupVolume の組 bundles について、今 now と保持日数 keep-days から何を消すかを
+   決めるため(protected = 生きた Longhorn の Volume がこの先を指す・今の級の先なら True — 束や最後の完了 backup を消さない):
+   1. 途中の backup(Completed・Error 以外)が在れば何も消さずに unfinished で返す。
+   2. keep-days 以上の expired と未満の fresh に分ける。
+   3. Backup が 0 本なら、protected でなく keep-days 以上の(または刻の無い)空の束だけを消す。
+   4. fresh が在る(混在): 残る最も新しい backup の経過日数を newest-age-days に載せ、expired のうち Error の物と、fresh に Completed が 1 本でも
+      在る時の全 expired を個別削除の対象にする(束と新しい Completed は残す)。
+   5. 全部が expired(fresh が空): protected なら Error だけを個別削除し、protected でなければ全部の束と、束が無い時・ownerReferences の無い
+      (owned=False)expired Backup を全部消す。"
+  (val unfinished (tuple (gfor one backups :if (not-in one.state #(BACKUP-COMPLETED BACKUP-ERROR)) one.name)))
+  (when unfinished
+    (return (TargetPurgePlan :bundles #() :backups #() :unfinished unfinished :newest-age-days None)))
+  (val keep-seconds (* keep-days 86400.0))
+  (when (not backups)
+    (if (or (not bundles) protected)
+        (return (TargetPurgePlan :bundles #() :backups #() :unfinished #() :newest-age-days None))
+        (return (TargetPurgePlan :bundles (tuple (gfor b bundles :if (or (is b.stamp None) (>= (- now b.stamp) keep-seconds)) b.name))
+                                 :backups #() :unfinished #() :newest-age-days None))))
+  (val expired (tuple (gfor one backups :if (and (is-not one.stamp None) (>= (- now one.stamp) keep-seconds)) one)))
+  (val fresh (tuple (gfor one backups :if (or (is one.stamp None) (< (- now one.stamp) keep-seconds)) one)))
+  (when fresh
+    (val fresh-stamps (tuple (gfor one fresh :if (is-not one.stamp None) one.stamp)))
+    (val newest-days (if fresh-stamps (/ (- now (max fresh-stamps)) 86400.0) 0.0))
+    (val has-fresh-done (any (gfor one fresh (= one.state BACKUP-COMPLETED))))
+    (val drop-old (tuple (gfor one expired :if (or (= one.state BACKUP-ERROR) has-fresh-done) one.name)))
+    (return (TargetPurgePlan :bundles #() :backups drop-old :unfinished #() :newest-age-days newest-days)))
+  (when protected
+    (return (TargetPurgePlan :bundles #() :backups (tuple (gfor one expired :if (= one.state BACKUP-ERROR) one.name))
+                             :unfinished #() :newest-age-days None)))
+  (val bundle-names (tuple (gfor b bundles b.name)))
+  (val drop-unowned (tuple (gfor one expired :if (or (not bundle-names) (not one.owned)) one.name)))
+  (TargetPurgePlan :bundles bundle-names :backups drop-unowned :unfinished #() :newest-age-days None))

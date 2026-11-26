@@ -59,7 +59,8 @@
 (import doeff_time [Delay GetMonotonic GetTime SimClock sim-time-handler])
 (import doeff_cluster._shared.intent.workspace_volume_model [AttachWorkspaceVolume CoolIdleWorkspaceVolumes CoolingSweep
                                                            CoolWorkspaceVolume CreateWorkspaceVolume DetachWorkspaceVolume
-                                                           MountWorkspaceVolume PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
+                                                           MountWorkspaceVolume PurgeExpiredWorkspaceBackups PurgeSweep
+                                                           PurgeWorkspaceVolume ReadAttachedWorkspaceVolumes ReadWorkspacePlace
                                                            ReadWorkspaceRoom UmountWorkspaceVolume WorkspaceOutcome WorkspacePlace
                                                            WorkspaceClusterUnreachable WorkspaceRoom WorkspaceRoomShort WorkspaceVolumeRefused
                                                            WorkspaceVolumeSite])
@@ -145,12 +146,13 @@
 
 
 (defrecord Step
-  "筋書きの一手: verb = create・attach・mount・umount・detach・cool・purge・sweep・room・place・attached・wait・owner = 持ち主の id(sweep と wait は使わない)・
-   path = 付ける先(mount と umount)・seconds = 待つ秒(wait)。"
+  "筋書きの一手: verb = create・attach・mount・umount・detach・cool・purge・purge-expired・sweep・room・place・attached・wait・owner = 持ち主の id(sweep と wait は使わない)・
+   path = 付ける先(mount と umount)・seconds = 待つ秒(wait)・excluded = purge-expired で省く持ち主の id。"
   (#^ str verb)
   (setv #^ str owner "")
   (setv #^ (| str None) path None)
-  (setv #^ float seconds 0.0))
+  (setv #^ float seconds 0.0)
+  (setv #^ (get frozenset str) excluded (frozenset)))
 
 
 (defrecord Pending
@@ -204,7 +206,8 @@
                           #^ int [engine-settle 0] #^ bool [engine-stuck False] #^ (| dict None) [sizes None] #^ (| dict None) [fs-sizes None]
                           #^ (| dict None) [used None] #^ int [restore-failures 0] #^ (| str None) [disk-node None]
                           #^ (| Callable None) [before-delete None] #^ bool [target-stalled False] #^ bool [bundle-stalled False]
-                          #^ int [bundle-lag 0] #^ (| dict None) [legacy None] #^ (| str None) [settings-text None]]
+                          #^ int [bundle-lag 0] #^ (| dict None) [legacy None] #^ (| str None) [settings-text None]
+                          #^ (| frozenset None) [unowned None]]
     ;; cannot be a defk: class の作り手(Python が呼ぶ口)
     "相手役の世界を作るため。"
     (setv self.held held
@@ -218,6 +221,7 @@
           self.target-stalled target-stalled self.bundle-stalled bundle-stalled self.bundle-lag bundle-lag
           self.bundles (set) self.target-syncs 0
           self.legacy (dict (or legacy {})) self.legacy-bundles (set) self.targets {}
+          self.unowned (frozenset (or unowned #()))
           self.settings-text (if (is settings-text None) SETTINGS-TEXT settings-text)
           self.doomed (set) self.failed (set) self.faulted (set)
           #^ (get tuple #(str ...)) self.events #()
@@ -458,11 +462,16 @@
   (! (api-answer 200 {"kind" "Status" "status" "Success"})))
 
 
-(defk backup-payload [backup state size [target TARGET]]
-  {:pre [(: backup HeldBackup) (: state str) (: size int) (: target str)] :post [(: % dict)]}
-  "Backup 1 つの GET の本文を綴るため(size = backup が覚える volume の名目の大きさ・target = backup の先)。"
-  {"metadata" {"name" backup.name "labels" {"backup-volume" backup.volume "backup-target" target}}
-   "status" {"state" state "backupCreatedAt" (if (= state "Completed") (! (iso-of backup.created-at)) "")
+(defk backup-payload [backup state size [target TARGET] [owned True]]
+  {:pre [(: backup HeldBackup) (: state str) (: size int) (: target str) (: owned bool)] :post [(: % dict)]}
+  "Backup 1 つの GET の本文を綴るため(size = backup が覚える volume の名目の大きさ・target = backup の先・owned = 束に属するか)。"
+  (val created (! (iso-of backup.created-at)))
+  (val owners (if (and (= state "Completed") owned)
+                  {"ownerReferences" [{"apiVersion" "longhorn.io/v1beta2" "kind" "BackupVolume" "name" (! (bundle-of backup.volume target))}]}
+                  {}))
+  {"metadata" (| {"name" backup.name "creationTimestamp" created "labels" {"backup-volume" backup.volume "backup-target" target}} owners)
+   "status" {"state" state "backupCreatedAt" (if (= state "Completed") created "")
+             "backupTargetName" (if (= state "Completed") target "")
              "url" (if (= state "Completed") (.format "s3://longhorn-workspace@us-east-1/?backup={}&volume={}" backup.name backup.volume) "")
              "volumeSize" (str size)}})
 
@@ -647,28 +656,40 @@
 
 (defk backups-listed [world path]
   {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
-  "Backup の一覧(labelSelector で選ぶ)に答えるため(終わった物と途中の物。前の先を選べば、その先に在る backup)。"
+  "Backup の一覧(labelSelector か全件)に答えるため(終わった物と途中の物。前の先を選べば、その先に在る backup)。"
+  (when (= path BACKUPS-PATH)
+    (var all-items [])
+    (for [one world.held.backups]
+      (:= all-items (+ all-items [(! (backup-payload one one.state (or one.size world.backup-size) TARGET (not-in one.name world.unowned)))])))
+    (for [#(name work) (.items world.backups)]
+      (:= all-items (+ all-items [(! (backup-payload (HeldBackup :volume work.volume :name name :created-at 0.0) "InProgress" world.backup-size TARGET False))])))
+    (for [#(leg-target leg-backups) (.items world.legacy)]
+      (for [one leg-backups]
+        (:= all-items (+ all-items [(! (backup-payload one one.state (or one.size world.backup-size) leg-target (not-in one.name world.unowned)))]))))
+    (return (! (api-answer 200 {"items" all-items}))))
   (val old (! (selected-legacy world path)))
   (when (is-not old None)
     (val volume (get old 0))
     (val target (get old 1))
     (var found [])
     (for [one (get world.legacy target) :if (= one.volume volume)]
-      (:= found (+ found [(! (backup-payload one one.state (or one.size world.backup-size) target))])))
+      (:= found (+ found [(! (backup-payload one one.state (or one.size world.backup-size) target (not-in one.name world.unowned)))])))
     (return (! (api-answer 200 {"items" found}))))
   (val chosen (! (selected-volume path)))
   (var items [])
   (for [one world.held.backups :if (= one.volume chosen)]
-    (:= items (+ items [(! (backup-payload one one.state (or one.size world.backup-size)))])))
+    (:= items (+ items [(! (backup-payload one one.state (or one.size world.backup-size) TARGET (not-in one.name world.unowned)))])))
   (for [#(name work) (.items world.backups) :if (= work.volume chosen)]
-    (:= items (+ items [(! (backup-payload (HeldBackup :volume work.volume :name name :created-at 0.0) "InProgress" world.backup-size))])))
+    (:= items (+ items [(! (backup-payload (HeldBackup :volume work.volume :name name :created-at 0.0) "InProgress" world.backup-size TARGET False))])))
   (! (api-answer 200 {"items" items})))
 
 
 (defk backup-dropped [world name]
   {:pre [(: world LonghornWorld) (: name str)] :post [(: % HttpResponse)]}
-  "Backup の DELETE に答えるため。"
+  "Backup の DELETE に答えるため(今の先と前の先の両方から消す)。"
   (setv world.held.backups (tuple (gfor one world.held.backups :if (!= one.name name) one)))
+  (for [#(target backups) (list (.items world.legacy))]
+    (setv (get world.legacy target) (tuple (gfor one backups :if (!= one.name name) one))))
   (! (api-answer 200 {})))
 
 
@@ -701,19 +722,37 @@
 
 (defk bundles-listed [world path]
   {:pre [(: world LonghornWorld) (: path str)] :post [(: % HttpResponse)]}
-  "BackupVolume の一覧(labelSelector で選ぶ)に答えるため(束の在る volume に束 1 つ — status は同期の読み。前の先の束も)。"
+  "BackupVolume の一覧(labelSelector か全件)に答えるため(束の在る volume に束 1 つ — status は同期の読み。前の先の束も)。"
+  (when (= path BUNDLES-PATH)
+    (var all-bundles [])
+    (for [cur-vol (sorted (| (set world.bundles) (set (gfor one world.held.backups one.volume))))]
+      (when (! (bundle-held? world cur-vol))
+        (:= all-bundles (+ all-bundles [{"metadata" {"name" (! (bundle-of cur-vol)) "labels" {"backup-volume" cur-vol "backup-target" TARGET}}
+                                         "spec" {"volumeName" cur-vol "backupTargetName" TARGET}
+                                         "status" {"lastBackupName" (! (bundle-last world cur-vol))}}]))))
+    (for [#(leg-target leg-backups) (sorted (.items world.legacy))]
+      (val vols (sorted (| (set (gfor #(v t) world.legacy-bundles :if (= t leg-target) v))
+                           (set (gfor one leg-backups one.volume)))))
+      (for [leg-vol vols]
+        (when (! (legacy-bundle-held? world leg-vol leg-target))
+          (:= all-bundles (+ all-bundles [{"metadata" {"name" (! (bundle-of leg-vol leg-target)) "labels" {"backup-volume" leg-vol "backup-target" leg-target}}
+                                           "spec" {"volumeName" leg-vol "backupTargetName" leg-target}
+                                           "status" {"lastBackupName" ""}}])))))
+    (return (! (api-answer 200 {"items" all-bundles}))))
   (val old (! (selected-legacy world path)))
   (when (is-not old None)
     (val volume (get old 0))
     (val target (get old 1))
     (return (! (api-answer 200 {"items" (if (! (legacy-bundle-held? world volume target))
-                                            [{"metadata" {"name" (! (bundle-of volume target))} "spec" {"volumeName" volume}
+                                            [{"metadata" {"name" (! (bundle-of volume target)) "labels" {"backup-volume" volume "backup-target" target}}
+                                              "spec" {"volumeName" volume "backupTargetName" target}
                                               "status" {"lastBackupName" ""}}]
                                             [])}))))
   (val chosen (! (selected-volume path)))
   (val held (and (is-not chosen None) (! (bundle-held? world chosen))))
   (! (api-answer 200 {"items" (if held
-                                  [{"metadata" {"name" (! (bundle-of chosen))} "spec" {"volumeName" chosen}
+                                  [{"metadata" {"name" (! (bundle-of chosen)) "labels" {"backup-volume" chosen "backup-target" TARGET}}
+                                    "spec" {"volumeName" chosen "backupTargetName" TARGET}
                                     "status" {"lastBackupName" (! (bundle-last world chosen))}}]
                                   [])})))
 
@@ -744,16 +783,27 @@
 
 (defk bundle-dropped [world bundle]
   {:pre [(: world LonghornWorld) (: bundle str)] :post [(: % HttpResponse)]}
-  "BackupVolume の DELETE に答えるため(束の backup を全部消す)。"
-  (var volumes [])
+  "BackupVolume の DELETE に答えるため(今の先・前の先のどちらでも、束に属する Completed backup を全部消す — ownerReferences の無い Error・
+   unowned backup は残る〔Longhorn の実動作と同じ〕)。"
+  (var matched [])
   (for [known (| (set world.bundles) (set (gfor one world.held.backups one.volume)))]
     (<- named str (bundle-of known))
     (when (= named bundle)
-      (:= volumes (+ volumes [known]))))
-  (assert (= (len volumes) 1) bundle)
-  (val volume (get volumes 0))
-  (.discard world.bundles volume)
-  (setv world.held.backups (tuple (gfor one world.held.backups :if (!= one.volume volume) one)))
+      (:= matched (+ matched [#(TARGET known)]))))
+  (for [#(leg-target leg-backups) (.items world.legacy)]
+    (for [leg-known (| (set (gfor #(v t) world.legacy-bundles :if (= t leg-target) v)) (set (gfor one leg-backups one.volume)))]
+      (<- leg-named str (bundle-of leg-known leg-target))
+      (when (= leg-named bundle)
+        (:= matched (+ matched [#(leg-target leg-known)])))))
+  (assert (= (len matched) 1) bundle)
+  (val hit-target (get (get matched 0) 0))
+  (val hit-volume (get (get matched 0) 1))
+  (val owned? (fn [one] (and (= one.state "Completed") (not-in one.name world.unowned))))
+  (if (= hit-target TARGET)
+      (do (.discard world.bundles hit-volume)
+          (setv world.held.backups (tuple (gfor one world.held.backups :if (or (!= one.volume hit-volume) (not (owned? one))) one))))
+      (do (.discard world.legacy-bundles #(hit-volume hit-target))
+          (setv (get world.legacy hit-target) (tuple (gfor one (get world.legacy hit-target) :if (or (!= one.volume hit-volume) (not (owned? one))) one)))))
   (! (api-answer 200 {})))
 
 
@@ -800,11 +850,11 @@
     (do (<- answer HttpResponse (snapshot-answer world (cut path (+ (len SNAPSHOTS-PATH) 1) None))) answer)
     (and (= request.method "DELETE") (.startswith path (+ SNAPSHOTS-PATH "/"))) (! (snapshot-dropped world (cut path (+ (len SNAPSHOTS-PATH) 1) None)))
     (and (= request.method "POST") (= path BACKUPS-PATH)) (! (backup-made world request.body))
-    (and (= request.method "GET") (.startswith path (+ BACKUPS-PATH "?"))) (! (backups-listed world path))
+    (and (= request.method "GET") (or (= path BACKUPS-PATH) (.startswith path (+ BACKUPS-PATH "?")))) (! (backups-listed world path))
     (and (= request.method "GET") (.startswith path (+ BACKUPS-PATH "/")))
     (do (<- answer HttpResponse (backup-answer world (cut path (+ (len BACKUPS-PATH) 1) None))) answer)
     (and (= request.method "DELETE") (.startswith path (+ BACKUPS-PATH "/"))) (! (backup-dropped world (cut path (+ (len BACKUPS-PATH) 1) None)))
-    (and (= request.method "GET") (.startswith path (+ BUNDLES-PATH "?"))) (! (bundles-listed world path))
+    (and (= request.method "GET") (or (= path BUNDLES-PATH) (.startswith path (+ BUNDLES-PATH "?")))) (! (bundles-listed world path))
     (and (= request.method "DELETE") (.startswith path (+ BUNDLES-PATH "/"))) (! (bundle-dropped world (cut path (+ (len BUNDLES-PATH) 1) None)))
     (and (= request.method "POST") (= path BUNDLES-PATH)) (! (bundle-made world request.body))
     (and (= request.method "PATCH") (.startswith path (+ BUNDLES-PATH "/")))
@@ -978,6 +1028,9 @@
   (match step.verb
     "wait" (do (<- (Delay step.seconds)) (return "waited"))
     "sweep" (do (<- sweep CoolingSweep (CoolIdleWorkspaceVolumes)) (return (! (sweep-text sweep))))
+    "purge-expired" (do (<- swept PurgeSweep (PurgeExpiredWorkspaceBackups :excluded step.excluded))
+                        (return (.format "purge-expired volumes={} backups={} failed={}"
+                                         (.join "," swept.purged-volumes) (.join "," swept.purged-backups) (.join "," swept.failed))))
     "room" (do (<- room WorkspaceRoom (ReadWorkspaceRoom)) (return (! (room-text room))))
     "place" (do (<- place WorkspacePlace (ReadWorkspacePlace step.owner step.path)) (return (+ "place " place.value)))
     "attached" (do (<- attached tuple (ReadAttachedWorkspaceVolumes))
@@ -1391,6 +1444,76 @@
   (assert (in "Longhorn の volume が在る" (get kept.real 0)) kept.real)
   (assert (in "Longhorn の volume が在る" (get kept.held 0)) kept.held)
   (assert (= kept.api.held.backups #(COLD-BACKUP)) kept.api.held.backups))
+
+
+(deftest test-purge-reaches-legacy-backup-targets-and-unowned-backups
+  ;; 前の先(legacyBackupTargets)にだけ在る keepDays 越えの backup を PurgeWorkspaceVolume が消す(直し前は ALREADY で残し、dir だけ消えた)。
+  ;; ownerReferences の無い Error backup・unowned Completed backup も束と一緒に消える。
+  (val old-err (HeldBackup :volume NAME :name (+ NAME "-err-0") :created-at 0.0 :state "Error"))
+  (val old-unowned (HeldBackup :volume NAME :name (+ NAME "-unowned-0") :created-at 0.0 :state "Completed"))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE)
+                          :legacy {OLD-TARGET #(COLD-BACKUP old-err old-unowned)}
+                          :unowned (frozenset #((+ NAME "-unowned-0")))
+                          :settings-text LEGACY-SETTINGS))
+  (<- ran ApiRan (on-api api #((Step :verb "purge" :owner OWNER) (Step :verb "purge" :owner OWNER)) WORKER-FILES (* 10 DAY)))
+  (assert (= ran.outcomes #("done" "already")) ran.outcomes)
+  (assert (= (get api.legacy OLD-TARGET) #()) api.legacy)
+  (val drops (lfor seen api.seen :if (= seen.method "DELETE") seen.path))
+  (assert (in (+ BUNDLES-PATH "/" (! (bundle-of NAME OLD-TARGET))) drops) drops)
+  (assert (in (+ BACKUPS-PATH "/" old-err.name) drops) drops)
+  (assert (in (+ BACKUPS-PATH "/" old-unowned.name) drops) drops))
+
+
+(deftest test-purge-drops-expired-legacy-and-mixed-backups-while-keeping-fresh
+  ;; 今の先に新しい Completed backup が在り、前の先に keepDays 越え・今の先にも keepDays 越えの古い backup が混在する時:
+  ;; 古い分だけを先に消し、新しい backup が keepDays の内なので断る(呼び手が作業場の dir を消さない)。
+  (val fresh (HeldBackup :volume NAME :name (+ NAME "-cool-9") :created-at (* 9 DAY)))
+  (val old-curr (HeldBackup :volume NAME :name (+ NAME "-first-0") :created-at 0.0))
+  (val old-leg (HeldBackup :volume NAME :name (+ NAME "-old-0") :created-at 0.0))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :backups #(old-curr fresh))
+                          :legacy {OLD-TARGET #(old-leg)}
+                          :settings-text LEGACY-SETTINGS))
+  (<- ran ApiRan (on-api api #((Step :verb "purge" :owner OWNER)) WORKER-FILES (* 10 DAY)))
+  (assert (in "keepDays 7 日を過ぎるまで消さない" (get ran.outcomes 0)) ran.outcomes)
+  (assert (= (get api.legacy OLD-TARGET) #()) api.legacy)
+  (assert (= api.held.backups #(fresh)) api.held.backups))
+
+
+(deftest test-purge-expired-workspace-backups-sweeps-all-targets-and-respects-excluded-and-live-volumes
+  ;; PurgeExpiredWorkspaceBackups は 1 回の全件 list で級の先と前の先の keepDays 越えをまとめて消し、
+  ;; excluded の持ち主・新しい backup・生きた volume の今の先の backup を残す。
+  (val other-name (! (volume-name OTHER)))
+  (val third-owner "c-EXAMPLETHIRDID00000000003")
+  (val third-name (! (volume-name third-owner)))
+  (val fourth-owner "c-EXAMPLEFOURTHID0000000004")
+  (val fourth-name (! (volume-name fourth-owner)))
+  (val old-other (HeldBackup :volume other-name :name (+ other-name "-cool-0") :created-at 0.0))
+  (val old-other-err (HeldBackup :volume other-name :name (+ other-name "-first-0") :created-at 0.0 :state "Error"))
+  (val mixed-old (HeldBackup :volume third-name :name (+ third-name "-first-0") :created-at 0.0))
+  (val mixed-fresh (HeldBackup :volume third-name :name (+ third-name "-cool-9") :created-at (* 9 DAY)))
+  (val legacy-old (HeldBackup :volume fourth-name :name (+ fourth-name "-cool-0") :created-at 0.0))
+  (val warm-vol (HeldVolume :name NAME :formatted True))
+  (val warm-backup (HeldBackup :volume NAME :name (+ NAME "-cool-0") :created-at 0.0))
+  (val api (LonghornWorld (WorkspaceVolumeWorld NODE :volumes #(warm-vol) :backups #(warm-backup old-other old-other-err mixed-old mixed-fresh))
+                          :legacy {OLD-TARGET #(legacy-old)}
+                          :settings-text LEGACY-SETTINGS))
+  ;; fourth-owner を excluded にすると前の先の fourth-owner は飛ばされる。
+  (<- first ApiRan (on-api api #((Step :verb "purge-expired" :excluded (frozenset #(fourth-owner)))) WORKER-FILES (* 10 DAY)))
+  (assert (in (! (bundle-of other-name)) (get first.outcomes 0)) first.outcomes)
+  (assert (in old-other-err.name (get first.outcomes 0)) first.outcomes)
+  (assert (in mixed-old.name (get first.outcomes 0)) first.outcomes)
+  (assert (= (get api.legacy OLD-TARGET) #(legacy-old)) api.legacy)
+  ;; warm-backup と mixed-fresh は残り、old-other・old-other-err・mixed-old は消えた。
+  (assert (= api.held.backups #(warm-backup mixed-fresh)) api.held.backups)
+  ;; excluded 無しで回すと前の先の fourth-owner も消える。
+  (<- second ApiRan (on-api api #((Step :verb "purge-expired")) WORKER-FILES (* 10 DAY)))
+  (assert (in (! (bundle-of fourth-name OLD-TARGET)) (get second.outcomes 0)) second.outcomes)
+  (assert (= (get api.legacy OLD-TARGET) #()) api.legacy)
+  ;; 模擬の答え手(held-workspace-volumes)でも同じ契約で動く。
+  (val sim-world (WorkspaceVolumeWorld NODE :volumes #(warm-vol) :backups #(warm-backup old-other mixed-old mixed-fresh)))
+  (<- sim-ran tuple (on-sim sim-world #((Step :verb "purge-expired" :excluded (frozenset #(third-owner)))) (* 10 DAY) WORKER-FILES))
+  (assert (in other-name (get sim-ran 0)) sim-ran)
+  (assert (= sim-world.backups #(warm-backup mixed-old mixed-fresh)) sim-world.backups))
 
 
 ;; まとめて冷やす検の世界を作る関数(筋書きごとに新しい入れ物): 刻 10 時間に、使い終わりが 0・(9 − 宣言の warmHours)・9・9.5 時間の
