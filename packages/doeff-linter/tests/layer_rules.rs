@@ -2294,6 +2294,137 @@ fn world_handler_list_entries_exist_in_the_foundation_layer() {
     assert_eq!(violation(&report, "architecture.hy::DOEFF132::app.foundation.host:gone")["range"]["start"]["line"], line);
 }
 
+/// DOEFF132 with `:world-handler-places`: additional foundation dir patterns outside `:root` (both flat `<pkg>/foundation` and two-level `<pkg>/*/foundation`)
+/// are accepted as allow-list locations, while still requiring the file and Hy definition to exist and rejecting non-foundation dirs and excluded `tests/` dirs.
+#[test]
+fn world_handler_places_accepts_extra_foundation_dirs_and_rejects_others() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        ("app/billing/entry/main.hy", tags("billing", "entry") + "(defk run [body] body)\n"),
+        ("agent-env/cli/agora_cli/foundation/http.hy", "(defk http-answerers [env] env)\n".to_string()),
+        ("agent-env/cli/agora_cli/daemon/foundation/stop.hy", "(defk request-clock [] 0)\n".to_string()),
+        ("agent-env/cli/agora_cli/tell/entry/tell_main.hy", "(defk main [] 0)\n".to_string()),
+        ("agent-env/cli/agora_cli/foundation/tests/test_http.hy", "(defk helper [] 0)\n".to_string()),
+    ];
+    let extra = r#"
+                   (world-handler "agent-env.cli.agora_cli.foundation.http:http-answerers" :touches [http])
+                   (world-handler "agent-env.cli.agora_cli.daemon.foundation.stop:request-clock" :touches [clock])
+                   (world-handler "agent-env.cli.agora_cli.foundation.http:missing-def" :touches [http])
+                   (world-handler "agent-env.cli.agora_cli.tell.entry.tell_main:main" :touches [http])
+                   (world-handler "agent-env.cli.agora_cli.foundation.tests.test_http:helper" :touches [http])
+                   (world-handler "agent-env.cli.agora_cli.foundation.nowhere:x" :touches [http])
+                   (world-handler "app.billing.entry.main:run" :touches [file])"#;
+    let dir = world_repo_with(&files, extra, "[\"DOEFF132\", \"DOEFF104\", \"DOEFF114\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :world-handler-places [\"agent-env/cli/agora_cli/foundation\" \"agent-env/cli/agora_cli/*/foundation\"]",
+    );
+    std::fs::write(&arch_path, &text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert_eq!(
+        keys(&report, "DOEFF132"),
+        vec![
+            "architecture.hy::DOEFF132::agent-env.cli.agora_cli.foundation.http:missing-def",
+            "architecture.hy::DOEFF132::agent-env.cli.agora_cli.foundation.nowhere:x",
+            "architecture.hy::DOEFF132::agent-env.cli.agora_cli.foundation.tests.test_http:helper",
+            "architecture.hy::DOEFF132::agent-env.cli.agora_cli.tell.entry.tell_main:main",
+            "architecture.hy::DOEFF132::app.billing.entry.main:run",
+        ],
+        "level-1 and level-2 agent-env foundation handlers pass DOEFF132 while missing definitions, non-foundation dirs, and excluded test dirs fail: {}",
+        report
+    );
+    assert!(
+        violation(&report, "architecture.hy::DOEFF132::agent-env.cli.agora_cli.foundation.http:missing-def")["message"]
+            .as_str()
+            .unwrap()
+            .contains("has no definition missing-def")
+    );
+    // Files under `:world-handler-places` are NOT pulled into the layer rules (DOEFF104/DOEFF114).
+    assert!(keys(&report, "DOEFF104").is_empty(), "extra foundation places must not enter layer rules: {}", report);
+    assert!(keys(&report, "DOEFF114").is_empty(), "extra foundation places must not enter layer placement rules: {}", report);
+
+    // Malformed `:world-handler-places` (two `*` segments) is a declaration error (exit code 2).
+    let bad = text.replace("agent-env/cli/agora_cli/*/foundation", "agent-env/*/agora_cli/*/foundation");
+    std::fs::write(&arch_path, bad).unwrap();
+    let (code, _, stderr) = run(dir.path(), &["--output-format", "editor-json", "--no-log"], None);
+    assert_eq!(code, 2, "{}", stderr);
+    assert!(stderr.contains(":world-handler-places"), "{}", stderr);
+}
+
+/// DOEFF137, DOEFF133, and DOEFF106 with `:world-handler-places`: contract tests inside a sub-package root (e.g. `agent-env/cli/tests/` importing
+/// `agora_cli.foundation.*` and `tests.*`) connect to `:world-handlers` entries spelled from the repo root, and `:world-handlers` permits raw I/O
+/// in those foundation files under `:raw-io-roots`.
+#[test]
+fn world_handler_places_contract_tests_and_edge_kinds_follow_subroot_imports() {
+    let files = [
+        ("app/foundation/host.hy", tags("shared", "foundation") + "(defk with-host [body] body)\n"),
+        (
+            "agent-env/cli/agora_cli/foundation/http.hy",
+            "(import httpx)\n(defk http-answerers [env] (httpx.AsyncClient))\n(defk untested-client [] (httpx.AsyncClient))\n".to_string(),
+        ),
+        (
+            "agent-env/cli/agora_cli/daemon/foundation/stop.hy",
+            "(import time)\n(defk request-clock [] (time.monotonic))\n".to_string(),
+        ),
+        (
+            "agent-env/cli/agora_cli/tell/entry/tell_main.hy",
+            "(import subprocess)\n(defk bad-entry [] (subprocess.run [\"true\"]))\n".to_string(),
+        ),
+        // Contract test helper and deftest inside the sub-package root `agent-env/cli`, importing via `agora_cli.*` and `tests.*`.
+        (
+            "agent-env/cli/tests/contract_handlers.hy",
+            "(import agora_cli.foundation.http [http-answerers])\n\
+             (val HTTP-REAL (+ http-answerers.__module__ \":\" http-answerers.__name__))\n(val HTTP-SIM \"sim-http\")\n"
+                .to_string(),
+        ),
+        (
+            "agent-env/cli/tests/test_http_contract.hy",
+            "(import tests.contract_handlers [HTTP-REAL HTTP-SIM])\n\
+             (deftest test-http-answers {:interpreters [HTTP-REAL HTTP-SIM] :marks [\"real_world\"]} (assert True))\n"
+                .to_string(),
+        ),
+        (
+            "app/foundation/tests/test_host_contract.hy",
+            "(import app.foundation.host [with-host])\n\
+             (val HOST (+ with-host.__module__ \":\" with-host.__name__))\n(val SIM \"sim\")\n\
+             (deftest test-host-answers {:interpreters [HOST SIM] :marks [\"real_world\"]} (assert True))\n"
+                .to_string(),
+        ),
+    ];
+    let extra = r#"
+                   (world-handler "agent-env.cli.agora_cli.foundation.http:http-answerers" :touches [http])
+                   (world-handler "agent-env.cli.agora_cli.foundation.http:untested-client" :touches [http])
+                   (world-handler "agent-env.cli.agora_cli.daemon.foundation.stop:request-clock" :touches [clock]
+                     :contract-test (none :repo-test "agent-env/cli/tests/test_http_contract.hy::test-http-answers"))"#;
+    let dir = world_repo_with(&files, extra, "[\"DOEFF106\", \"DOEFF132\", \"DOEFF133\", \"DOEFF137\"]");
+    let arch_path = dir.path().join("architecture.hy");
+    let text = std::fs::read_to_string(&arch_path).unwrap().replace(
+        ":foundation foundation",
+        ":foundation foundation\n  :edge-mark \"real_world\"\n  :raw-io-roots [\"app\" \"agent-env/cli/agora_cli\"]\n  :world-handler-places [\"agent-env/cli/agora_cli/foundation\" \"agent-env/cli/agora_cli/*/foundation\"]",
+    );
+    std::fs::write(&arch_path, &text).unwrap();
+    let (_, report) = editor(dir.path());
+    assert!(keys(&report, "DOEFF132").is_empty(), "all listed agent-env foundation handlers are valid: {}", report);
+    assert_eq!(
+        keys(&report, "DOEFF137"),
+        vec!["architecture.hy::DOEFF137::agent-env.cli.agora_cli.foundation.http:untested-client"],
+        "http-answerers reached via sub-root imports and request-clock with a reasoned waiver pass DOEFF137, while untested-client hits: {}",
+        report
+    );
+    assert!(
+        keys(&report, "DOEFF133").is_empty(),
+        "test-http-answers reaches http-answerers via sub-root imports and carries real_world: {}",
+        report
+    );
+    assert_eq!(
+        keys(&report, "DOEFF106"),
+        vec!["agent-env/cli/agora_cli/tell/entry/tell_main.hy::DOEFF106::bad_entry::subprocess.run"],
+        "raw I/O in listed agent-env foundation modules is allowed while unlisted agent-env modules hit DOEFF106: {}",
+        report
+    );
+}
+
 /// R3: the kind of test is derived from where it reaches — a deftest that reaches a list definition, a :wraps handler, or raw I/O (following definitions)
 /// needs an :edge-mark at the edge, and a deftest that does not reach has no mark locally. A mismatch is DOEFF133 (critical).
 #[test]

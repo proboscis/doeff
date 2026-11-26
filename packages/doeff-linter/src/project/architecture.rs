@@ -19,6 +19,7 @@
 //!                       :touches [http file clock env]           ; what they touch (a closed vocabulary — WorldTouch)
 //!                       :answers [HttpRequest ReadText]          ; effects they answer (optional)
 //!                       :wraps ["doeff_core_effects:os-file-handler"])]  ; doeff real-I/O handlers run inside (optional)
+//!   :world-handler-places ["agent-env/cli/agora_cli/foundation" "agent-env/cli/agora_cli/*/foundation"]  ; additional foundation dir patterns for :world-handlers (DOEFF132, 137)
 //!   :stand-ins [(stand-in "controllers.agora_sim.peers.live_session_peer:with-live-session-peer"  ; a counterpart that answers in place of the real one in emulation
 //!                 :real "doeff_openai.live:with-live-session")]  ; the real handler the counterpart stands in for (DOEFF137 counts the contract tests per pair)
 //!   :exclude ["tests" "__pycache__" "conftest.py"]
@@ -39,7 +40,7 @@ use serde::{Deserialize, Serialize};
 use super::names::hy_mangle;
 use super::rule::ProjectRule;
 use super::semantic::{LineExample, SemanticLine, SemanticQuestion};
-use super::layers::{normalize_dir, LayerDescription, LayersSection, PathPatterns, RolesSection};
+use super::layers::{normalize_dir, LayerDescription, LayersSection, PathPatterns, PlacePattern, RolesSection};
 
 /// The declaration of one layer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -857,6 +858,11 @@ pub struct Architecture {
     pub wire_modules: Vec<String>,
     /// The allowlist of definitions allowed to touch the outside world (`:world-handlers` — empty = not declared).
     pub world_handlers: Vec<WorldHandler>,
+    /// Additional dir location patterns from the repo root where allowlist definitions (`:world-handlers`) may be placed,
+    /// beyond the `:foundation` layer under `:root` (`:world-handler-places ["agent-env/cli/agora_cli/foundation" "agent-env/cli/agora_cli/*/foundation"]`).
+    /// Each entry uses the same location pattern syntax as layer paths (`PlacePattern` — literal segments and at most one `*` segment).
+    /// Does not expand the layer rules (DOEFF101-117, 140) to those dirs; used by DOEFF132, DOEFF133, and DOEFF137.
+    pub world_handler_places: Vec<String>,
     /// The roster of counterparts (`:stand-ins` — empty = not declared; DOEFF137).
     pub stand_ins: Vec<StandIn>,
     /// Components at the boundary where the emulated environment reaches the real outside world (`:boundary-parts` — empty = not declared; DOEFF106).
@@ -1111,6 +1117,34 @@ impl Architecture {
     /// Modules of the allowlist definitions (mangled dotted spelling) — where raw side effects are allowed (DOEFF106).
     pub fn world_modules(&self) -> BTreeSet<String> {
         self.world_handlers.iter().map(|h| h.definition.mangled_module()).collect()
+    }
+
+    /// Validated additional foundation location patterns for `:world-handlers` (`:world-handler-places` — DOEFF132).
+    pub fn world_handler_place_patterns(&self) -> Vec<PlacePattern> {
+        self.world_handler_places.iter().filter_map(|p| PlacePattern::parse(p).ok()).collect()
+    }
+
+    /// Ancestor directory prefixes of `:world-handler-places` (deepest first), paired as `(dir prefix with trailing '/', mangled dotted module prefix)`.
+    /// Used by the definition-edge graph (DOEFF133, 137) so files inside a sub-package root (e.g. `agent-env/cli/tests/` importing `agora_cli.foundation.*`)
+    /// resolve targets written relative to that sub-package root to the index's repo-root-relative `qualified_name`. Empty when `:world-handler-places` is not declared.
+    pub fn world_handler_subroots(&self) -> Vec<(String, String)> {
+        let mut dirs: BTreeSet<String> = BTreeSet::new();
+        for pattern in self.world_handler_place_patterns() {
+            let base = pattern.base();
+            let parts: Vec<&str> = base.split('/').filter(|p| !p.is_empty()).collect();
+            for len in 1..=parts.len() {
+                dirs.insert(parts[..len].join("/"));
+            }
+        }
+        let mut out: Vec<(String, String)> = dirs
+            .into_iter()
+            .map(|dir| {
+                let module_prefix = mangle_dotted(&dir.replace('/', "."));
+                (format!("{}/", dir), module_prefix)
+            })
+            .collect();
+        out.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(&b.0)));
+        out
     }
 
     /// Modules of boundary components (mangled dotted spelling) -> the kinds of touches allowed (DOEFF106 does not make evidence within the kinds a hit).
@@ -1415,6 +1449,7 @@ impl<'a> Parser<'a> {
             rejected_plain_callable_reasons: Vec::new(),
             wire_modules: Vec::new(),
             world_handlers: Vec::new(),
+            world_handler_places: Vec::new(),
             stand_ins: Vec::new(),
             boundary_parts: Vec::new(),
             raw_io_roots: None,
@@ -1487,6 +1522,22 @@ impl<'a> Parser<'a> {
                 }
                 ":wire-modules" => arch.wire_modules = self.module_patterns(value, ":wire-modules"),
                 ":world-handlers" => arch.world_handlers = self.world_handlers(value),
+                ":world-handler-places" => {
+                    let mut places = Vec::new();
+                    for raw in self.names(value, ":world-handler-places") {
+                        match PlacePattern::parse(&raw) {
+                            Ok(pattern) => {
+                                if places.contains(&pattern.text) {
+                                    self.problem(value, &format!("{} in :world-handler-places is written twice", raw));
+                                } else {
+                                    places.push(pattern.text);
+                                }
+                            }
+                            Err(reason) => self.problem(value, &format!(":world-handler-places: {}", reason)),
+                        }
+                    }
+                    arch.world_handler_places = places;
+                }
                 ":stand-ins" => arch.stand_ins = self.stand_ins(value),
                 ":boundary-parts" => arch.boundary_parts = self.boundary_parts(value),
                 ":raw-io-roots" => {

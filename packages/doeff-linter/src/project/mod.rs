@@ -495,6 +495,14 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 }
             }
             let layer_files = settings.layers.as_ref().map(|layers| collect_layer_files(root, layers)).unwrap_or_default();
+            let world_place_files: Vec<(String, SourceFile)> = match (&settings.architecture, &settings.layers) {
+                (Some(architecture), Some(layers))
+                    if enabled.contains(&ProjectRule::WorldHandlerMisplaced) && !architecture.world_handler_places.is_empty() =>
+                {
+                    collect_world_handler_place_files(root, architecture, layers)
+                }
+                _ => Vec::new(),
+            };
             // The semantic rules' questions are built only from the named files (focus): a question is built from one definition's own file, and the hits outside
             // the named paths are dropped before reporting anyway. Building them for every layer file kept a second Hy index of those files and a question JSON per
             // definition (about 31,000 definitions in agora-controllers) next to the whole-repo index, and a five-file run went past 4 GiB.
@@ -521,7 +529,7 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                 .into_iter()
                 .filter(|file| in_scope(&file.path, scope))
                 .collect();
-            indexes = crate::timing::timed("hy-index", || whole_hy_index(root, settings, enabled, &raw, &layer_files, &env_files, wants_raw, scope));
+            indexes = crate::timing::timed("hy-index", || whole_hy_index(root, settings, enabled, &raw, &layer_files, &world_place_files, &env_files, wants_raw, scope));
             let hy = &indexes;
             let effect_world = crate::timing::timed("effect-world", || effect_world_for(root, settings, enabled, None));
             if let Some(layers) = &settings.layers {
@@ -582,7 +590,9 @@ pub fn run_with(root: &Path, settings: &ProjectSettings, enabled: &BTreeSet<Proj
                         drafts.extend(judge_unused_dependencies(root, architecture, &crossings));
                     }
                     if enabled.contains(&ProjectRule::WorldHandlerMisplaced) && !architecture.world_handlers.is_empty() {
-                        drafts.extend(crate::timing::timed("world-handler-places", || judge_world_handler_places(root, architecture, layers, &layer_files, hy)));
+                        drafts.extend(crate::timing::timed("world-handler-places", || {
+                            judge_world_handler_places(root, architecture, layers, &layer_files, &world_place_files, hy)
+                        }));
                     }
                     if enabled.contains(&ProjectRule::TestKindMismatch) && !architecture.world_handlers.is_empty() {
                         let (found, errors) = judge_test_kinds(root, architecture, hy, &raw.catalog);
@@ -1315,6 +1325,7 @@ fn whole_hy_index(
     enabled: &BTreeSet<ProjectRule>,
     raw: &RawSettings,
     layer_files: &[LayerFile],
+    world_place_files: &[(String, SourceFile)],
     env_files: &[SourceFile],
     wants_raw: bool,
     scope: Option<&[PathBuf]>,
@@ -1355,6 +1366,7 @@ fn whole_hy_index(
         let paths: BTreeSet<PathBuf> = layer_files
             .iter()
             .map(|f| &f.file)
+            .chain(world_place_files.iter().map(|(_, f)| f))
             .chain(env_files.iter())
             .filter(|f| f.language == Language::Hy)
             .map(|f| f.path.clone())
@@ -1621,6 +1633,38 @@ fn collect_layer_files(root: &Path, layers: &LayerSettings) -> Vec<LayerFile> {
     let mut out: Vec<LayerFile> = found.into_values().collect();
     out.sort_by(|a, b| (a.site.layer, &a.file.rel).cmp(&(b.site.layer, &b.file.rel)));
     out
+}
+
+/// Collects modules under additional foundation locations declared in `:world-handler-places` (DOEFF132).
+/// Uses the same extension and exclude rules as `classify_layer_file` without adding these files to the layer rules' population.
+fn collect_world_handler_place_files(
+    root: &Path,
+    architecture: &architecture::Architecture,
+    layers: &LayerSettings,
+) -> Vec<(String, SourceFile)> {
+    let patterns = architecture.world_handler_place_patterns();
+    if patterns.is_empty() {
+        return Vec::new();
+    }
+    let bases: BTreeSet<String> = patterns.iter().map(|p| p.base()).collect();
+    let mut found: BTreeMap<String, (String, SourceFile)> = BTreeMap::new();
+    for base in bases {
+        for path in walk_files(&root.join(&base)) {
+            let Some(rel) = relative_path(root, &path) else { continue };
+            if found.contains_key(&rel) {
+                continue;
+            }
+            let Some(language) = language_of(Path::new(&rel)) else { continue };
+            let Some(extension) = Path::new(&rel).extension().and_then(|e| e.to_str()) else { continue };
+            if !layers.extensions.contains(extension) || rel.split('/').any(|part| layers.exclude.contains(part)) {
+                continue;
+            }
+            if patterns.iter().any(|p| p.matches(&rel).is_some()) {
+                found.insert(rel.clone(), (module_of(&rel), SourceFile { rel, path, language }));
+            }
+        }
+    }
+    found.into_values().collect()
 }
 
 /// The module location index of a single-file run — applies the same procedure as `collect_layer_files` (under the declared locations it is decided by path; outside the declaration and under infer_root it is inferred from contents)
@@ -2774,13 +2818,14 @@ fn judge_unused_dependencies(root: &Path, architecture: &architecture::Architect
     drafts
 }
 
-/// DOEFF132: each definition of the allow-list one by one — whether the module is in a layer location, whether that layer is foundation, and, for a Hy module, whether the definition exists.
+/// DOEFF132: each definition of the allow-list one by one — whether the module is in a layer location (layer foundation) or in `:world-handler-places`, and, for a Hy module, whether the definition exists.
 /// Positioned at the element of the list in architecture.hy (whole run only).
 fn judge_world_handler_places(
     root: &Path,
     architecture: &architecture::Architecture,
     layers: &layers::LayerSettings,
     layer_files: &[LayerFile],
+    world_place_files: &[(String, SourceFile)],
     hy: &HashMap<String, HyFileIndex>,
 ) -> Vec<Draft> {
     let rel = declared_rel(root, &architecture.path);
@@ -2788,23 +2833,27 @@ fn judge_world_handler_places(
     let mut drafts = Vec::new();
     for handler in &architecture.world_handlers {
         let module = handler.definition.mangled_module();
+        let target = handler.definition.target();
+        let check_definition = |file_rel: &str| match hy.get(file_rel) {
+            Some(index) if !index.definitions.iter().any(|d| d.qualified_name == target) => {
+                Some(format!("{} has no definition {}", file_rel, handler.definition.name))
+            }
+            _ => None,
+        };
         let file = layer_files.iter().find(|f| architecture::mangle_dotted(&f.module) == module);
         let problem = match file {
-            None => Some(format!("module {} is not in a layer location (no such module, or a location outside the layers)", handler.definition.module)),
             Some(file) => {
                 let layer = &layers.layers[file.site.layer.0].name;
                 if Some(layer.as_str()) != foundation {
                     Some(format!("{} is in layer {} — place it only in the foundation layer", file.file.rel, layer))
                 } else {
-                    let target = handler.definition.target();
-                    match hy.get(&file.file.rel) {
-                        Some(index) if !index.definitions.iter().any(|d| d.qualified_name == target) => {
-                            Some(format!("{} has no definition {}", file.file.rel, handler.definition.name))
-                        }
-                        _ => None,
-                    }
+                    check_definition(&file.file.rel)
                 }
             }
+            None => match world_place_files.iter().find(|(m, _)| architecture::mangle_dotted(m) == module) {
+                Some((_, file)) => check_definition(&file.rel),
+                None => Some(format!("module {} is not in a layer location (no such module, or a location outside the layers)", handler.definition.module)),
+            },
         };
         if let Some(problem) = problem {
             let spelling = handler.definition.spelling();
@@ -2945,12 +2994,31 @@ fn definition_graph<'h>(architecture: &architecture::Architecture, hy: &'h HashM
     definition_graph_with(architecture, hy, &|_| false)
 }
 
+/// Resolves a reference/call target written in file `rel` against `by_name` (which stores repo-root-relative `qualified_name`s).
+/// When `target` is not directly in `by_name` and `subroots` (from `:world-handler-places`) has a directory prefix containing `rel`,
+/// retries with that subroot's mangled module prefix (so e.g. `agent-env/cli/tests/` importing `agora_cli.foundation.http` connects to `agent_env.cli.agora_cli.foundation.http`).
+fn resolve_in_by_name(rel: &str, target: &str, by_name: &HashMap<&str, usize>, subroots: &[(String, String)]) -> Option<usize> {
+    if let Some(&node) = by_name.get(target) {
+        return Some(node);
+    }
+    for (dir_prefix, mod_prefix) in subroots {
+        if rel.starts_with(dir_prefix) {
+            let qualified = format!("{}.{}", mod_prefix, target);
+            if let Some(&node) = by_name.get(qualified.as_str()) {
+                return Some(node);
+            }
+        }
+    }
+    None
+}
+
 /// Builds the graph of edges between definitions, and among names outside the index, leaves the references that foreign accepts in the `foreign` field (not as edges — the reading side decides).
 fn definition_graph_with<'h>(
     architecture: &architecture::Architecture,
     hy: &'h HashMap<String, HyFileIndex>,
     foreign: &dyn Fn(&str) -> bool,
 ) -> DefinitionGraph<'h> {
+    let subroots = architecture.world_handler_subroots();
     let listed: HashMap<String, (String, Vec<architecture::WorldTouch>)> =
         architecture.world_handlers.iter().map(|h| (h.definition.target(), (h.definition.spelling(), h.touches.clone()))).collect();
     let catalog = architecture.world_catalog();
@@ -3027,7 +3095,7 @@ fn definition_graph_with<'h>(
             file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| carriers.contains(t))).map(|c| &c.form_range).collect();
         let in_carrier = |range: &Range| carrier_forms.iter().any(|form| range_inside(range, form));
         // Look only at names that become edges (index definitions or :wraps handlers) — do not look up the owner definitions of other names.
-        let known = |t: &str| by_name.contains_key(t) || wrapped.contains_key(t) || runners.contains(t);
+        let known = |t: &str| resolve_in_by_name(rel, t, &by_name, &subroots).is_some() || wrapped.contains_key(t) || runners.contains(t);
         let interesting = |t: &str| known(t) || foreign(t);
         // A reference that only inspects a value (a comparison form or an operand of assert — the index's `Reference::inspected`) does not call, wrap or pass the named value, so
         // it is not an edge. References that call, put in a with-handlers list, pass as an argument of another definition, or read an attribute outside a comparison are edges as before.
@@ -3061,7 +3129,7 @@ fn definition_graph_with<'h>(
                         *slot = Some(spelling.clone());
                     }
                 }
-            } else if let Some(&callee) = by_name.get(target) {
+            } else if let Some(callee) = resolve_in_by_name(rel, target, &by_name, &subroots) {
                 if callee != owner {
                     if is_carried { carried[callee].push(owner) } else { callers[callee].push(owner) }
                 }
@@ -3167,6 +3235,7 @@ fn judge_test_kinds(
         .filter(|rel| hy[**rel].definitions.iter().any(|d| d.kind == DefinitionKind::Deftest))
         .filter_map(|rel| std::fs::read_to_string(root.join(rel.as_str())).ok().map(|source| (rel.to_string(), FileMarks::read(&source))))
         .collect();
+    let subroots = architecture.world_handler_subroots();
     let mut tables: HashMap<String, HashMap<String, Vec<String>>> = HashMap::new();
     for rel in &graph.rels {
         let Some(marks) = marks_of.get(rel.as_str()) else { continue };
@@ -3182,12 +3251,15 @@ fn judge_test_kinds(
                 else {
                     continue;
                 };
-                let Some(&constant) = by_name.get(name.as_str()) else { continue };
-                let (owner_rel, _) = graph.nodes[constant];
+                let Some(constant) = resolve_in_by_name(rel, &name, &by_name, &subroots) else { continue };
+                let (owner_rel, owner_idx) = graph.nodes[constant];
                 let table = tables.entry(owner_rel.to_string()).or_insert_with(|| interpreter_table(root, owner_rel, &hy[owner_rel]));
-                let assemblies = table.get(&name).cloned().unwrap_or_default();
+                let constant_name = &hy[owner_rel].definitions[owner_idx].qualified_name;
+                let assemblies = table.get(&name).or_else(|| table.get(constant_name)).cloned().unwrap_or_default();
                 for target in std::iter::once(name).chain(assemblies) {
-                    if let Some(&callee) = by_name.get(target.as_str()) {
+                    if let Some(callee) =
+                        resolve_in_by_name(owner_rel, &target, &by_name, &subroots).or_else(|| resolve_in_by_name(rel, &target, &by_name, &subroots))
+                    {
                         graph.callers[callee].push(first + index);
                     } else if python.names_function(&target) {
                         graph.foreign.push((first + index, target, false));
@@ -3341,7 +3413,8 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
     // Seeds are the definition of the name (if in the index), the definitions that name it directly (call, pass as a value, read an attribute — excluding inspection-only references and imports), and
     // the definitions that spell it as an interpreter name string (`"module:name"` / `"module:name@<variant>"`), followed in reverse. A real one outside the index (such as doeff's
     // handler) has no definition node, so only the definitions that name it become seeds.
-    let spelled = if judged_stand_ins.is_empty() { HashMap::new() } else { spelled_handlers(root, &graph, hy) };
+    let subroots = architecture.world_handler_subroots();
+    let spelled = if judged_stand_ins.is_empty() { HashMap::new() } else { spelled_handlers(root, &graph, hy, &node_of, &subroots) };
     let reach_of = |target: &str| -> Vec<bool> {
         let mut seeds = vec![false; graph.nodes.len()];
         if let Some(&node) = node_of.get(target) {
@@ -3350,6 +3423,13 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
         for &node in spelled.get(target).into_iter().flatten() {
             seeds[node] = true;
         }
+        let matches_target = |rel: &str, candidate: &str| -> bool {
+            candidate == target
+                || subroots.iter().any(|(dir_prefix, mod_prefix)| {
+                    rel.starts_with(dir_prefix)
+                        && target.strip_prefix(mod_prefix.as_str()).and_then(|rest| rest.strip_prefix('.')) == Some(candidate)
+                })
+        };
         for rel in &graph.rels {
             let file = &hy[*rel];
             let first = graph.base[rel.as_str()];
@@ -3357,9 +3437,9 @@ fn judge_contract_tests(root: &Path, architecture: &architecture::Architecture, 
             let named = file
                 .references
                 .iter()
-                .filter(|r| r.target.as_deref() == Some(target) && !r.inspected && !in_import(&r.range))
+                .filter(|r| r.target.as_deref().is_some_and(|t| matches_target(rel, t)) && !r.inspected && !in_import(&r.range))
                 .filter_map(|r| innermost_definition(&file.definitions, &r.range))
-                .chain(file.calls.iter().filter(|c| c.target.as_deref() == Some(target)).filter_map(|c| c.caller));
+                .chain(file.calls.iter().filter(|c| c.target.as_deref().is_some_and(|t| matches_target(rel, t))).filter_map(|c| c.caller));
             for owner in named {
                 seeds[first + owner] = true;
             }
@@ -3435,7 +3515,13 @@ fn interpreter_table(root: &Path, rel: &str, file: &HyFileIndex) -> HashMap<Stri
 /// String literals inside a definition that are interpreter-name spellings `"module:name"` / `"module:name@<variant>"` — fully qualified name -> the clauses holding that string
 /// (the counterpart pairs of DOEFF137). A contract test's assembly names the interpreter with a constant of the name string and connects it to the handler through a name -> assembly table,
 /// so the constant's definition does not reference the handler (`(val OS-CONSOLE "controllers.foundation.console:os-console")`) — the spelling itself counts as naming it.
-fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, HyFileIndex>) -> HashMap<String, Vec<usize>> {
+fn spelled_handlers(
+    root: &Path,
+    graph: &DefinitionGraph,
+    hy: &HashMap<String, HyFileIndex>,
+    node_of: &HashMap<&str, usize>,
+    subroots: &[(String, String)],
+) -> HashMap<String, Vec<usize>> {
     use doeff_indexer::hy_index::reader::{Form, Node, Reader, StrKind};
     let mut out: HashMap<String, Vec<usize>> = HashMap::new();
     for rel in &graph.rels {
@@ -3465,7 +3551,18 @@ fn spelled_handlers(root: &Path, graph: &DefinitionGraph, hy: &HashMap<String, H
                 .max_by_key(|(_, d)| d.full_range.start)
                 .map(|(index, _)| index);
             if let Some(owner) = owner {
-                out.entry(named.target()).or_default().push(first + owner);
+                let raw_target = named.target();
+                let resolved = if node_of.contains_key(raw_target.as_str()) {
+                    raw_target
+                } else {
+                    subroots
+                        .iter()
+                        .filter(|(dir_prefix, _)| rel.starts_with(dir_prefix))
+                        .map(|(_, mod_prefix)| format!("{}.{}", mod_prefix, raw_target))
+                        .find(|qualified| node_of.contains_key(qualified.as_str()))
+                        .unwrap_or(raw_target)
+                };
+                out.entry(resolved).or_default().push(first + owner);
             }
         }
     }
