@@ -1654,6 +1654,81 @@ fn only_the_assembly_layer_may_read_a_dependency_protocol() {
 }
 
 #[test]
+fn forbid_shared_service_imports_blocks_shared_reading_services_and_keeps_default() {
+    let build = |extra_arch: &str, files: &[(&str, String)]| {
+        let dir = tempfile::TempDir::new().unwrap();
+        let arch = format!(
+            r#"(defarchitecture sample
+  :root "app"
+  :layers [(layer core :roles [judgment type] :imports [core intent])
+           (layer intent :roles [intent type] :imports [intent] :types-only True)
+           (layer protocol :roles [protocol] :imports [protocol intent foundation])
+           (layer foundation :roles [foundation] :imports [foundation])]
+  :shared "shared"
+  :foundation foundation{extra_arch})
+(defservice billing "Billing" {{:layers [core intent protocol]}})
+"#
+        );
+        std::fs::write(dir.path().join("architecture.hy"), arch).unwrap();
+        std::fs::write(dir.path().join("pyproject.toml"), "[tool.doeff-linter]\nenable = [\"DOEFF101\", \"DOEFF116\", \"DOEFF117\"]\n").unwrap();
+        for (rel, text) in files {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        dir
+    };
+    let rejecting_files = [
+        ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
+        ("app/billing/core/decide.hy", tags("billing", "judgment") + "(import app.shared.intent.common [Common])\n(defn decide [] 1)\n"),
+        ("app/foundation/io.hy", tags("io", "foundation") + "(defn send [] 1)\n"),
+        // Rejecting: shared intent and shared core import from service billing.
+        ("app/shared/intent/common.hy", tags("shared", "type") + "(import app.billing.intent.charge [Charge])\n(defclass Common [])\n"),
+        ("app/shared/core/helper.hy", tags("shared", "judgment") + "(import app.shared.intent.common [Common])\n(import app.billing.core.decide [decide])\n(defn help [] 1)\n"),
+        // Passing: shared protocol imports foundation.
+        ("app/shared/protocol/wire.hy", tags("shared", "protocol") + "(import app.foundation.io [send])\n(defn wire [] 1)\n"),
+    ];
+    // With :forbid-shared-service-imports True, shared -> service imports fail DOEFF116 while shared -> shared, shared -> foundation, and service -> shared pass.
+    let dir = build("\n  :forbid-shared-service-imports True", &rejecting_files);
+    let (code, report) = editor(dir.path());
+    assert_eq!(code, 1, "{}", report);
+    assert!(keys(&report, "DOEFF101").is_empty(), "{}", report);
+    assert!(keys(&report, "DOEFF117").is_empty(), "{}", report);
+    assert_eq!(
+        keys(&report, "DOEFF116"),
+        vec![
+            "app/shared/core/helper.hy::DOEFF116::app.billing.core.decide.decide",
+            "app/shared/intent/common.hy::DOEFF116::app.billing.intent.charge.Charge",
+        ]
+    );
+    let hit = violation(&report, "app/shared/intent/common.hy::DOEFF116::app.billing.intent.charge.Charge");
+    assert!(hit["message"].as_str().unwrap().contains(":forbid-shared-service-imports"), "{}", hit["message"]);
+    assert!(hit["explanation"]["reason"].as_str().unwrap().contains(":forbid-shared-service-imports"), "{}", hit["explanation"]["reason"]);
+    assert!(hit["hint"].as_str().unwrap().contains("shared cannot depend on a service"), "{}", hit["hint"]);
+    assert!(!hit["hint"].as_str().unwrap().contains(":depends-on"), "{}", hit["hint"]);
+
+    // Passing fixture: shared only imports shared and foundation, and service imports shared -> 0 violations.
+    let passing_files = [
+        ("app/billing/intent/charge.hy", tags("billing", "intent") + "(defclass Charge [])\n"),
+        ("app/billing/core/decide.hy", tags("billing", "judgment") + "(import app.shared.intent.common [Common])\n(defn decide [] 1)\n"),
+        ("app/foundation/io.hy", tags("io", "foundation") + "(defn send [] 1)\n"),
+        ("app/shared/intent/common.hy", tags("shared", "type") + "(defclass Common [])\n"),
+        ("app/shared/core/helper.hy", tags("shared", "judgment") + "(import app.shared.intent.common [Common])\n(defn help [] 1)\n"),
+        ("app/shared/protocol/wire.hy", tags("shared", "protocol") + "(import app.foundation.io [send])\n(defn wire [] 1)\n"),
+    ];
+    let pass_dir = build("\n  :forbid-shared-service-imports True", &passing_files);
+    let (code, report) = editor(pass_dir.path());
+    assert_eq!(code, 0, "{}", report);
+    assert!(keys(&report, "DOEFF116").is_empty(), "{}", report);
+
+    // Default (key omitted) preserves existing behavior: shared importing a service is not flagged by DOEFF116.
+    let default_dir = build("", &rejecting_files);
+    let (code, report) = editor(default_dir.path());
+    assert_eq!(code, 0, "{}", report);
+    assert!(keys(&report, "DOEFF116").is_empty(), "{}", report);
+}
+
+#[test]
 fn placed_layers_depend_only_on_placed_modules() {
     // Modules of the :placed-dependencies layers (service and shared) do not read modules outside the layer locations under root.
     let dir = tempfile::TempDir::new().unwrap();
