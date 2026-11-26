@@ -106,6 +106,9 @@
                               (EnvEntry :name "WORKER_DOEFF_URL" :value (str (/ home "boot" "doeff.git")))
                               (EnvEntry :name "WORKER_VERSION_FILE" :value (str version-file))
                               (EnvEntry :name "DOEFF_KEEPER_DIR" :value (str (/ home "keeper")))
+                              ;; bytecode の保存先は検の dir に置く(呼び手の DOEFF_HY_CODE_STORE を継ぐと、新しい世代の掃除が
+                              ;; 呼び手の共有の保存先を歩いて数分かかり、拍の 1 周(committed)が待ちの上限に間に合わない)。
+                              (EnvEntry :name "DOEFF_HY_CODE_STORE" :value (str (/ home "code-store")))
                               (EnvEntry :name "KEEPER_TICK_SECONDS" :value "1")
                               (EnvEntry :name "POD_UID" :value "pod-swap")
                               (EnvEntry :name "DRAIN_DEADLINE" :value drain-deadline)
