@@ -315,6 +315,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "doeff-complexity"
+version = "0.1.0"
+dependencies = [
+ "doeff-indexer",
+ "serde",
+ "serde_json",
+ "toml",
+]
+
+[[package]]
 name = "doeff-indexer"
 version = "0.2.0"
 dependencies = [
@@ -338,6 +348,7 @@ dependencies = [
  "chrono",
  "clap",
  "colored",
+ "doeff-complexity",
  "doeff-indexer",
  "libc",
  "memchr",
