@@ -755,6 +755,9 @@ fn main() -> ExitCode {
     if argv.get(1).map(String::as_str) == Some("fix") {
         return run_fix(&argv);
     }
+    if argv.get(1).map(String::as_str) == Some("complexity") {
+        return doeff_complexity::run_cli(argv.into_iter().skip(2));
+    }
     // A process that was handed the cleanup of the fact cache's upper limit (it does not take the machine's check slot -- no hook is waiting).
     if argv.get(1).map(String::as_str) == Some(doeff_linter::project::facts_cache::SWEEP_COMMAND) {
         return doeff_linter::project::facts_cache::run_handed_sweep(&argv[2..]);

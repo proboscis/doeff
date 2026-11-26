@@ -57,6 +57,9 @@ cache-keys = [
     { file = "../doeff-indexer/Cargo.lock" },
     { file = "../doeff-indexer/src/**/*.rs" },
     { file = "../doeff-indexer/data/**/*.json" },
+    { file = "../doeff-complexity/Cargo.toml" },
+    { file = "../doeff-complexity/Cargo.lock" },
+    { file = "../doeff-complexity/src/**/*.rs" },
 ]
 
 # build.rs embeds the doeff commit this binary was built from (`--version`). The build entry decides that commit itself and puts it in the
