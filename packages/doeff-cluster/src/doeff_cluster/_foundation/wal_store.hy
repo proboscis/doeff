@@ -33,17 +33,23 @@
     ;; snapshot・log を求める(注記が無いと .pyi に欄の型が出ず、使い手の型検査で WalStore が ByteLog を満たさない — #2972)。
     (setv #^ str self.directory directory #^ int self.max-log-bytes max-log-bytes #^ bool self.sync sync
           #^ str self.snapshot (posixpath.join directory "snapshot.json") #^ str self.log (posixpath.join directory "wal.jsonl")
-          #^ (get dict #(str object)) self.kv {} #^ int self.seq 0
+          #^ (get dict #(str object)) self.kv {} #^ bool self.has-table False #^ int self.seq 0
           #^ (get list float) self.fsync-seconds []
           #^ (| (get dict #(str (| int str))) None) self.recovered None))
 
   (defn #^ (get dict #(str object)) table [self]
-    "いま耐久になっている全部のキーの表(写さない — 置き場の口がその場で当てて進める)。"
+    "いま耐久になっている全部のキーの表(写さない — 置き場の口がその場で当てて進める)。release-table 後は空の dict。"
     self.kv)
 
   (defn #^ None replace-table [self #^ (get dict #(str object)) kv]
-    "表を置き換える — 置き場の口が読み直した表と、以前の形の file から移した表を置くため。"
-    (setv self.kv kv))
+    "表を置き換える — 以前の形の file から移した表を checkpoint で書き出す前に渡すため。"
+    (setv self.kv kv
+          self.has-table True))
+
+  (defn #^ None release-table [self]
+    "memory 上の重複 KV 表を解放する — 以降のまとめ直し(durable-checkpoint)は disk の snapshot + WAL を streaming で合流する。"
+    (setv self.kv {}
+          self.has-table False))
 
   (defn #^ (| (get dict #(str (| int str))) None) recovery [self]
     "読み直しで最後の読めない行を捨てた時の記録(捨てていなければ None)— 起動が 1 行の報告に出すため。"

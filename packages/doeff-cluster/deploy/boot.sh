@@ -344,9 +344,10 @@ doeff_boot_roots_gc() {
   fi
   set -- --boot "$boot" --current "$sha"
   [ -z "${DOEFF_BOOT_ROOTS_KEEP:-}" ] || set -- "$@" --keep "$DOEFF_BOOT_ROOTS_KEEP"
-  # uv の cache の錠を持たない(--no-cache — doeff_uv_cache_upkeep と同じ)。道具は標準の library だけを使う。
-  nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$gc_tool" gc "$@" </dev/null \
-    >"$boot/.doeff-boot-roots.log" 2>&1 &
+  # 道具は標準の library だけを使うので uv run を挟まず venv の python -I を直接起こす(uv の常駐 memory を省き、double-fork で
+  # PID 1 の tini に回収させて exec 後の [uv] <defunct> を残さない)。root の錠 fd 7 も継がない。
+  (nice -n 19 "$root/.venv/bin/python" -I "$gc_tool" gc "$@" </dev/null 7<&- \
+    >"$boot/.doeff-boot-roots.log" 2>&1 &)
   echo "boot: 古い版の root の片付けを背後で起こした(log $boot/.doeff-boot-roots.log)" >&2
 }
 
@@ -360,9 +361,9 @@ doeff_python_installs_gc() {
   if [ ! -f "$installs_tool" ] || [ ! -x "$root/.venv/bin/python" ] || [ ! -d "$UV_PYTHON_INSTALL_DIR" ]; then
     return 0
   fi
-  # uv の cache の錠を持たない(--no-cache — doeff_boot_roots_gc と同じ)。道具は標準の library だけを使う。
-  nice -n 19 uv run -q --no-cache --no-project --python "$root/.venv/bin/python" python -I "$installs_tool" gc \
-    --dir "$UV_PYTHON_INSTALL_DIR" </dev/null >"$UV_PYTHON_INSTALL_DIR/.doeff-python-installs.log" 2>&1 &
+  # 道具は標準の library だけを使うので uv run を挟まず venv の python -I を直接起こす(double-fork で tini に回収させる)。
+  (nice -n 19 "$root/.venv/bin/python" -I "$installs_tool" gc \
+    --dir "$UV_PYTHON_INSTALL_DIR" </dev/null 7<&- >"$UV_PYTHON_INSTALL_DIR/.doeff-python-installs.log" 2>&1 &)
   echo "boot: uv の Python の置き場の片付けを背後で起こした(log $UV_PYTHON_INSTALL_DIR/.doeff-python-installs.log)" >&2
 }
 

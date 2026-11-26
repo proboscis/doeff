@@ -83,10 +83,17 @@
   kv)
 
 
+;; 正規化 JSON の encoder(鍵を並べ替え・区切りの空白なし・utf-8 向けの ensure_ascii=False)。
+;; iterencode で chunk ごとに直列化することで、巨大な snapshot の全量 UCS-2 文字列を memory に作らない。
+(val CANONICAL-ENCODER (json.JSONEncoder :ensure-ascii False :sort-keys True :separators #("," ":")))
+(val SEALED-CRC-PREFIX b"{\"crc\":\"")
+(val SEALED-CRC-SEP b"\",")
+
+
 (defk canonical [body]
   {:pre [(: body (get dict #(str object)))] :post [(: % str)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "checksum を取る正規化した JSON(鍵を並べ替え・区切りの空白なし)— 書きと検めが同じ text の crc を比べるため。"
-  (json.dumps body :ensure-ascii False :sort-keys True :separators #("," ":")))
+  (.encode CANONICAL-ENCODER body))
 
 
 (defk checksum [text]
@@ -95,13 +102,45 @@
   (format (& (zlib.crc32 (.encode text "utf-8")) 0xffffffff) "08x"))
 
 
+(defk streaming-crc [body]
+  {:pre [(: body (get dict #(str object)))] :post [(: % str)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "body の正規化 JSON の crc32(16 進 8 桁)を、全量文字列を memory に作らず iterencode の chunk ごとに計算するため。"
+  (var acc 0)
+  (for [chunk (.iterencode CANONICAL-ENCODER body)]
+    (:= acc (zlib.crc32 (.encode chunk "utf-8") acc)))
+  (format (& acc 0xffffffff) "08x"))
+
+
+(defn #^ bool raw-crc-matches? [#^ bytes data #^ str expected]
+  "sealed が書いた正規の並び `{\"crc\":\"<8hex>\",<rest>}`(末尾の \\n は除く)であれば、JSON を再直列化せず生の byte 列から直接 crc32 を確かめる。"
+  (setv end (if (.endswith data b"\n") (- (len data) 1) (len data)))
+  (when (or (< end 19)
+            (!= (cut data 0 8) SEALED-CRC-PREFIX)
+            (!= (cut data 16 18) SEALED-CRC-SEP))
+    (return False))
+  (setv header-crc (try (.decode (cut data 8 16) "ascii") (except [UnicodeDecodeError] "")))
+  (when (!= header-crc expected)
+    (return False))
+  (setv acc (zlib.crc32 (cut (memoryview data) 18 end) (zlib.crc32 b"{")))
+  (= (format (& acc 0xffffffff) "08x") expected))
+
+
 (defk sealed [body]
   {:pre [(: body (get dict #(str object)))] :post [(: % bytes)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "body(crc を持たない dict)を crc つきの 1 つの JSON の byte にする — 行と写しが同じ封じ方を使うため。正規化した text の先頭へ
-   crc の欄を差し込むだけなので dump は 1 回。body の鍵はどれも \"crc\" より後に並ぶ(delta・kv・seq)。"
-  (<- text str (canonical body))
-  (<- crc str (checksum text))
-  (.encode (+ "{\"crc\":\"" crc "\"," (cut text 1 None)) "utf-8"))
+  "body(crc を持たない dict)を crc つきの 1 つの JSON の byte にする — 行と写しが同じ封じ方を使うため。
+   iterencode で 1 回の走査で bytearray へ書きながら crc32 を計算し、巨大な UCS-2 文字列やスライスを作らない。"
+  (val out (bytearray b"{\"crc\":\"00000000\","))
+  (var acc (zlib.crc32 b"{"))
+  (var first True)
+  (for [chunk (.iterencode CANONICAL-ENCODER body)]
+    (setv piece (.encode chunk "utf-8"))
+    (when (and first piece)
+      (:= first False)
+      (setv piece (cut piece 1 None)))
+    (:= acc (zlib.crc32 piece acc))
+    (.extend out piece))
+  (setv (cut out 8 16) (.encode (format (& acc 0xffffffff) "08x") "ascii"))
+  (bytes out))
 
 
 (defk encode-line [seq delta]
@@ -134,9 +173,12 @@
   (when (not-in "crc" record)
     (return (GoodLine :seq seq :writes writes :checked False)))
   ;; crc は crc の欄を除いた全部の欄(書き手が書くのは seq と delta だけ)の正規化した JSON に対して取ってある。
-  (<- text str (canonical (dfor #(k v) (.items record) :if (!= k "crc") k v)))
-  (<- crc str (checksum text))
-  (if (= (get record "crc") crc)
+  ;; sealed の並びなら生 byte 列で O(1) memory 検証し、並びが違う旧/手書き行だけ streaming-crc へ落とす。
+  (val expected (get record "crc"))
+  (when (and (isinstance expected str) (raw-crc-matches? line expected))
+    (return (GoodLine :seq seq :writes writes :checked True)))
+  (<- crc str (streaming-crc (dfor #(k v) (.items record) :if (!= k "crc") k v)))
+  (if (= expected crc)
       (GoodLine :seq seq :writes writes :checked True)
       (BadLine :reason "checksum が合わない")))
 
@@ -191,9 +233,10 @@
   (when (not (and (isinstance seq int) (isinstance kv dict)))
     (raise (WalCorrupted (.format "{}: seq と kv の形でない。起動を断る" where))))
   (when (in "crc" record)
-    (<- text str (canonical (dfor #(k v) (.items record) :if (!= k "crc") k v)))
-    (<- crc str (checksum text))
-    (when (!= (get record "crc") crc)
-      (raise (WalCorrupted (.format "{}: checksum が合わない(seq {})。起動を断る" where seq)))))
+    (val expected (get record "crc"))
+    (when (not (and (isinstance expected str) (raw-crc-matches? data expected)))
+      (<- crc str (streaming-crc (dfor #(k v) (.items record) :if (!= k "crc") k v)))
+      (when (!= expected crc)
+        (raise (WalCorrupted (.format "{}: checksum が合わない(seq {})。起動を断る" where seq))))))
   (<- rows (get tuple #((get TableWrite object) ...)) (writes-of kv))
   (SnapshotRead :seq seq :rows rows))

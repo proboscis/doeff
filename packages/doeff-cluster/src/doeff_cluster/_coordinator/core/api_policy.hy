@@ -55,6 +55,7 @@
 (import doeff_cluster._coordinator.core.drain_policy [advance-drains request-drain absorb-stopping cancel-drain worker-view superseded-worker-view drains-view])
 (import doeff_cluster._coordinator.core.handoff_policy [watch-handoffs handoff-due])
 (import doeff_cluster._coordinator.intent.cluster_model [HandoffPhase])
+(import doeff_cluster._coordinator.intent.task_table [task-index])
 (import doeff_hy._table [TableWrite draft-of])
 (import doeff_cluster._coordinator.core.detached_policy [Reply submit-detached detached-read cancel-detached retarget-detached release-detached outbox-read outbox-ack])
 (import doeff_cluster._shared.intent.detached_model [OUTBOX-ENDED])
@@ -250,7 +251,9 @@
                                               (TableWrite k moved))))
            ;; 盤: lease の行は担い手の期限をずらして版を 1 進め、TTL の行は期限だけをずらす(値は同じなので版は進めない)— 上の board-written。
            :rollouts (.with-writes state.rollouts (tuple (gfor #(k r) (.items state.rollouts) (TableWrite k (replace r :status (shift-clocks r.status gap))))))
-           :tasks (.with-writes state.tasks (tuple (gfor #(k t) (.items state.tasks) (TableWrite k (replace t :lease-until-ms (+ t.lease-until-ms gap))))))
+           ;; 終わった切り離し task(held-row?)は lease-until-ms で期限を数えない(finished-ms + retain-ms)のでずらさない —
+           ;; 全 task をずらすと起動・止まりのたびに数千本の完了済み task を WAL へ書き直し、起動中に checkpoint と memory の峰を起こす。
+           :tasks (.with-writes state.tasks (tuple (gfor #(k t) (.items (. (task-index state.tasks) live)) (TableWrite k (replace t :lease-until-ms (+ t.lease-until-ms gap))))))
            :workers (.with-writes state.workers
                                   (tuple (gfor #(k w) (.items state.workers)
                                                (TableWrite k (replace w
