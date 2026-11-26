@@ -1449,3 +1449,19 @@ def test_boot_starts_upkeep_in_the_background_only_when_asked(
         assert "--no-cache" in args
     else:
         assert not record.exists()
+
+
+@pytest.mark.parametrize("partial_pid", [False, True])
+def test_gc_preserves_archive_on_incomplete_proc(
+    tmp_path: Path, partial_pid: bool, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cache = tmp_path / "cache"
+    archive = cache / "archive-v0" / "OLD"
+    _write(archive / "module.py", "value = 1")
+    _age(archive)
+    proc = tmp_path / "proc"
+    if partial_pid:
+        _write(proc / "123" / "cmdline", "/bin/python")
+    uv_cache.gc(cache, [], 7.0, 3, dry_run=False, every_seconds=None, proc=proc)
+    assert archive.is_dir()
+    assert "kept=1 reason=incomplete-proc" in capsys.readouterr().err
