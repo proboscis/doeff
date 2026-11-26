@@ -364,6 +364,11 @@
     }
    }
   },
+  "doeff-complexity": {
+   "scope": "out of scope",
+   "basis": "A Rust binary crate that the merge queue builds and runs as the Hy complexity gate (also wired into doeff-linter); it has no Python package, is not published, and shows users nothing.",
+   "names": {}
+  },
   "doeff-core-effects": {
    "scope": "in scope",
    "names": {}
