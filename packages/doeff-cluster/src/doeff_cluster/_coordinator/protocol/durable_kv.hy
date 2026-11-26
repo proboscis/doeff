@@ -30,6 +30,7 @@
 (require doeff-hy.record [defrecord])
 (val MODULE-TAGS {:context "coordinator" :role "protocol"})
 (import dataclasses [asdict dataclass replace])
+(import json)
 (import collections.abc [Callable])
 (import functools [partial])
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState WorkerInfo Placement Drain BoardRow KeepMark SupersededRun])
@@ -219,15 +220,9 @@
           #((g.keyed before keys) (g.keyed after keys)))))
 
 
-(defk durable-delta [before after]
-  {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
-  "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
-  元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
-  前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は Table の changed-keys が名乗る行だけ前後で見る
-  (cluster_policy.board-changes — 1 行の書きの歩で盤の全行を回らない)。"
-  ;; 欄が前後で全部同じ object の組(SOURCE-GROUPS)は、鍵の部品を作らずに飛ばす(#2716 — 1 拍で変わるのは一握りの欄なので、拍の費用が
-  ;; 変わらない欄の大きさに比例しない)。残りの組だけ前後の部品を作り、鍵ごとに以前と同じ比べ方をする。組ごとに鍵が重ならないので、
-  ;; 答えは全部の組を作った時と同じ。
+(defn #^ dict source-groups-delta [#^ ClusterState before #^ ClusterState after]
+  "盤を除いた耐久の状態の差分(変わったキー → 新しい値・消えたキーは None)。
+   欄が前後で全部同じ object の組(SOURCE-GROUPS)は飛ばし、Table 欄は changed-keys だけ前後で比べる。"
   (setv groups (tuple (gfor g SOURCE-GROUPS
                             :if (not (all (gfor f g.fields (is (getattr before f) (getattr after f)))))
                             (built-pair g before after))))
@@ -239,10 +234,19 @@
                       :if (or (is prior None) (!= ((get prior 1)) value))
                       k value))
   (setv removed (dfor #(old new) groups k old :if (not-in k new) k None))
+  (| written removed))
+
+
+(defk durable-delta [before after]
+  {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "変わったキー → 新しい値(消えたキーは None)— 前と後を丸ごと durable-kv にして比べた答えと 1 字も違わない(#1843)。
+  元の値が同じ物の鍵は直列化しない(1 拍で変わるのは一握りの鍵なので、拍の費用が状態の大きさに比例しない)。同じ物でない鍵は
+  前と後を直列化して比べる(作り直したが中身の同じ値は差分に入れない)。盤は Table の changed-keys が名乗る行だけ前後で見る
+  (cluster_policy.board-changes — 1 行の書きの歩で盤の全行を回らない)。"
   (setv #^ (get dict #(str (| (get dict #(str object)) None))) board
         (dfor key (board-changes before after)
               (+ BOARD key) (if (is-not (.row after.board key) None) (board-entry after key) None)))
-  (| written removed board))
+  (| (source-groups-delta before after) board))
 
 
 (defk full-kv [state]
@@ -259,8 +263,14 @@
    最後の印より後に加わった worker)は、最後の印の時刻(alive-ms)に連絡があったとみなす(ずらすと「いま」になる = 以前の形と同じ。
    生存を捨てると、最初に heartbeat を送った worker へ全 job が移り、元の担い手がまだ動いていれば二重に動く — 実測 2026-09-23)。
    印の時刻も無い置き場は now。"
-  ;; 鍵の接頭辞 prefix の行を #(接頭辞を外した鍵 値) の並び(鍵の順)にする。
-  (val part (fn [prefix] (sorted (gfor #(k v) (.items kv) :if (.startswith k prefix) #((cut k (len prefix) None) v)))))
+  ;; 1 回の走査で接頭辞ごとのバケツへ仕分ける(20 回以上の全件走査を避ける)。
+  (val buckets {})
+  (for [#(k v) (.items kv)]
+    (setv slash (.find k "/"))
+    (when (> slash 0)
+      (setv prefix (cut k 0 (+ slash 1)))
+      (.append (.setdefault buckets prefix []) #((cut k (+ slash 1) None) v))))
+  (val part (fn [prefix] (sorted (.get buckets prefix []))))
   (val counter (.get kv "counter" {}))
   (val alive-ms (.get counter "aliveMs" 0))
   (val unknown-seen (if (> alive-ms 0) alive-ms now))
@@ -272,7 +282,17 @@
   ;; 欄(taskReserve・backgroundRoom・capacity)の在る行は欄を読まずに通す。
   (val stored-workers (tuple (gfor #(k w) (part "worker/") :if (in "provides" w) #(k w))))
   (<- generations tuple (read-each worker-generations-from-json stored-workers))
-  (<- tasks tuple (read-each task-record-from-json (tuple (part "task/"))))
+  (<- raw-tasks tuple (read-each task-record-from-json (tuple (part "task/"))))
+  ;; 同じ runtime_env の dict は task の間で共有し、完了済み task が同じ実行環境宣言を何千部も memory に持たないようにする。
+  (val shared-rt {})
+  (val interned-tasks [])
+  (for [#(k t) raw-tasks]
+    (if (is-not t.runtime-env None)
+        (do (setv fp (json.dumps t.runtime-env :ensure-ascii False :sort-keys True :separators #("," ":")))
+            (setv canon (.setdefault shared-rt fp t.runtime-env))
+            (.append interned-tasks #(k (if (is canon t.runtime-env) t (replace t :runtime-env canon)))))
+        (.append interned-tasks #(k t))))
+  (val tasks (tuple interned-tasks))
   (<- warms tuple (read-each warm-entry-from-json (tuple (part WARM))))
   (<- programs tuple (read-each program-row-from-json (tuple (part PROGRAM))))
   (<- audit tuple (read-each audit-event-from-json (tuple (part "audit/"))))
@@ -315,6 +335,13 @@
     :board board-table
     :board-tally (board-tally-of board-table)
     :started-ms now))
+
+
+(defk resume-delta [before after]
+  {:pre [(: before ClusterState) (: after ClusterState)] :post [(: % dict)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
+  "起動の時に書く分: 読み直した状態(before)と、止まっていた長さだけ時計をずらした状態(after — api_policy.resume-after-downtime)の、
+   値の違う鍵(盤を除く)。全量を durable-kv で作り直さず、変わった組と Table.changed-keys だけを直列化する。"
+  (source-groups-delta before after))
 
 
 (defk resume-writes [kv state]

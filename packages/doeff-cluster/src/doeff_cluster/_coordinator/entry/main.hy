@@ -25,7 +25,7 @@
 (import doeff_cluster._coordinator.intent.cluster_model [ClusterState ACCEPTED-FORMATS])
 (import doeff_cluster._coordinator.protocol.cluster_json [naming-from-json])
 (import doeff_cluster._coordinator.core.cluster_policy [fresh-task-prefix] doeff_cluster._coordinator.protocol.state_json [state-from-json])
-(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv legacy-key-moves resume-writes])
+(import doeff_cluster._coordinator.protocol.durable_kv [full-kv state-from-kv legacy-key-moves resume-delta])
 (import doeff_cluster._foundation.wal_store [WalStore])
 (import doeff_cluster._coordinator.protocol.store [DurableStore durable-exists durable-load durable-persist durable-checkpoint])
 (import doeff_cluster._coordinator.core.api_policy [resume-after-downtime])
@@ -96,16 +96,22 @@
     (<- loaded dict (durable-load store))
     (<- moves list (legacy-key-moves loaded))
     (for [delta moves]
-      (<- (durable-persist store delta)))
+      (<- (durable-persist store delta))
+      (when (is-not loaded (.table store))
+        (for [#(k v) (.items delta)]
+          (if (is v None) (.pop loaded k None) (setv (get loaded k) v)))))
     (when moves
       (<- (slog (.format "coordinator: 置き先の鍵を新しい名へ移した({} 件)" (len (get moves -1))))))
-    (<- stored ClusterState (state-from-kv (.table store) now))
+    (<- stored ClusterState (state-from-kv loaded now))
+    ;; file の置き場(WalStore)は重複する全量 KV dict をここで解放する(DeltaStore の MemoryWalStore は自分の表なので触らない)。
+    (when (is-not loaded (.table store))
+      (.clear loaded))
     (val resumed (resume-after-downtime stored now))
     (val state (get resumed 0))
     (val gap (get resumed 1))
-    ;; ずらした時計(worker の最後の連絡・task の lease・Rollout の段の起点)と生きていた時刻を、受け付けを始める前に耐久にする
-    ;; (durable_kv.resume-writes)。
-    (<- writes dict (resume-writes (.table store) state))
+    ;; ずらした時計(worker の最後の連絡・生きている task の lease・Rollout の段の起点)と生きていた時刻を、受け付けを始める前に耐久にする
+    ;; (durable_kv.resume-delta — 全量を durable-kv で作り直さず、変わった組と Table.changed-keys だけを綴る)。
+    (<- writes dict (resume-delta stored state))
     (<- (durable-persist store writes))
     (when (> gap 0)
       (<- (slog (.format "coordinator: 止まっていた {:.1f} 秒を、進行中の Rollout の段と task の lease の時間に数えない" (/ gap 1000)))))

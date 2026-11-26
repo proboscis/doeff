@@ -17,9 +17,9 @@
 (import doeff_hy._table [TableWrite])
 (import doeff_cluster._coordinator.intent.cluster_model [SaveState])
 (import doeff_cluster._coordinator.protocol.durable_kv [durable-delta])
-(import doeff_cluster._coordinator.protocol.wal_format [DroppedTail LogScan SnapshotRead apply-delta encode-line encode-snapshot read-snapshot scan-log writes-of])
-(import doeff_cluster._coordinator.protocol.wal_files [wal-append-line wal-check-place wal-drop-tail wal-exists wal-read-log-lines wal-read-snapshot
-                                                      wal-write-snapshot])
+(import doeff_cluster._coordinator.protocol.wal_format [DroppedTail LogScan apply-delta encode-line writes-of])
+(import doeff_cluster._coordinator.protocol.wal_files [wal-append-line wal-check-place wal-compact-snapshot wal-drop-tail wal-exists wal-load-snapshot
+                                                      wal-scan-log wal-write-snapshot-kv])
 
 
 (defclass [(dataclass :frozen True)] Persist [EffectBase]
@@ -54,12 +54,14 @@
   (#^ int seq)
   (#^ int max-log-bytes)
   (#^ bool sync)
+  (#^ bool has-table)
   (#^ str snapshot)
   (#^ str log)
-  (setv METHODS #("table" "replace_table" "recovery" "note_recovered" "note_fsync" "fsync_stats"))
+  (setv METHODS #("table" "replace_table" "release_table" "recovery" "note_recovered" "note_fsync" "fsync_stats"))
   ;; 表と読み直しの記録は欄に持たず method で受け渡す(写像を欄に持たない — DOEFF172)。
   (defn #^ (get dict #(str object)) table [self] (raise NotImplementedError))
   (defn #^ None replace-table [self #^ (get dict #(str object)) kv] (raise NotImplementedError))
+  (defn #^ None release-table [self] (raise NotImplementedError))
   (defn #^ (| (get dict #(str (| int str))) None) recovery [self] (raise NotImplementedError))
   (defn #^ None note-recovered [self #^ int kept #^ int size #^ str reason] (raise NotImplementedError))
   (defn #^ None note-fsync [self #^ float seconds] (raise NotImplementedError))
@@ -102,19 +104,16 @@
   (match store
     (ByteLog)
       (do (<- (wal-check-place store))
-          (<- snapshot (| bytes None) (wal-read-snapshot store))
-          ;; 写しが無ければ空の表・番号 0 から当てる。
-          (val base (if (is snapshot None)
-                        (SnapshotRead :seq 0 :rows #())
-                        (! (read-snapshot snapshot store.snapshot))))
-          ;; 写しの書きを表に組み、log の行をその表の上へその場で当てる。
-          (val table (dfor row base.rows row.key row.value))
-          (<- lines (get list bytes) (wal-read-log-lines store))
-          (<- scan LogScan (scan-log lines base.seq table store.log))
+          ;; 写しと log を 1 MiB chunk の streaming で読み直す(全量 byte / UCS-2 文字列を memory に持たず、
+          ;; WalStore 自身にも重複 KV 表を残さない — 以降の checkpoint は disk から streaming 合流する)。
+          (<- loaded tuple (wal-load-snapshot store))
+          (val base-seq (get loaded 0))
+          (val table (get loaded 1))
+          (<- scan LogScan (wal-scan-log store base-seq table))
           (match scan.dropped
             (DroppedTail :kept kept :size size :reason reason) (<- (wal-drop-tail store kept size reason))
             None None)
-          (.replace-table store table)
+          (.release-table store)
           (setv store.seq scan.seq)
           table)
     (DeltaStore) (.load store)))
@@ -130,8 +129,9 @@
         (setv store.seq (+ store.seq 1))
         (<- line bytes (encode-line store.seq delta))
         (<- size int (wal-append-line store line))
-        (<- writes (get tuple #((get TableWrite object) ...)) (writes-of delta))
-        (<- (apply-delta (.table store) writes))
+        (when store.has-table
+          (<- writes (get tuple #((get TableWrite object) ...)) (writes-of delta))
+          (<- (apply-delta (.table store) writes)))
         (when (> size store.max-log-bytes)
           (<- (durable-checkpoint store))))
     (DeltaStore) (.persist store delta))
@@ -141,11 +141,13 @@
 (defk durable-checkpoint [store]
   {:pre [(: store DurableStore)] :post [(: % None)] :tags {:context "coordinator" :role "protocol" :spells "json"}}
   "全部のキーを写しにまとめ直し(fsync 済み)、その後で log を空にする — log を上限の内に保ち、以前の形から移した状態を 1 つの写しに
-   置くため。"
+   置くため。表を明示的に渡された時(legacy 移行)は streaming で書き出して解放し、通常は disk の snapshot + WAL を 2-way merge で合流する。"
   (match store
     (ByteLog)
-      (do (<- data bytes (encode-snapshot store.seq (.table store)))
-          (<- (wal-write-snapshot store data)))
+      (if store.has-table
+          (do (<- (wal-write-snapshot-kv store store.seq (.table store)))
+              (.release-table store))
+          (<- (wal-compact-snapshot store)))
     (DeltaStore) (.checkpoint store))
   None)
 
