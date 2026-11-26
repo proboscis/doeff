@@ -32,6 +32,8 @@ once_cell = "1.19"
 chrono = "0.4"
 # Facts of Hy files (definitions, imports, raw evidence of raw side effects) and the reader -- calls hy-index's analysis as a function (no child process is used).
 doeff-indexer = { path = "../doeff-indexer", default-features = false }
+# Hy cyclomatic complexity counter and ratchet gate (`doeff-linter complexity count|gate` — shared with the standalone `doeff-complexity` binary).
+doeff-complexity = { path = "../doeff-complexity" }
 # HTTP client used by the semantic rules (DOEFF201, DOEFF202) to ask Jev (Vercel AI Gateway) (used only with --semantic).
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 sha2 = "0.10"
