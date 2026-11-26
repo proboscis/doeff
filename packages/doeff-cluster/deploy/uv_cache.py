@@ -1024,27 +1024,24 @@ def process_paths(proc: Path = Path("/proc")) -> list[str] | None:
     """走っている process の作業 dir・実行 file・引数の絶対 path・読み込んだ file の path を、並べた list で返す(proc が読めなければ None)。"""
     try:
         pids = [p for p in proc.iterdir() if p.name.isdigit()]
+        return sorted({path for pid in pids for path in _process_paths_of(pid)})
     except OSError:
         return None
-    return sorted({path for pid in pids for path in _process_paths_of(pid)})
 
 
 def _process_paths_of(pid: Path) -> Iterator[str]:
-    """process 1 つの作業 dir・実行 file・引数の絶対 path・読み込んだ file の path(読めない物は飛ばす — 終わった・別の uid)。"""
+    """Read every source for a PID so that partial observations cannot authorize GC."""
     for link in ("cwd", "exe"):
-        with contextlib.suppress(OSError):
-            yield os.readlink(pid / link)
-    with contextlib.suppress(OSError):
-        yield from (
-            arg.decode(errors="replace")
-            for arg in (pid / "cmdline").read_bytes().split(b"\0")
-            if arg.startswith(b"/")
-        )
-    with contextlib.suppress(OSError):
-        lines = (pid / "maps").read_text(errors="replace").splitlines()
-        yield from (
-            line[line.find(" /") + 1 :].removesuffix(" (deleted)") for line in lines if " /" in line
-        )
+        yield os.readlink(pid / link)
+    yield from (
+        arg.decode(errors="replace")
+        for arg in (pid / "cmdline").read_bytes().split(b"\0")
+        if arg.startswith(b"/")
+    )
+    lines = (pid / "maps").read_text(errors="replace").splitlines()
+    yield from (
+        line[line.find(" /") + 1 :].removesuffix(" (deleted)") for line in lines if " /" in line
+    )
 
 
 def used_under(paths: list[str], root: Path) -> bool:
@@ -1265,7 +1262,7 @@ def is_doomed(
     """unit を消すか: 最後に使った刻が cutoff より前で、種類ごとの決まりに合う物。kept = 残る venv が symlink か .pth で指す cache の
     項目(展開済みの wheel と git の checkout だけが読む)。"""
     if (
-        unit.last_used >= cutoff or unit.kind == "holder"
+        used is None or unit.last_used >= cutoff or unit.kind == "holder"
     ):  # symlink だけを読む置き場の venv は消さない
         return False
     # venv と環境は使っている process が無い事を確かめる(proc が読めなければ消さない)。venv は venv を持つ dir(作業木)を作業 dir に
@@ -1277,21 +1274,15 @@ def is_doomed(
     # 版が無ければ組み直す)。
     match unit.kind:
         case "archive":
-            return (
-                not unit.shared
-                and str(unit.path) not in kept
-                and not (used is not None and used_under(used, unit.path))
-            )
+            return not unit.shared and str(unit.path) not in kept and not used_under(used, unit.path)
         case "temporary":
             return True
         case "venv":
-            return used is not None and not used_under(used, unit.path.parent)
+            return not used_under(used, unit.path.parent)
         case "environment" | "checkout":  # kept は環境の path を持たない
-            return (
-                str(unit.path) not in kept and used is not None and not used_under(used, unit.path)
-            )
+            return str(unit.path) not in kept and not used_under(used, unit.path)
         case "sdist":
-            return not (used is not None and used_under(used, unit.path))
+            return not used_under(used, unit.path)
         case other:
             raise ValueError(f"知らない単位の種類 {other!r}")
 
@@ -1474,15 +1465,19 @@ def gc(
         if not got:
             say("gc: 同じ cache の別の gc が走っている — 消さない")
             return {"verb": verb, "ran": False, "reason": "locked"}
-        for leftover in [
-            *cache.glob(GC_TRASH + "*"),
-            *(p for root in venv_roots for p in root.glob(f"*/{GC_TRASH}*")),
-        ]:
-            shutil.rmtree(leftover, ignore_errors=True)
+        used = process_paths(proc)
+        if used is not None:
+            for leftover in [
+                *cache.glob(GC_TRASH + "*"),
+                *(p for root in venv_roots for p in root.glob(f"*/{GC_TRASH}*")),
+            ]:
+                shutil.rmtree(leftover, ignore_errors=True)
         cutoff = time.time() - idle_days * 86400
         free_before = disk_free(cache)
-        used = process_paths(proc)
         before = survey(cache, venv_roots, depth, link_roots)
+        if used is None:
+            retained = sum(len(units) for _, units in before.groups())
+            say(f"gc: kept={retained} reason=incomplete-proc")
         counted = before.tallies(cutoff, used)
         result: dict[str, object] = {
             "verb": verb,
