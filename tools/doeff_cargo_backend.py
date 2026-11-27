@@ -126,6 +126,8 @@ WHEEL_BUILDER_ENV = "DOEFF_WHEEL_BUILDER"
 # Seconds the builder may take (queueing for a place, building on a cold target, and fetching the wheel back) before the build fails.
 WHEEL_BUILDER_TIMEOUT_ENV = "DOEFF_WHEEL_BUILDER_TIMEOUT"
 WHEEL_BUILDER_TIMEOUT_SECONDS = 1800
+# Env through which the builder learns the interpreter to build with (a uv `--python` request -- the Python version and ABI in the key).
+WHEEL_BUILDER_PYTHON_ENV = "DOEFF_WHEEL_PYTHON"
 # Used marker of a store dir (advances the dir's mtime -- the worker's cleanup picks dirs unused for 7 days by dir mtime).
 USED_MARK = ".used"
 # Default build-relevant files (globs from the package dir) for a package that declares no tool.uv.cache-keys files.
@@ -354,7 +356,15 @@ def _away_wheel(builder: list[str], package: Path, slot: Path) -> Path:
     print(f"doeff_cargo_backend: no wheel with the same key in either store -- handing {slot.name} to the builder {builder[0]}", file=sys.stderr)
     with tempfile.TemporaryDirectory(prefix="doeff-wheel-away-") as out:
         try:
-            done = subprocess.run([*builder, str(package), slot.name, out], stdout=sys.stderr, stderr=subprocess.PIPE, text=True, timeout=timeout, check=False)
+            done = subprocess.run(
+                [*builder, str(package), slot.name, out],
+                env={**os.environ, WHEEL_BUILDER_PYTHON_ENV: _python_request()},
+                stdout=sys.stderr,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=timeout,
+                check=False,
+            )
         except subprocess.TimeoutExpired:
             raise RuntimeError(f"doeff_cargo_backend: the builder did not finish {slot.name} in {timeout:.0f} s; not building on this machine") from None
         except OSError as error:
@@ -370,14 +380,37 @@ def _away_wheel(builder: list[str], package: Path, slot: Path) -> Path:
                 raise RuntimeError(f"doeff_cargo_backend: the builder exited 0 but wrote no wheel for {slot.name}; not building on this machine")
             case several:
                 raise RuntimeError(f"doeff_cargo_backend: the builder wrote {len(several)} wheels for {slot.name}; not building on this machine")
-        match _wheel_problem(wheel):
+        match _wheel_problem(wheel) or _abi_problem(wheel):
             case str() as problem:
-                raise RuntimeError(f"doeff_cargo_backend: the builder's wheel for {slot.name} is corrupt ({problem}); not using it, not building on this machine")
+                raise RuntimeError(f"doeff_cargo_backend: the builder's wheel for {slot.name} is not usable here ({problem}); not using it, not building on this machine")
             case None:
                 pass
         placed = _store_wheel(slot, wheel)
     print(f"doeff_cargo_backend: using the builder's wheel ({time.monotonic() - started:.0f} s, no build here) -- {placed.name} placed in {slot}", file=sys.stderr)
     return placed
+
+
+def _python_request() -> str:
+    """The interpreter the builder must build with, as a uv `--python` request (`3.14t` for free-threading, `3.14` otherwise) -- the same Python version and
+    ABI that are in this call's key."""
+    threaded = "t" if sysconfig.get_config_var("Py_GIL_DISABLED") else ""
+    return f"{sys.version_info.major}.{sys.version_info.minor}{threaded}"
+
+
+def _abi_problem(wheel: Path) -> str | None:
+    """Say in one line whether the builder's wheel carries a CPython ABI other than this interpreter's (a wheel built with another Python stored under this
+    key would fail at import). Wheels with no CPython ABI (`none`, `abi3`) are accepted. None = usable."""
+    match _wheel_file_name(wheel):
+        case str() as name:
+            abis = set(name.removesuffix(".whl").split("-")[-2].split("."))
+        case None:
+            return "cannot read the name and tag of the wheel"
+    threaded = "t" if sysconfig.get_config_var("Py_GIL_DISABLED") else ""
+    own = f"cp{sys.version_info.major}{sys.version_info.minor}{threaded}"
+    cpython = {abi for abi in abis if abi.startswith("cp")}
+    if not cpython or own in cpython:
+        return None
+    return f"ABI {'.'.join(sorted(abis))} differs from this interpreter's {own}"
 
 
 def _wheel_file_name(wheel: Path) -> str | None:

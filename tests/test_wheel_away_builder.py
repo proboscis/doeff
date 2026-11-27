@@ -16,6 +16,7 @@ import io
 import json
 import os
 import sys
+import sysconfig
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,20 +28,21 @@ REPO = Path(__file__).resolve().parents[1]
 BACKEND = REPO / "tools" / "doeff_cargo_backend.py"
 # The probe package and its wheels are the same as in tests/test_wheel_remote_store.py.
 NATIVE = "probe/_native.cpython-314-x86_64-linux-gnu.so"
-WHEEL_NAME = "probe-0.1.0-cp314-cp314-linux_x86_64.whl"
+# A wheel without a CPython ABI, so the builder's wheel is usable whatever interpreter runs the tests.
+WHEEL_NAME = "probe-0.1.0-py3-none-linux_x86_64.whl"
 
 
 def _digest(data: bytes) -> str:
     return base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode("ascii")
 
 
-def _wheel_bytes(native: bytes, broken: bool = False) -> bytes:
+def _wheel_bytes(native: bytes, broken: bool = False, tag: str = "py3-none-linux_x86_64") -> bytes:
     """Contents of one probe wheel (with RECORD). broken = one whose native hash differs from RECORD."""
     files = (
         ("probe/__init__.py", b"from probe._native import *\n"),
         (NATIVE, native),
         ("probe-0.1.0.dist-info/METADATA", b"Metadata-Version: 2.1\nName: probe\nVersion: 0.1.0\n"),
-        ("probe-0.1.0.dist-info/WHEEL", b"Wheel-Version: 1.0\nGenerator: fake\nRoot-Is-Purelib: false\nTag: cp314-cp314-linux_x86_64\n"),
+        ("probe-0.1.0.dist-info/WHEEL", f"Wheel-Version: 1.0\nGenerator: fake\nRoot-Is-Purelib: false\nTag: {tag}\n".encode()),
     )
     record = "".join(
         f"{name},sha256={_digest(data + (b'!' if broken and name == NATIVE else b''))},{len(data)}\n" for name, data in files
@@ -119,7 +121,7 @@ def backend(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
 def _builder(tmp_path: Path, body: str) -> list[str]:
     """A builder command (argv) whose script body sees $1 = package dir, $2 = slot name, $3 = out dir; it logs each call to builder.log."""
     script = tmp_path / "builder.sh"
-    script.write_text(f'#!/bin/sh\necho "$1 $2 $3 commit=${{DOEFF_LINTER_BUILD_COMMIT:-}}" >> "{tmp_path}/builder.log"\n{body}\n')
+    script.write_text(f'#!/bin/sh\necho "$1 $2 $3 commit=${{DOEFF_LINTER_BUILD_COMMIT:-}} python=${{DOEFF_WHEEL_PYTHON:-}}" >> "{tmp_path}/builder.log"\n{body}\n')
     script.chmod(0o755)
     return [str(script)]
 
@@ -216,3 +218,23 @@ def test_a_builder_setting_that_is_not_an_argv_list_is_refused(backend: ModuleTy
         backend.stored_wheel(package, None, compile_wheel)
     assert compile_wheel.calls == 0
     assert os.environ["DOEFF_WHEEL_BUILDER"] == "agora spot run"
+
+
+def test_the_builder_is_told_this_interpreter_and_a_wheel_for_another_abi_is_refused(
+    backend: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The builder learns the interpreter to build with (DOEFF_WHEEL_PYTHON -- the Python version and ABI in the key). A wheel it returns for another CPython ABI
+    # fails the build instead of being stored under this key (it would fail at import).
+    other = "cp27-cp27mu-linux_x86_64"
+    wheel = _wheel_bytes(b"built away\n", tag=other)
+    source = tmp_path / "away.whl"
+    source.write_bytes(wheel)
+    monkeypatch.setenv("DOEFF_WHEEL_BUILDER", json.dumps(_builder(tmp_path, f'cp "{source}" "$3/probe-0.1.0-{other}.whl"')))
+    package = _checkout(tmp_path / "wt")
+    compile_wheel = FakeCompile(tmp_path / "compile.log")
+    with pytest.raises(RuntimeError, match="ABI cp27mu differs"):
+        backend.stored_wheel(package, None, compile_wheel)
+    threaded = "t" if sysconfig.get_config_var("Py_GIL_DISABLED") else ""
+    assert (tmp_path / "builder.log").read_text(encoding="utf-8").split()[4] == f"python={sys.version_info.major}.{sys.version_info.minor}{threaded}"
+    assert compile_wheel.calls == 0
+    assert not backend._wheel_slot(package, None, None).exists()
