@@ -315,3 +315,107 @@ def test_a_lookup_does_not_wait_for_a_sha_being_built(tmp_path: Path) -> None:
     assert proc.returncode == 1, (out, err)
     assert "being built" in err
     assert not (tmp_path / "count").exists()
+
+
+# Fake off-machine builder (env DOEFF_WHEEL_BUILDER) -- called as `<builder> <package dir> <slot> <out dir>`. Records its arguments, the tree's HEAD, whether the
+# tree is clean, and the tree's top-level entries, then leaves a wheel whose linter names FAKE_BUILDER_COMMIT (or the tree's HEAD) and the tree's marker.
+FAKE_BUILDER = """#!{python}
+import os, subprocess, sys, zipfile
+package, slot, out = sys.argv[1:]
+log = os.environ["FAKE_BUILDER_LOG"]
+def git(*argv):
+    return subprocess.run(["git", "-C", package, *argv], capture_output=True, text=True, check=True).stdout.strip()
+top = git("rev-parse", "--show-toplevel")
+with open(log, "a") as f:
+    f.write(" ".join([os.path.relpath(package, top), slot, git("rev-parse", "HEAD"), "clean" if not git("status", "--porcelain") else "dirty",
+                      ",".join(sorted(os.listdir(top))), ",".join(sorted(os.listdir(os.path.join(top, "packages"))))]) + "\\n")
+if os.environ.get("FAKE_BUILDER_FAIL"):
+    print("the remote build could not start", file=sys.stderr)
+    sys.exit(71)
+commit = os.environ.get("FAKE_BUILDER_COMMIT") or git("rev-parse", "HEAD")
+marker = open(os.path.join(package, "marker")).read()
+with zipfile.ZipFile(os.path.join(out, "doeff_linter-0.2.0-py3-none-linux_x86_64.whl"), "w") as wheel:
+    wheel.writestr("doeff_linter-0.2.0.data/scripts/doeff-linter", f'#!/bin/sh\\necho "doeff-linter 0.2.0 (doeff {{commit}})"\\necho "{{marker}}"\\n')
+    wheel.writestr("doeff_linter-0.2.0.dist-info/RECORD", "")
+"""
+
+
+def away_environ(tmp_path: Path, *extra: str) -> list[str]:
+    """environ() plus the fake builder named in DOEFF_WHEEL_BUILDER (the fake cargo stays first on PATH, so a build on this machine would be counted)."""
+    builder = tmp_path / "bin" / "builder"
+    builder.write_text(FAKE_BUILDER.format(python=sys.executable), encoding="utf-8")
+    builder.chmod(0o755)
+    return [*environ(tmp_path, ""), f"DOEFF_WHEEL_BUILDER=[\"{builder}\"]", f"FAKE_BUILDER_LOG={tmp_path / 'builder.log'}", *extra]
+
+
+def worktrees(repo: Path) -> list[str]:
+    """The repo's worktree paths (the main one first) -- a worktree the script added must be gone afterwards."""
+    listed = subprocess.run(["git", "-C", str(repo), "worktree", "list", "--porcelain"], capture_output=True, text=True, check=True).stdout
+    return [line.removeprefix("worktree ") for line in listed.splitlines() if line.startswith("worktree ")]
+
+
+def test_a_machine_with_a_builder_places_the_builders_linter_without_compiling(tmp_path: Path) -> None:
+    # A machine that names an off-machine builder hands it the sha (a clean, sparse, detached worktree at the sha holding only the
+    # cross-section's dirs) and places the executable from the wheel it leaves; the fake cargo is never called and the worktree is gone afterwards.
+    # Counterexample: before this change the script ran cargo here (the fake cargo's count file exists) and this test is red.
+    repo = stage(tmp_path)
+    (repo / "tools").mkdir()
+    (repo / "tools" / "other").write_text("not in the cross-section", encoding="utf-8")
+    sha = commit_all(repo, tmp_path, "tools")
+    proc = snapshot(repo, away_environ(tmp_path))
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 0, err
+    assert not (tmp_path / "count").exists()
+    assert (tmp_path / "builder.log").read_text(encoding="utf-8") == (
+        f"packages/doeff-linter doeff-linter-{sha} {sha} clean .git,packages doeff-indexer,doeff-linter\n"
+    )
+    printed = subprocess.run([out.strip()], capture_output=True, text=True, check=True).stdout
+    assert f"(doeff {sha})" in printed and "committed" in printed
+    assert out.strip() == str(tmp_path / "store" / sha / "doeff-linter")
+    assert len(worktrees(repo)) == 1
+    # The placed linter is found again without asking the builder.
+    again = snapshot(repo, away_environ(tmp_path)).communicate(timeout=50)[0].strip()
+    assert again == out.strip()
+    assert len((tmp_path / "builder.log").read_text(encoding="utf-8").splitlines()) == 1
+
+
+def test_a_linter_naming_an_ancestor_of_the_sha_is_placed(tmp_path: Path) -> None:
+    # The backend embeds the last commit that changed the linter's inputs, so the wheel's linter may name an ancestor of the sha -- the same linter.
+    repo = stage(tmp_path)
+    first = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+    (repo / "README").write_text("x", encoding="utf-8")
+    commit_all(repo, tmp_path, "readme")
+    proc = snapshot(repo, away_environ(tmp_path, f"FAKE_BUILDER_COMMIT={first}"))
+    _, err = proc.communicate(timeout=50)
+    assert proc.returncode == 0, err
+
+
+def test_a_linter_naming_a_commit_outside_the_sha_is_not_placed(tmp_path: Path) -> None:
+    repo = stage(tmp_path)
+    proc = snapshot(repo, away_environ(tmp_path, "FAKE_BUILDER_COMMIT=" + "e" * 40))
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 1, (out, err)
+    assert "does not name" in err
+    assert [p for p in (tmp_path / "store").iterdir() if p.is_dir()] == []
+    assert not (tmp_path / "count").exists()
+
+
+def test_a_failed_builder_is_answered_without_building_here(tmp_path: Path) -> None:
+    # The builder's failure is the answer (exit 1 with the reason) -- not a silent fallback to cargo on this machine.
+    repo = stage(tmp_path)
+    proc = snapshot(repo, away_environ(tmp_path, "FAKE_BUILDER_FAIL=1"))
+    out, err = proc.communicate(timeout=50)
+    assert proc.returncode == 1, (out, err)
+    assert "exited 71: the remote build could not start; not building on this machine" in err
+    assert not (tmp_path / "count").exists()
+    assert len(worktrees(repo)) == 1
+
+
+def test_a_malformed_builder_value_is_refused_without_building_here(tmp_path: Path) -> None:
+    repo = stage(tmp_path)
+    for value in ("not json", "[]", '[""]', '{"a": 1}'):
+        proc = snapshot(repo, [*environ(tmp_path, ""), f"DOEFF_WHEEL_BUILDER={value}"])
+        out, err = proc.communicate(timeout=50)
+        assert proc.returncode == 1, (value, out, err)
+        assert "not building on this machine" in err, value
+    assert not (tmp_path / "count").exists()

@@ -47,6 +47,12 @@ Lookup only (`--lookup`): a commit hook runs inside a caller's time limit (a con
   the store's linter of the sha, or a copy of a linter with the same input key (a copy, not a build), and otherwise the reason and exit 1 without building. It does not wait for
   the sha's lock — if another process holds it (building that sha now), it answers "being built" at once. The build is done ahead of time by one place outside the hook
   (a shared-checkout owner job, after doeff's main or a pin moves), with the plain (building) form.
+Off-machine builder (env DOEFF_WHEEL_BUILDER — the same JSON argv tools/doeff_cargo_backend.py reads, called as `<argv> <package dir> <slot> <out dir>`):
+  a machine that must not compile hands the build of a sha whose input is new to the builder instead of cargo. The builder reads a git working tree, so the sha is
+  checked out as a sparse, detached worktree of the checkout holding only the cross-section's dirs (git objects only), and removed afterwards. The builder leaves
+  doeff-linter's wheel (maturin `bindings = "bin"`); its executable is placed like a built one. Its `--version` names the last commit that changed the linter's
+  inputs (the backend's build commit), so it is accepted when that commit is the sha or an ancestor of it, without +dirty. When the builder fails, or the value
+  of the env is malformed, the reason is answered and nothing is built on this machine — there is no fallback to cargo.
 Usage: uv run --script packages/doeff-linter/scripts/linter_snapshot.py [--lookup] <doeff checkout> <commit>
   If it can build (or, with --lookup, find), prints the binary's path on one line and exits 0; if not, prints the reason on one line to stderr and exits 1 (the caller falls back
   to its own environment's linter, or names the lint "not measurable"), and exits 2 on a bad argument.
@@ -57,6 +63,7 @@ and a lookup never builds: it finds a placed or same-key linter, answers a missi
 
 
 import fcntl
+import json
 import os
 import re
 import shutil
@@ -64,6 +71,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -88,6 +96,10 @@ SHA_NAME = re.compile(r"[0-9a-f]{40}")
 # A key ends with the 40-digit digest of the build inputs; keys written before 2026-11-06 hold the same digest after the former (Japanese) prefix, so
 # keys are matched by that digest (the same matching as same_key in scripts/doeff_linter_locked.py).
 KEY_DIGEST = re.compile(r"(?:^|\s)([0-9a-f]{40})$")
+# The off-machine builder (the same env and argv contract as tools/doeff_cargo_backend.py's DOEFF_WHEEL_BUILDER; see the header comment).
+WHEEL_BUILDER_ENV = "DOEFF_WHEEL_BUILDER"
+# The linter's executable inside the wheel maturin builds with `bindings = "bin"`.
+WHEEL_MEMBER = re.compile(r"[^/]+\.data/scripts/" + re.escape(BIN_NAME))
 
 
 @dataclass(frozen=True)
@@ -191,6 +203,74 @@ def build_into(source: Path, sha: str, cargo_target: Path, target: Path, env: di
     return "the built linter does not name " + sha + ": " + printed.strip()
 
 
+def wheel_builder(environ: dict[str, str]) -> list[str] | str | None:
+    """The off-machine builder's argv from env DOEFF_WHEEL_BUILDER (a JSON list of strings); None when unset; the reason (str) when the value is malformed —
+    a malformed value is refused rather than read as unset, so a machine that meant to build elsewhere never builds here."""
+    raw = environ.get(WHEEL_BUILDER_ENV, "").strip()
+    if not raw:
+        return None
+    try:
+        argv = json.loads(raw)
+    except ValueError:
+        argv = None
+    if isinstance(argv, list) and argv and all(isinstance(word, str) and word for word in argv):
+        return argv
+    return WHEEL_BUILDER_ENV + " is not a JSON list of non-empty strings; not building on this machine"
+
+
+def _git(argv: list[str], env: dict[str, str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["git", *argv], capture_output=True, text=True, check=False, env=env)
+
+
+def away_into(checkout: Path, sha: str, builder: list[str], target: Path, env: dict[str, str]) -> str | None:
+    """Have the off-machine builder build the linter's wheel at sha and copy its executable to target (a temporary name) — nothing is compiled on this machine.
+    Returns the failure reason (None = placed). The builder reads a git working tree, so the sha is checked out as a sparse, detached worktree of the checkout
+    holding only INPUT_DIRS (git objects only — no build), removed afterwards."""
+    work = Path(tempfile.mkdtemp(prefix="doeff-linter-away-" + sha[:12] + "-"))
+    tree = work / "tree"
+    try:
+        for argv in (
+            ["-C", str(checkout), "worktree", "add", "--quiet", "--detach", "--no-checkout", str(tree), sha],
+            ["-C", str(tree), "sparse-checkout", "set", *INPUT_DIRS],
+            ["-C", str(tree), "read-tree", "-mu", "HEAD"],
+        ):
+            done = _git(argv, env)
+            if done.returncode != 0:
+                return "git " + argv[2] + " failed: " + (done.stderr.strip().splitlines() or [""])[-1]
+        out = work / "out"
+        out.mkdir()
+        try:
+            done = subprocess.run(
+                [*builder, str(tree / INPUT_DIRS[0]), BIN_NAME + "-" + sha, str(out)],
+                capture_output=True, text=True, check=False, timeout=BUILD_TIMEOUT_S, env={**env, BUILD_COMMIT_ENV: sha},
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            return "the off-machine builder did not finish (" + str(error) + "); not building on this machine"
+        if done.returncode != 0:
+            last = (done.stderr.strip().splitlines() or [""])[-1]
+            return f"the off-machine builder exited {done.returncode}: {last}; not building on this machine"
+        wheels = sorted(out.glob("*.whl"))
+        if len(wheels) != 1:
+            return f"the off-machine builder left {len(wheels)} wheels (want 1); not building on this machine"
+        with zipfile.ZipFile(wheels[0]) as wheel:
+            members = [name for name in wheel.namelist() if WHEEL_MEMBER.fullmatch(name)]
+            if len(members) != 1:
+                return "the wheel " + wheels[0].name + " holds no " + BIN_NAME + " executable"
+            with wheel.open(members[0]) as source, open(target, "wb") as dest:
+                shutil.copyfileobj(source, dest)
+        target.chmod(0o755)
+    finally:
+        _git(["-C", str(checkout), "worktree", "remove", "--force", str(tree)], env)
+        shutil.rmtree(work, ignore_errors=True)
+    printed = subprocess.run([str(target), "--version"], capture_output=True, text=True, check=False).stdout or ""
+    found = COMMIT_PATTERN.search(printed)
+    # The wheel's linter names the last commit that changed its inputs (the backend's build commit), which is sha or an ancestor of it — the same linter.
+    if found and not found.group(2) and _git(["-C", str(checkout), "merge-base", "--is-ancestor", found.group(1), sha], env).returncode == 0:
+        return None
+    target.unlink(missing_ok=True)
+    return "the off-machine linter does not name " + sha + " or an ancestor of it: " + printed.strip()
+
+
 def inputs_key(checkout: Path, sha: str, env: dict[str, str]) -> str | None:
     """Ask the one place that decides the key (the `key` entry of the checkout's scripts/doeff_linter_locked.py) for the sha's build-input key — so that a linter with the same input
     is not rebuilt. If the entry is absent or does not answer, None (no reuse by key; it builds per sha)."""
@@ -278,7 +358,17 @@ def snapshot_linter(checkout: Path, rev: str, environ: dict[str, str], build: bo
             return SnapshotReady(place(store, sha, partial, key), built=False)
         if not build:
             return SnapshotUnavailable("the store " + str(store) + " has no linter of " + sha + " (lookup only — not built)")
-        work = Path(tempfile.mkdtemp(prefix="doeff-linter-snapshot-" + sha[:12] + "-"))
+        match wheel_builder(environ):
+            case str() as refused:
+                return SnapshotUnavailable(refused)
+            case list() as builder:
+                failure = away_into(checkout, sha, builder, partial, env)
+                if failure:
+                    return SnapshotUnavailable(failure)
+                return SnapshotReady(place(store, sha, partial, key), built=True)
+            case None:
+                pass
+        work =Path(tempfile.mkdtemp(prefix="doeff-linter-snapshot-" + sha[:12] + "-"))
         try:
             failure = extract_inputs(checkout, sha, work, env) or build_into(
                 work, sha, shared_cargo_target(environ), partial, env
