@@ -87,6 +87,7 @@ from doeff_hy._static_baseline import (
     split,
 )
 from doeff_hy._static_cache import (
+    BundleLoad,
     BundleRow,
     CachedFinding,
     CachedProjection,
@@ -98,7 +99,7 @@ from doeff_hy._static_cache import (
     bundle_signature,
     default_cache_dir,
     load,
-    load_bundle,
+    load_bundle_state,
     place,
     row_is_current,
     stat_of,
@@ -1090,9 +1091,10 @@ def project_closure(
     resolved = functools.cache(_present_candidates)
     seen: set[Path] = set(targets)
     wave = list(dict.fromkeys(targets))
-    # A store that bundles the whole closure into one file (a warm run reads just one bundle). Files that cannot be found via a bundle line are looked up the usual way.
+    # A store that bundles the whole closure into one SQLite file (a warm run reads just one bundle and updates only changed rows). Files that cannot be found via a bundle line are looked up the usual way.
     bundle_name = bundle_key(root, [str(t.relative_to(root)) for t in wave]) if cache_dir is not None else ""
-    bundle = load_bundle(cache_dir, bundle_name) if cache_dir is not None else {}
+    loaded_bundle = load_bundle_state(cache_dir, bundle_name) if cache_dir is not None else BundleLoad({})
+    bundle = loaded_bundle.rows
     rows: dict[str, BundleRow] = {}
     # The expansion cache's check of "does it match the current environment" stats the state of files once per run (discarding the memo on every check
     # came to 100,000 stats and 10 seconds of CPU when checking 10 files).
@@ -1122,8 +1124,14 @@ def project_closure(
                             seen.add(absolute)
                             found.append(absolute)
             wave = found
-    if cache_dir is not None and bundle_signature(rows) != bundle_signature(bundle):
-        store_bundle(cache_dir, bundle_name, rows)
+    if cache_dir is not None and not loaded_bundle.locked and bundle_signature(rows) != bundle_signature(bundle):
+        store_bundle(
+            cache_dir,
+            bundle_name,
+            rows,
+            report_failure=not loaded_bundle.failed,
+            force_upsert=loaded_bundle.corrupt_relatives,
+        )
     return Closure(projections, failures)
 
 

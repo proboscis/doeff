@@ -13,8 +13,10 @@ already loaded doeff_hy).
 import json
 import os
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
@@ -685,21 +687,29 @@ def _closure(tree: Tree) -> static_check.Closure:
 
 
 def _opened_during(tree: Tree, monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Paths of files under the root and cache opened while looking up a closure (counts source reads and entry reads)."""
+    """Paths of files under the root and cache opened while looking up a closure (counts source reads, entry reads, and SQLite bundle opens)."""
     import builtins
     import io
 
     opened: list[str] = []
-    real = io.open
+    real_open = io.open
+    real_connect = sqlite3.connect
 
-    def counting(file: object, *args: object, **kwargs: object) -> object:
+    def counting_open(file: object, *args: object, **kwargs: object) -> object:
         text = str(file)
         if text.startswith(str(tree.root.parent)):
             opened.append(text)
-        return real(file, *args, **kwargs)  # type: ignore[arg-type]
+        return real_open(file, *args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(io, "open", counting)
-    monkeypatch.setattr(builtins, "open", counting)
+    def counting_connect(database: object, *args: object, **kwargs: object) -> sqlite3.Connection:
+        text = str(database)
+        if text.startswith(str(tree.root.parent)):
+            opened.append(text)
+        return real_connect(database, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(io, "open", counting_open)
+    monkeypatch.setattr(builtins, "open", counting_open)
+    monkeypatch.setattr(sqlite3, "connect", counting_connect)
     try:
         _closure(tree)
     finally:
@@ -723,9 +733,10 @@ def test_a_warm_closure_opens_one_bundle_not_every_entry(
     opened = _opened_during(tree, monkeypatch)
     sources = [p for p in opened if p.endswith(".hy")]
     entries = [p for p in opened if p.endswith(".json")]
-    bundles = [p for p in opened if p.endswith(".jsonl")]
+    bundles = [p for p in opened if p.endswith(".sqlite3")]
     assert sources == [], f"a warm closure re-read the sources: {sources}"
     assert (entries, len(bundles)) == ([], 1), f"a warm closure read entries instead of one bundle: {opened}"
+    assert len(list((tree.cache / "bundles").iterdir())) == 1, "extra sidecar files left in bundles dir at rest"
     assert {p: q.text for p, q in second.projections.items()} == {p: q.text for p, q in first.projections.items()}
 
 
@@ -802,7 +813,7 @@ def test_a_bundle_follows_a_changed_macro_to_the_next_run(tree: Tree, monkeypatc
     opened = _opened_during(tree, monkeypatch)
     assert [p for p in opened if p.endswith(".hy")] == []
     assert [p for p in opened if p.endswith(".json")] == [], opened
-    assert len([p for p in opened if p.endswith(".jsonl")]) == 1, opened
+    assert len([p for p in opened if p.endswith(".sqlite3")]) == 1, opened
 
 
 # ---- Hold the position mapping compactly (memory the parent holds while pyright runs)--------------------------------------------
@@ -835,3 +846,333 @@ def test_an_entry_with_unreadable_spans_is_a_miss(tmp_path: Path) -> None:
     used = record_to_json(MacroRecord("probe", (), (), (), (), ()))
     entry = {"version": static_cache.CACHE_VERSION, "used": used, "text": "t", "spans": "not base64!", "findings": []}
     assert isinstance(_entry_from_json(entry), CacheMiss)
+
+
+def _process_wchar() -> int:
+    """Total bytes passed to write/pwrite syscalls by this process (Linux /proc/self/io)."""
+    for line in Path("/proc/self/io").read_text(encoding="utf-8").splitlines():
+        if line.startswith("wchar:"):
+            return int(line.split()[1])
+    raise RuntimeError("wchar field missing from /proc/self/io")
+
+
+def _bundle_total_bytes(cache_dir: Path) -> int:
+    bundles = cache_dir / "bundles"
+    if not bundles.is_dir():
+        return 0
+    return sum(path.stat().st_size for path in bundles.iterdir() if path.is_file())
+
+
+def _make_large_closure(root: Path, count: int = 305) -> tuple[Path, list[Path]]:
+    """Build a package of ``count`` leaf .hy modules imported by one entry module (count + 1 rows in the bundle)."""
+    package = root / "large_bundle_pkg"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    body = "\n".join(f"(defn f{j} [x] (+ x {j}))" for j in range(10)) + "\n"
+    leaves: list[Path] = []
+    for i in range(count):
+        leaf = package / f"m{i:03d}.hy"
+        leaf.write_text(body, encoding="utf-8")
+        leaves.append(leaf)
+    entry = package / "entry.hy"
+    imports = "\n".join(f"(import large_bundle_pkg.m{i:03d})" for i in range(count))
+    entry.write_text(imports + "\n(setv root_val 1)\n", encoding="utf-8")
+    for path in root.rglob("*"):
+        if path.is_file():
+            os.utime(path, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+    return entry, leaves
+
+
+def test_changing_one_file_in_a_large_bundle_writes_at_most_20_percent_of_bundle_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With 300+ rows in the bundle, editing one file must not rewrite the whole bundle (written bytes <= 20% of bundle size)."""
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    root = tmp_path / "proj"
+    cache = tmp_path / ".cache"
+    entry, leaves = _make_large_closure(root, count=305)
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        initial = static_check.project_closure(root, [root], [entry], cache, 1)
+        assert len(initial.projections) >= 300
+        bundle_size = _bundle_total_bytes(cache)
+        assert bundle_size > 0
+
+        target = leaves[0]
+        target.write_text(target.read_text(encoding="utf-8") + "(defn added [x] (+ x 999))\n", encoding="utf-8")
+        os.utime(target, ns=(1_000_000_000_000_000_001, 1_000_000_000_000_000_001))
+
+        before = _process_wchar()
+        updated = static_check.project_closure(root, [root], [entry], cache, 1)
+        written = _process_wchar() - before
+
+        assert len(updated.projections) == len(initial.projections)
+        assert "def added" in updated.projections[target].text
+        assert written <= bundle_size * 0.2, (
+            f"editing 1 of {len(initial.projections)} rows wrote {written} bytes "
+            f"({written / bundle_size:.1%} of {bundle_size}-byte bundle; limit 20%)"
+        )
+    finally:
+        _forget("large_bundle_pkg")
+
+
+def test_twenty_consecutive_single_file_edits_write_at_most_twice_the_bundle_size(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Across 20 consecutive single-file edits on a 300+ row bundle, total bytes written (including any journal/rewrite overhead) stay <= 2x bundle size."""
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    root = tmp_path / "proj"
+    cache = tmp_path / ".cache"
+    entry, leaves = _make_large_closure(root, count=305)
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        initial = static_check.project_closure(root, [root], [entry], cache, 1)
+        assert len(initial.projections) >= 300
+        bundle_size = _bundle_total_bytes(cache)
+        assert bundle_size > 0
+
+        total_written = 0
+        for index in range(20):
+            target = leaves[index]
+            target.write_text(
+                target.read_text(encoding="utf-8") + f"(defn edit_{index} [x] (+ x {index + 100}))\n",
+                encoding="utf-8",
+            )
+            os.utime(target, ns=(1_000_000_000_000_000_001 + index, 1_000_000_000_000_000_001 + index))
+            before = _process_wchar()
+            updated = static_check.project_closure(root, [root], [entry], cache, 1)
+            total_written += _process_wchar() - before
+            assert f"def edit_{index}" in updated.projections[target].text
+
+        assert total_written <= bundle_size * 2.0, (
+            f"20 single-file edits wrote {total_written} bytes "
+            f"({total_written / bundle_size:.2f}x of {bundle_size}-byte bundle; limit 2.00x)"
+        )
+    finally:
+        _forget("large_bundle_pkg")
+
+
+def test_editing_one_file_reexpands_only_that_file_and_warm_run_expands_zero(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A warm run passes 0 sources to _Expanders.expanded, and editing 1 file passes exactly that 1 source."""
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    root = tmp_path / "proj"
+    cache = tmp_path / ".cache"
+    entry, leaves = _make_large_closure(root, count=20)
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        static_check.project_closure(root, [root], [entry], cache, 1)
+
+        expanded_calls: list[list[Path]] = []
+        real_expanded = static_check._Expanders.expanded
+
+        def recording_expanded(
+            self: static_check._Expanders,
+            r: Path,
+            roots: list[Path],
+            sources: list[Path],
+        ) -> object:
+            expanded_calls.append(list(sources))
+            return real_expanded(self, r, roots, sources)
+
+        monkeypatch.setattr(static_check._Expanders, "expanded", recording_expanded)
+
+        # Warm run: nothing changed -> 0 sources expanded.
+        static_check.project_closure(root, [root], [entry], cache, 1)
+        warm_sources = [source for batch in expanded_calls for source in batch]
+        assert warm_sources == [], f"warm run re-expanded sources: {warm_sources}"
+
+        # Edit 1 file -> exactly that 1 source passed to expanders.expanded.
+        expanded_calls.clear()
+        target = leaves[3]
+        target.write_text(target.read_text(encoding="utf-8") + "(defn only_one [x] x)\n", encoding="utf-8")
+        os.utime(target, ns=(1_000_000_000_000_000_002, 1_000_000_000_000_000_002))
+        updated = static_check.project_closure(root, [root], [entry], cache, 1)
+        changed_sources = [source for batch in expanded_calls for source in batch]
+        assert changed_sources == [target], f"expected only [{target}] to be expanded, got {changed_sources}"
+        assert "def only_one" in updated.projections[target].text
+    finally:
+        _forget("large_bundle_pkg")
+
+
+def _closure_snapshot(closure: static_check.Closure) -> dict[str, tuple[str, tuple[static_cache.Span, ...], tuple[object, ...]]]:
+    return {
+        str(path): (projection.text, tuple(projection.spans), projection.findings)
+        for path, projection in sorted(closure.projections.items())
+    }
+
+
+def test_two_processes_writing_the_same_cache_dir_concurrently_produce_exact_expansions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two OS processes updating the same cache_dir and bundle concurrently both succeed and match cache-less expansion."""
+    monkeypatch.setattr(sys, "dont_write_bytecode", True)
+    monkeypatch.setenv("DOEFF_HY_CODE_STORE", "off")
+    root = tmp_path / "proj"
+    cache = tmp_path / ".cache"
+    entry, leaves = _make_large_closure(root, count=30)
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        # Warm initial bundle so both processes contend on the same SQLite bundle file.
+        static_check.project_closure(root, [root], [entry], cache, 1)
+        fresh = static_check.project_closure(root, [root], [entry], None, 1)
+        expected = {str(p): proj.text for p, proj in sorted(fresh.projections.items())}
+    finally:
+        _forget("large_bundle_pkg")
+
+    worker_script = """\
+import json, os, sys
+from pathlib import Path
+from doeff_hy import _static_check as static_check
+
+root = Path(sys.argv[1])
+cache = Path(sys.argv[2])
+entry = Path(sys.argv[3])
+touch_target = Path(sys.argv[4])
+
+sys.path.insert(0, str(root))
+print("READY", flush=True)
+sys.stdin.readline()
+# Touch one leaf so each process triggers a bundle write.
+os.utime(touch_target, ns=(1_000_000_000_000_000_050, 1_000_000_000_000_000_050))
+closure = static_check.project_closure(root, [root], [entry], cache, 1)
+print(json.dumps({str(p): proj.text for p, proj in sorted(closure.projections.items())}), flush=True)
+"""
+    env = dict(os.environ)
+    env["DOEFF_HY_CODE_STORE"] = "off"
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    env["PYTHONPATH"] = str(Path(doeff_hy.__file__).resolve().parents[1])
+
+    p1 = subprocess.Popen(
+        [sys.executable, "-c", worker_script, str(root), str(cache), str(entry), str(leaves[0])],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    p2 = subprocess.Popen(
+        [sys.executable, "-c", worker_script, str(root), str(cache), str(entry), str(leaves[1])],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    try:
+        assert p1.stdout is not None and p2.stdout is not None
+        assert p1.stdin is not None and p2.stdin is not None
+        assert p1.stdout.readline().strip() == "READY"
+        assert p2.stdout.readline().strip() == "READY"
+        p1.stdin.write("GO\n")
+        p2.stdin.write("GO\n")
+        p1.stdin.close()
+        p2.stdin.close()
+        out1, err1 = p1.communicate(timeout=60)
+        out2, err2 = p2.communicate(timeout=60)
+    finally:
+        for proc in (p1, p2):
+            if proc.poll() is None:
+                proc.kill()
+
+    assert p1.returncode == 0, err1
+    assert p2.returncode == 0, err2
+    assert json.loads(out1) == expected
+    assert json.loads(out2) == expected
+
+    # Follow-up read from the shared bundle also matches cache-less expansion.
+    monkeypatch.syspath_prepend(str(root))
+    try:
+        after = static_check.project_closure(root, [root], [entry], cache, 1)
+        assert {str(p): proj.text for p, proj in sorted(after.projections.items())} == expected
+    finally:
+        _forget("large_bundle_pkg")
+
+
+def _prepare_bundle_failure_fixture(
+    tree: Tree, capsys: pytest.CaptureFixture[str]
+) -> tuple[Path, dict[str, tuple[str, tuple[static_cache.Span, ...], tuple[object, ...]]]]:
+    _age(tree)
+    fresh = static_check.project_closure(tree.root, [tree.root], [tree.user], None, 1)
+    expected = _closure_snapshot(fresh)
+    _forget(PACKAGE)
+    _closure(tree)
+    capsys.readouterr()
+    bundle_name = static_cache.bundle_key(tree.root, [str(tree.user.relative_to(tree.root))])
+    bundle_path = static_cache._bundle_path(tree.cache, bundle_name)
+    assert bundle_path.is_file()
+    return bundle_path, expected
+
+
+def test_corrupt_bundle_and_corrupt_row_report_to_stderr_and_continue(
+    tree: Tree, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A corrupt bundle file or a corrupt row inside SQLite must not stop checking, must match cache-less output, and must report one line to stderr."""
+    bundle_path, expected = _prepare_bundle_failure_fixture(tree, capsys)
+
+    # 1. Corrupt bundle file (invalid SQLite bytes).
+    bundle_path.write_bytes(b"not a valid sqlite bundle file!!!")
+    after_corrupt = _closure(tree)
+    err_corrupt = capsys.readouterr().err.strip().splitlines()
+    assert _closure_snapshot(after_corrupt) == expected
+    assert len(err_corrupt) == 1, err_corrupt
+    assert str(bundle_path) in err_corrupt[0]
+
+    # 2. Corrupt row inside an otherwise valid SQLite bundle (also verifies repair on the same run).
+    conn = sqlite3.connect(bundle_path, isolation_level=None)
+    try:
+        conn.execute("UPDATE rows SET entry = '{truncated json'")
+    finally:
+        conn.close()
+    after_bad_row = _closure(tree)
+    err_bad_row = capsys.readouterr().err.strip().splitlines()
+    assert _closure_snapshot(after_bad_row) == expected
+    assert len(err_bad_row) == 1, err_bad_row
+    assert str(bundle_path) in err_bad_row[0]
+    assert "corrupt row" in err_bad_row[0]
+
+
+def test_locked_bundle_and_write_failure_report_to_stderr_and_continue(
+    tree: Tree, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Lock timeout (<= 5s) and write failure must not stop checking, must match cache-less output, and must report one line to stderr."""
+    bundle_path, expected = _prepare_bundle_failure_fixture(tree, capsys)
+
+    # 1. Lock cannot be acquired: another connection holds BEGIN EXCLUSIVE. Must time out in <= 5s.
+    assert static_cache.BUNDLE_LOCK_TIMEOUT_SECONDS <= 5.0
+    holder = sqlite3.connect(bundle_path, timeout=0.5, isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        started = time.monotonic()
+        after_lock = _closure(tree)
+        elapsed = time.monotonic() - started
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    err_lock = capsys.readouterr().err.strip().splitlines()
+    assert elapsed <= 5.0, f"lock wait exceeded 5s: {elapsed:.2f}s"
+    assert _closure_snapshot(after_lock) == expected
+    assert len(err_lock) == 1, err_lock
+    assert str(bundle_path) in err_lock[0]
+    assert "locked" in err_lock[0].lower()
+
+    # 2. Write failure (bundle file read-only while a source changes).
+    _rewrite(tree.user, USER + "(setv ro_check 1)\n")
+    expected_after_edit = _closure_snapshot(static_check.project_closure(tree.root, [tree.root], [tree.user], None, 1))
+    _forget(PACKAGE)
+    os.chmod(bundle_path, 0o444)
+    try:
+        after_ro = _closure(tree)
+    finally:
+        os.chmod(bundle_path, 0o644)
+    err_ro = capsys.readouterr().err.strip().splitlines()
+    assert _closure_snapshot(after_ro) == expected_after_edit
+    assert len(err_ro) == 1, err_ro
+    assert str(bundle_path) in err_ro[0]
+    assert "write failed" in err_ro[0]
+
+

@@ -30,6 +30,7 @@ import base64
 import hashlib
 import json
 import os
+import sqlite3
 import sys
 import time
 import zlib
@@ -324,26 +325,12 @@ def _write_atomically(path: Path, payload: object) -> None:
         temporary.unlink(missing_ok=True)
 
 
-def _write_chunks_atomically(path: Path, chunks: Iterable[str]) -> None:
-    """To write a JSON string fragment by fragment to a temporary file and rename it (if the bundle made all rows one payload, merely writing would create the small objects of the whole closure
-    at once; building and writing row by row lets the next row reuse the memory of discarded rows)."""
-    temporary = path.with_name(f"{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp")
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with temporary.open("w", encoding="utf-8") as stream:
-            for chunk in chunks:
-                stream.write(chunk)
-        temporary.replace(path)
-    except OSError:
-        temporary.unlink(missing_ok=True)
-
-
 # --- Per-closure bundle -------------------------------------------------------------------------
 #
 # A per-.hy entry opens twice on every lookup (reading the source and reading the entry; over 700 times for a 367-file closure). The bundle puts the rows of the whole closure
-# (location name, expansion, record of macros used) into one file per set of checked files, so a warm run opens
-# the bundle once. The bundle is a copy only for speed and the entries remain the source of truth: a file missing from or not matching the bundle falls back to the usual lookup (decide
-# the location from the source content and look up the entry), and the bundle is rewritten at the end of that run.
+# (location name, expansion, record of macros used) into one SQLite file per set of checked files, so a warm run opens
+# the bundle once and updates only changed, added, or removed rows instead of rewriting the whole closure. The bundle is a copy only for speed and the entries remain the source of truth:
+# a file missing from or not matching the bundle falls back to the usual lookup (decide the location from the source content and look up the entry), and only changed rows are written at the end of that run.
 #
 # Property of not using stale expansions (the same two checks as the entry lookup):
 # - source: a row holds the source size and mtime from when the bundle was written. If the current stat is the same, the content is trusted as the same; if different, rebuild
@@ -351,10 +338,13 @@ def _write_chunks_atomically(path: Path, chunks: Iterable[str]) -> None:
 #   To avoid trusting and missing a rewrite that changes content while keeping size and mtime, a file whose mtime is newer than RACY_NS before the bundle write time
 #   becomes a row without a stat and is checked by content every time (same as git's index racy check).
 # - macro: each row is checked against the current environment with ``record_is_current_here(used)`` (same as an entry).
-# Version 2 = JSON Lines (first line = version, each following line = one file; read and written line by line).
-BUNDLE_VERSION = 2
+# Version 2 = JSON Lines (first line = version, each following line = one file; rewrote the entire file on any change).
+# Version 3 = SQLite database (default DELETE rollback journal: one file at rest, one open on warm read, row-level incremental updates on change).
+BUNDLE_VERSION = 3
 #: A file updated within this span of the bundle write time is not trusted by mtime and size (a rewrite within the same tick of a coarse clock).
 RACY_NS = 2_000_000_000
+#: Upper bound in seconds for waiting on a SQLite lock on a bundle before reporting the failure and continuing without the bundle.
+BUNDLE_LOCK_TIMEOUT_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -383,6 +373,16 @@ class PlacedBundleRow:
     row: BundleRow
 
 
+@dataclass(frozen=True)
+class BundleLoad:
+    """Result of reading a bundle: usable rows, whether a lock timed out, whether an error was reported, and relative paths of corrupt rows to repair."""
+
+    rows: dict[str, BundleRow]
+    locked: bool = False
+    failed: bool = False
+    corrupt_relatives: frozenset[str] = frozenset()
+
+
 def bundle_key(root: Path, targets: Sequence[str]) -> str:
     """Name of the bundle (determined by the root, the set of relative paths of checked files, and the storage format version)."""
     digest = hashlib.sha256()
@@ -393,52 +393,110 @@ def bundle_key(root: Path, targets: Sequence[str]) -> str:
 
 
 def _bundle_path(cache_dir: Path, key: str) -> Path:
-    return cache_dir / "bundles" / f"{key}.jsonl"
+    return cache_dir / "bundles" / f"{key}.sqlite3"
+
+
+def _report_bundle_error(path: Path, action: str, detail: object) -> None:
+    """Write one diagnostic line to stderr naming the bundle and failure so falling back from the bundle is never silent."""
+    print(f"doeff-hy-check: bundle {path} {action} failed ({detail}); continuing without bundle", file=sys.stderr)
+
+
+def _is_lock_error(error: BaseException) -> bool:
+    if not isinstance(error, sqlite3.OperationalError):
+        return False
+    message = str(error).lower()
+    return "locked" in message or "busy" in message
+
+
+def _is_corrupt_db_error(error: BaseException) -> bool:
+    if isinstance(error, sqlite3.OperationalError):
+        return False
+    return isinstance(error, sqlite3.DatabaseError)
+
+
+def _connect_bundle(path: Path) -> sqlite3.Connection:
+    return sqlite3.connect(path, timeout=BUNDLE_LOCK_TIMEOUT_SECONDS, isolation_level=None)
+
+
+def _bundle_row_from_db(
+    relative: object,
+    module: object,
+    place_name: object,
+    stat_size: object,
+    stat_mtime_ns: object,
+    entry_text: object,
+) -> tuple[PlacedBundleRow | None, str]:
+    """Build one BundleRow from a SQLite row (returns (None, reason) if malformed)."""
+    if not (isinstance(relative, str) and isinstance(module, str) and isinstance(place_name, str) and isinstance(entry_text, str)):
+        return None, "column type mismatch"
+    try:
+        loaded: object = json.loads(entry_text)
+    except json.JSONDecodeError as error:
+        return None, f"invalid entry JSON: {error}"
+    cached = _entry_from_json(loaded)
+    if isinstance(cached, CacheMiss):
+        return None, cached.reason
+    if stat_size is None and stat_mtime_ns is None:
+        stat: FileStat | None = None
+    elif (
+        isinstance(stat_size, int)
+        and not isinstance(stat_size, bool)
+        and isinstance(stat_mtime_ns, int)
+        and not isinstance(stat_mtime_ns, bool)
+    ):
+        stat = FileStat(stat_size, stat_mtime_ns)
+    else:
+        return None, "invalid stat columns"
+    return PlacedBundleRow(relative, BundleRow(module, place_name, stat, cached)), ""
+
+
+def load_bundle_state(cache_dir: Path, key: str) -> BundleLoad:
+    """Read the SQLite bundle row by row. Missing bundle is a normal cold miss; corrupt, locked, or unreadable bundles report one line to stderr and fall back."""
+    path = _bundle_path(cache_dir, key)
+    try:
+        if not path.exists():
+            return BundleLoad({})
+    except OSError as error:
+        _report_bundle_error(path, "read", error)
+        return BundleLoad({}, failed=True)
+
+    connection: sqlite3.Connection | None = None
+    try:
+        connection = _connect_bundle(path)
+        meta = dict(connection.execute("SELECT key, value FROM meta"))
+        if meta.get("bundle_version") != str(BUNDLE_VERSION) or meta.get("cache_version") != str(CACHE_VERSION):
+            _report_bundle_error(path, "read", f"unexpected metadata {meta!r}")
+            return BundleLoad({}, failed=True)
+        found: dict[str, BundleRow] = {}
+        corrupt_rows = 0
+        corrupt_relatives: set[str] = set()
+        first_reason = ""
+        for relative, module, place_name, stat_size, stat_mtime_ns, entry_text in connection.execute(
+            "SELECT relative, module, place, stat_size, stat_mtime_ns, entry FROM rows"
+        ):
+            parsed, reason = _bundle_row_from_db(relative, module, place_name, stat_size, stat_mtime_ns, entry_text)
+            if parsed is None:
+                corrupt_rows += 1
+                if isinstance(relative, str):
+                    corrupt_relatives.add(relative)
+                if not first_reason:
+                    first_reason = reason
+                continue
+            found[parsed.relative] = parsed.row
+        if corrupt_rows:
+            _report_bundle_error(path, "read", f"skipped {corrupt_rows} corrupt row(s): {first_reason}")
+        return BundleLoad(found, failed=corrupt_rows > 0, corrupt_relatives=frozenset(corrupt_relatives))
+    except (sqlite3.Error, OSError) as error:
+        _report_bundle_error(path, "read", error)
+        return BundleLoad({}, locked=_is_lock_error(error), failed=True)
+    finally:
+        if connection is not None:
+            connection.close()
 
 
 def load_bundle(cache_dir: Path, key: str) -> dict[str, BundleRow]:
-    """Read the bundle (empty if missing, unreadable or malformed; the caller uses the usual lookup. Only corrupt rows are skipped). Read line by line into rows
-    (reading the whole as one JSON would create the small objects of the whole closure at once, and that pile stayed in RSS during pyright)."""
-    found: dict[str, BundleRow] = {}
-    try:
-        with _bundle_path(cache_dir, key).open(encoding="utf-8") as stream:
-            try:
-                header: object = json.loads(stream.readline())
-            except json.JSONDecodeError:
-                return {}
-            match header:
-                case {"version": int(version)} if version == BUNDLE_VERSION:
-                    pass
-                case _:
-                    return {}
-            for line in stream:
-                try:
-                    row: object = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (kept := _bundle_row(row)) is not None:
-                    found[kept.relative] = kept.row
-    except OSError:
-        return {}
-    return found
-
-
-def _bundle_row(row: object) -> PlacedBundleRow | None:
-    """To turn one bundle row into its relative path and row (None for a malformed row or one whose entry is unreadable; skipped)."""
-    match row:
-        case {"relative": str(relative), "module": str(module), "place": str(place), "stat": stat, "entry": entry}:
-            cached = _entry_from_json(entry)
-            if isinstance(cached, CacheMiss):
-                return None
-            match stat:
-                case [int(size), int(mtime)]:
-                    return PlacedBundleRow(relative, BundleRow(module, place, FileStat(size, mtime), cached))
-                case None:
-                    return PlacedBundleRow(relative, BundleRow(module, place, None, cached))
-                case _:
-                    return None
-        case _:
-            return None
+    """Read the bundle (empty if missing, unreadable, locked, or malformed; reports bundle failures to stderr)."""
+    return load_bundle_state(cache_dir, key).rows
 
 
 def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, str, FileStat | None]]:
@@ -456,25 +514,118 @@ def bundle_signature(rows: dict[str, BundleRow]) -> dict[str, tuple[str, str, st
     }
 
 
-def store_bundle(cache_dir: Path, key: str, rows: dict[str, BundleRow]) -> None:
-    """Write the bundle (checking continues even if writing fails)."""
-    signature = bundle_signature(rows)
+def _recreate_bundle_schema(connection: sqlite3.Connection) -> None:
+    connection.execute("DROP TABLE IF EXISTS rows")
+    connection.execute("DROP TABLE IF EXISTS meta")
+    connection.execute("CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+    connection.execute(
+        "CREATE TABLE rows ("
+        "relative TEXT PRIMARY KEY, "
+        "module TEXT NOT NULL, "
+        "place TEXT NOT NULL, "
+        "record_fp TEXT NOT NULL, "
+        "stat_size INTEGER, "
+        "stat_mtime_ns INTEGER, "
+        "entry TEXT NOT NULL"
+        ")"
+    )
+    connection.executemany(
+        "INSERT INTO meta (key, value) VALUES (?, ?)",
+        [("bundle_version", str(BUNDLE_VERSION)), ("cache_version", str(CACHE_VERSION))],
+    )
 
-    def chunks() -> Iterator[str]:
-        """To build the bundle's JSON Lines (first line = version, each following line = one file) line by line."""
-        yield json.dumps({"version": BUNDLE_VERSION}) + "\n"
-        for relative, row in rows.items():
-            stat = signature[relative][3]
-            line = {
-                "relative": relative,
-                "module": signature[relative][0],
-                "place": signature[relative][1],
-                "stat": [stat.size, stat.mtime_ns] if stat is not None else None,
-                "entry": _entry_payload(row.cached),
+
+def _write_bundle_db(
+    path: Path,
+    rows: dict[str, BundleRow],
+    signature: dict[str, tuple[str, str, str, FileStat | None]],
+    force_upsert: frozenset[str] = frozenset(),
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = _connect_bundle(path)
+    try:
+        connection.execute("PRAGMA synchronous = OFF")
+        connection.execute("BEGIN IMMEDIATE")
+        try:
+            tables = {
+                name
+                for (name,) in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('meta', 'rows')"
+                )
             }
-            yield json.dumps(line, ensure_ascii=False) + "\n"
+            schema_current = False
+            existing: dict[str, tuple[str, str, str, FileStat | None]] = {}
+            if tables == {"meta", "rows"}:
+                meta = dict(connection.execute("SELECT key, value FROM meta"))
+                if meta.get("bundle_version") == str(BUNDLE_VERSION) and meta.get("cache_version") == str(CACHE_VERSION):
+                    schema_current = True
+                    for rel, mod, pl, fp, sz, mt in connection.execute(
+                        "SELECT relative, module, place, record_fp, stat_size, stat_mtime_ns FROM rows"
+                    ):
+                        stat = FileStat(sz, mt) if sz is not None and mt is not None else None
+                        existing[rel] = (mod, pl, fp, stat)
+            if not schema_current:
+                _recreate_bundle_schema(connection)
+            to_delete = [rel for rel in existing if rel not in signature]
+            to_upsert = [rel for rel, sig in signature.items() if existing.get(rel) != sig or rel in force_upsert]
+            if schema_current and not to_delete and not to_upsert:
+                connection.execute("ROLLBACK")
+                return
+            if to_delete:
+                connection.executemany("DELETE FROM rows WHERE relative = ?", [(rel,) for rel in to_delete])
+            for rel in to_upsert:
+                mod, pl, fp, stat = signature[rel]
+                entry_json = json.dumps(_entry_payload(rows[rel].cached), ensure_ascii=False)
+                connection.execute(
+                    "INSERT OR REPLACE INTO rows (relative, module, place, record_fp, stat_size, stat_mtime_ns, entry) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        rel,
+                        mod,
+                        pl,
+                        fp,
+                        stat.size if stat is not None else None,
+                        stat.mtime_ns if stat is not None else None,
+                        entry_json,
+                    ),
+                )
+            connection.execute("COMMIT")
+        except BaseException:
+            if connection.in_transaction:
+                connection.execute("ROLLBACK")
+            raise
+    finally:
+        connection.close()
 
-    _write_chunks_atomically(_bundle_path(cache_dir, key), chunks())
+
+def store_bundle(
+    cache_dir: Path,
+    key: str,
+    rows: dict[str, BundleRow],
+    *,
+    report_failure: bool = True,
+    force_upsert: frozenset[str] = frozenset(),
+) -> None:
+    """Incrementally update the SQLite bundle (writes only changed, added, or removed rows; checking continues even if writing fails)."""
+    path = _bundle_path(cache_dir, key)
+    signature = bundle_signature(rows)
+    try:
+        _write_bundle_db(path, rows, signature, force_upsert)
+    except sqlite3.DatabaseError as error:
+        if _is_corrupt_db_error(error):
+            try:
+                path.unlink(missing_ok=True)
+                _write_bundle_db(path, rows, signature, force_upsert)
+                return
+            except (sqlite3.Error, OSError) as retry_error:
+                if report_failure:
+                    _report_bundle_error(path, "write", retry_error)
+                return
+        if report_failure:
+            _report_bundle_error(path, "write", error)
+    except (sqlite3.Error, OSError) as error:
+        if report_failure:
+            _report_bundle_error(path, "write", error)
 
 
 def stat_of(path: Path) -> FileStat | None:
