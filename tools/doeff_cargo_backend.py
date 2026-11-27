@@ -113,6 +113,11 @@ WHEEL_REMOTE_DEFAULT = "https://github.com/proboscis/doeff/releases/download/rus
 WHEEL_REMOTE_TIMEOUT_SECONDS = 20
 # Env naming the file to which a one-line JSON of the stored wheel and whether it was built is appended (the report from the header note -- nothing is written if unset).
 WHEEL_REPORT_ENV = "DOEFF_WHEEL_REPORT"
+# Env naming the off-machine builder (a JSON list of argv -- the builder from the header note). Unset or empty = build on this machine as before.
+WHEEL_BUILDER_ENV = "DOEFF_WHEEL_BUILDER"
+# Seconds the builder may take (queueing for a place, building on a cold target, and fetching the wheel back) before the build fails.
+WHEEL_BUILDER_TIMEOUT_ENV = "DOEFF_WHEEL_BUILDER_TIMEOUT"
+WHEEL_BUILDER_TIMEOUT_SECONDS = 1800
 # Used marker of a store dir (advances the dir's mtime -- the worker's cleanup picks dirs unused for 7 days by dir mtime).
 USED_MARK = ".used"
 # Default build-relevant files (globs from the package dir) for a package that declares no tool.uv.cache-keys files.
@@ -136,8 +141,9 @@ NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 ConfigSettings: TypeAlias = Mapping[str, str | list[str]]
 # Function that builds a wheel when the store has none: (this build's cargo target, dir to write the wheel into, build settings) -> file name of the wheel written.
 Compile: TypeAlias = Callable[[Path, str, "ConfigSettings | None"], str]
-# Origin of a stored wheel: local = found in the local store; remote = fetched from the off-machine store; built = built by this call.
-WheelSource: TypeAlias = Literal["local", "remote", "built"]
+# Origin of a stored wheel: local = found in the local store; remote = fetched from the off-machine store; away = built by the off-machine builder for this call;
+# built = built on this machine by this call.
+WheelSource: TypeAlias = Literal["local", "remote", "away", "built"]
 
 
 @dataclass(frozen=True)
@@ -149,7 +155,7 @@ class StoredWheel:
 
     @property
     def built(self) -> bool:
-        """Whether this call built it (it was in neither the local store nor the remote store, or it was corrupt)."""
+        """Whether this call built it on this machine (it was in neither the local store nor the remote store, or it was corrupt, and no builder was named)."""
         return self.source == "built"
 
 
@@ -257,6 +263,13 @@ def stored_wheel(package: Path, config_settings: ConfigSettings | None, compile_
             return _write_report(package, StoredWheel(path=fetched, source="remote"))
         case None:
             pass
+    match _wheel_builder():
+        case list() as builder:
+            with _build_commit_env(claim):
+                away = _away_wheel(builder, package, slot)
+            return _write_report(package, StoredWheel(path=away, source="away"))
+        case None:
+            pass
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="doeff-wheel-out-") as out:
         with cargo_target_dir() as target, _build_commit_env(claim):
@@ -302,6 +315,60 @@ def _remote_wheel(slot: Path) -> Path | None:
         raw.rename(named)
         placed = _store_wheel(slot, named)
     print(f"doeff_cargo_backend: using remote store wheel (no build) -- {name} from {url}", file=sys.stderr)
+    return placed
+
+
+def _wheel_builder() -> list[str] | None:
+    """The off-machine builder's argv from env DOEFF_WHEEL_BUILDER (the builder from the header note). None = unset or empty (build on this machine).
+    A value that is not a non-empty JSON list of strings fails the build naming the setting -- it never falls back to building here."""
+    match os.environ.get(WHEEL_BUILDER_ENV, ""):
+        case "":
+            return None
+        case str() as raw:
+            pass
+    try:
+        argv = json.loads(raw)
+    except json.JSONDecodeError:
+        argv = None
+    match argv:
+        case [str(), *rest] if all(isinstance(arg, str) for arg in rest):
+            return list(argv)
+        case _:
+            raise RuntimeError(f"doeff_cargo_backend: env {WHEEL_BUILDER_ENV} is not a JSON list of argv strings ({raw!r}); not building on this machine")
+
+
+def _away_wheel(builder: list[str], package: Path, slot: Path) -> Path:
+    """Have the off-machine builder build the key's wheel: run `<builder> <package dir> <slot name> <out dir>`, take the one wheel it wrote into the out dir,
+    verify it with the RECORD hashes, and place it in the local store (the builder from the header note). Answer = the wheel placed in the local store.
+    A builder that fails, times out, writes no wheel or more than one, or writes a corrupt wheel fails the build with the reason -- nothing is compiled here."""
+    timeout = float(os.environ.get(WHEEL_BUILDER_TIMEOUT_ENV) or WHEEL_BUILDER_TIMEOUT_SECONDS)
+    started = time.monotonic()
+    print(f"doeff_cargo_backend: no wheel with the same key in either store -- handing {slot.name} to the builder {builder[0]}", file=sys.stderr)
+    with tempfile.TemporaryDirectory(prefix="doeff-wheel-away-") as out:
+        try:
+            done = subprocess.run([*builder, str(package), slot.name, out], stdout=sys.stderr, stderr=subprocess.PIPE, text=True, timeout=timeout, check=False)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(f"doeff_cargo_backend: the builder did not finish {slot.name} in {timeout:.0f} s; not building on this machine") from None
+        except OSError as error:
+            raise RuntimeError(f"doeff_cargo_backend: cannot start the builder {builder[0]} ({error}); not building on this machine") from None
+        sys.stderr.write(done.stderr)
+        if done.returncode != 0:
+            last = (done.stderr.strip().splitlines() or ["(no output)"])[-1]
+            raise RuntimeError(f"doeff_cargo_backend: the builder failed for {slot.name} (code {done.returncode}): {last}; not building on this machine")
+        match sorted(Path(out).glob("*.whl")):
+            case [wheel]:
+                pass
+            case []:
+                raise RuntimeError(f"doeff_cargo_backend: the builder exited 0 but wrote no wheel for {slot.name}; not building on this machine")
+            case several:
+                raise RuntimeError(f"doeff_cargo_backend: the builder wrote {len(several)} wheels for {slot.name}; not building on this machine")
+        match _wheel_problem(wheel):
+            case str() as problem:
+                raise RuntimeError(f"doeff_cargo_backend: the builder's wheel for {slot.name} is corrupt ({problem}); not using it, not building on this machine")
+            case None:
+                pass
+        placed = _store_wheel(slot, wheel)
+    print(f"doeff_cargo_backend: using the builder's wheel ({time.monotonic() - started:.0f} s, no build here) -- {placed.name} placed in {slot}", file=sys.stderr)
     return placed
 
 

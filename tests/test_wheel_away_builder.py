@@ -1,5 +1,5 @@
 """Failing cases for the build entry point (stored_wheel in tools/doeff_cargo_backend.py) handing a build to an off-machine builder instead of compiling
-on the calling machine (ADR-DOE-BUILD-001 R6).
+on the calling machine (the builder from the header note of tools/doeff_cargo_backend.py).
 
 A machine that must not compile Rust itself (a shared worker host whose CPU is shared with other work) names a builder command in env DOEFF_WHEEL_BUILDER
 (a JSON list of argv). When neither the local store nor the remote store has the key's wheel, the entry point runs that command instead of maturin / cargo,
