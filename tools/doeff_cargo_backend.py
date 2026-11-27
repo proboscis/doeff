@@ -49,8 +49,16 @@ store. Only doeff's GitHub Actions (.github/workflows/rust-wheels.yml) writes to
 (404, network failure, timeout, corrupt wheel), one line naming the cause is printed and the build proceeds as before. env DOEFF_WHEEL_REMOTE replaces the store's base, and an empty value
 disables the store lookup (for checks of the local build path, and places with no network). uv's find-links and index are not used (uv does not use them for path, editable, or git dependencies).
 
+Off-machine builder (_wheel_builder, _away_wheel): a machine that must not compile Rust itself (a shared host whose CPU other work needs -- a build there took
+8 minutes of it in the minutes before CI uploaded the wheel) names a builder command in env DOEFF_WHEEL_BUILDER (a JSON list of argv). When neither store has
+the key, the entry runs `<builder> <package dir> <slot name> <out dir>` (with the build-commit env set as for a local build, up to DOEFF_WHEEL_BUILDER_TIMEOUT
+seconds, default WHEEL_BUILDER_TIMEOUT_SECONDS), takes the one wheel it wrote into the out dir, verifies it with the RECORD hashes, and places it in the local
+store. The builder decides where and how the wheel is built (a job on another machine that runs `uv build --wheel` on the same tree and copies the wheel back,
+sharing one build per key between callers) -- the entry only names the slot. When the builder fails, times out, writes no wheel or more than one, or writes a
+corrupt one, the build fails with that reason; it never falls back to compiling on this machine. The builder's own run (with the env unset) builds as before.
+
 report (_write_report): if env DOEFF_WHEEL_REPORT is set, one JSON line {"project": <package name>, "wheel": <path of the wheel in the
-store>, "source": <origin: local, remote, built>, "built": <whether this call built it>} is appended to that file ("built" is the field read by
+store>, "source": <origin: local, remote, away, built>, "built": <whether this call built it on this machine>} is appended to that file ("built" is the field read by
 doeff-cluster's native_wheel.reported_built, so it stays). The doeff-cluster worker (the environment preparation and startup script) goes through this entry with `uv build --wheel
 --out-dir` and installs the resulting wheel -- it keeps no key or store of its own. The report is used only to see whether a build happened (the reader is
 reported_built in shared/core/native_wheel.py; for an entry version that writes no report, whether it built is UNREPORTED; #3860).
