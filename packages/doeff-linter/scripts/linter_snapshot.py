@@ -246,6 +246,8 @@ def away_into(checkout: Path, sha: str, builder: list[str], target: Path, env: d
             )
         except (OSError, subprocess.TimeoutExpired) as error:
             return "the off-machine builder did not finish (" + str(error) + "); not building on this machine"
+        # The builder's own lines (where it built, how long, how many crates were compiled or fresh) go to this script's stderr — stdout stays the one path line.
+        sys.stderr.write(done.stderr)
         if done.returncode != 0:
             last = (done.stderr.strip().splitlines() or [""])[-1]
             return f"the off-machine builder exited {done.returncode}: {last}; not building on this machine"

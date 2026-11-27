@@ -332,6 +332,7 @@ with open(log, "a") as f:
 if os.environ.get("FAKE_BUILDER_FAIL"):
     print("the remote build could not start", file=sys.stderr)
     sys.exit(71)
+print("fake-builder: Compiling 1, Fresh 2", file=sys.stderr)
 commit = os.environ.get("FAKE_BUILDER_COMMIT") or git("rev-parse", "HEAD")
 marker = open(os.path.join(package, "marker")).read()
 with zipfile.ZipFile(os.path.join(out, "doeff_linter-0.2.0-py3-none-linux_x86_64.whl"), "w") as wheel:
@@ -371,6 +372,8 @@ def test_a_machine_with_a_builder_places_the_builders_linter_without_compiling(t
     )
     printed = subprocess.run([out.strip()], capture_output=True, text=True, check=True).stdout
     assert f"(doeff {sha})" in printed and "committed" in printed
+    # The builder's own lines reach the caller's log (stdout stays the one path line).
+    assert "fake-builder: Compiling 1, Fresh 2" in err
     assert out.strip() == str(tmp_path / "store" / sha / "doeff-linter")
     assert len(worktrees(repo)) == 1
     # The placed linter is found again without asking the builder.
