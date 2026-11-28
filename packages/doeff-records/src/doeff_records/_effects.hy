@@ -29,7 +29,7 @@
                               Appended Refused Events NotIndexed Written Conflict WrittenRows RowsConflict RowsRefused
                               WrittenAndAppended AppendRefused ReadRowAnswer CountRowsAnswer
                               ReadBatchAnswer PutRowAnswer AppendEventsAnswer
-                              SignalSourceFactory SignalSourcePatience RequestPatience])
+                              SignalSourceFactory SignalSourcePatience RequestPatience ExpectAlias SwapAlias AliasStep])
 
 (setv DEFAULT-LIST-LIMIT 500)
 ;; ListRows 1 回の limit の上限(ADR-DOE-RECORDS-002 R6 (f))。束の読みの行の読み解きと答えの綴りは、置き場が返す行の数に比例して計算の
@@ -293,11 +293,17 @@
     (check-row-write self "RowWrite")))
 
 
-(defn #^ bool checked-put-rows [#^ object writes #^ object idempotency-key]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
-  "PutRows の欄(writes・idempotency-key)を作る時に検める — 冪等キーは None か空でない文字列・writes は RowWrite の空でない tuple で、
-   同じ表の同じ鍵を 2 度含まない。断りの型と文言と順は defclass の時から変えない。"
+(defn #^ bool checked-put-rows [#^ object writes #^ object idempotency-key #^ object aliases]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め(:pre は真偽を assert するので、断りは TypeError / ValueError で上げ、通れば True を返す)
+  "PutRows の欄(writes・idempotency-key・aliases)を作る時に検める — 冪等キーは None か空でない文字列・writes は RowWrite の空でない tuple で、
+   同じ表の同じ鍵を 2 度含まない・aliases は ExpectAlias | SwapAlias の tuple で、同じ alias を 2 度含まない。断りの型と文言と順は
+   defclass の時から変えない。"
   (checked-write-key idempotency-key "PutRows.idempotency_key")
   (check-row-writes writes "PutRows")
+  (when (not (and (isinstance aliases tuple) (all (gfor step aliases (isinstance step #(ExpectAlias SwapAlias))))))
+    (raise (TypeError (.format "PutRows.aliases は ExpectAlias | SwapAlias の tuple: {!r}" aliases))))
+  (setv names (lfor step aliases step.name))
+  (when (!= (len names) (len (set names)))
+    (raise (ValueError (.format "PutRows.aliases に同じ alias が 2 度出る: {!r}" names))))
   True)
 
 
@@ -321,9 +327,15 @@
    答えの分け方(ADR-DOE-CORE-EFFECTS-003 R5・R17 の追補): WrittenRows = 成功 / RowsConflict = 値(束のある行の期待が今の行と合わないという
    版の負けで、PutRow の Conflict と同じ — 呼び手が読み直して撃ち直す普通の答えなので、失敗にして Raise で飛ばさず、不在にして Absent で
    飛ばさない)/ RowsRefused = 失敗(束のある行を宣言が許さない・同じ鍵の別の束 — PutRow の Refused と同じで、<- は Raise(RowsRefused) を
-   出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。不在は無い。答える handler は今までどおり 4 つとも値で答える(R4)。"
-  {:fields [(: writes (get tuple #(RowWrite ...))) (: idempotency-key (| str None) None)]
-   :pre [(checked-put-rows writes idempotency-key)]
+   出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。不在は無い。答える handler は今までどおり 4 つとも値で答える(R4)。
+   aliases = 束の alias の段(_values.hy の頭の註の「表の alias」— ExpectAlias = 世代の期待・SwapAlias = 付け替え。同じ alias は 1 度だけ・
+   既定 = 無し)。段は行の期待より先に見て、世代が違う・付け替えられない段があれば束ごと RowsRefused(index = len(writes) + 段の位置・
+   table = alias の名・key = 空)。付け替えは行の書きと同じ錠・transaction の中で、束の行の変更の後に変更の列の番号を 1 つ採る。
+   行の書きは物理の名(T~a・T~b)だけ — alias の論理の名への書きは RowsRefused。冪等キーの本文の指紋は段を含まない(段を使う束は
+   冪等キーを付けない — 付けた束は断る)。"
+  {:fields [(: writes (get tuple #(RowWrite ...))) (: idempotency-key (| str None) None)
+            (: aliases (get tuple #(AliasStep ...)) #())]
+   :pre [(checked-put-rows writes idempotency-key aliases)]
    :answer (| WrittenRows RowsConflict RowsRefused Unreachable)
    :failure [RowsRefused Unreachable]
    :value [RowsConflict]
@@ -334,6 +346,11 @@
   "行の書き ask を、冪等キーの判じ(admission.write-digest・judge-write-replay)が読む書きの並びにするため(PutRow は自分 1 つ・PutRows と
    PutRowsAppendEvents は行の束 — どれも欄 table・key・value・expect を持つ)。"
   (if (isinstance ask #(PutRows PutRowsAppendEvents)) ask.writes #(ask)))
+
+
+(defn #^ tuple alias-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; cannot be a defk: write-parts と同じ
+  "行の書き ask の、冪等キーの本文の指紋(admission.write-digest)に含める alias の段を読むため(PutRows だけが持つ — 他は空)。"
+  (if (isinstance ask PutRows) ask.aliases #()))
 
 
 (defn #^ (| (get tuple #(EventAppend ...)) None) append-parts [#^ (| PutRow PutRows PutRowsAppendEvents) ask]  ; cannot be a defk: write-parts と同じ

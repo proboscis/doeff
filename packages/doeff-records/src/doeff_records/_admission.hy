@@ -15,7 +15,7 @@
 (import doeff_hy._frozen [FrozenMap frozen-json-object thaw-json])
 (import doeff_records._values [RecordsSchema TableDecl StreamDecl KeepFor ByKeySuffix Row Missing Conflict Refused NotIndexed Event
                               RetiredKey ExpectAbsent ExpectVersion ExpectAny RowsConflict RowsRefused Written WrittenRows
-                              RememberedWrite WrittenAndAppended Appended])
+                              RememberedWrite WrittenAndAppended Appended AliasState ExpectAlias SwapAlias slot-table-name UndeclaredTable])
 
 
 ;; --- JSON の値 ------------------------------------------------------------------------------------------------
@@ -185,6 +185,54 @@
   (tuple admitted))
 
 
+;; --- 表の alias の段(_values.hy の頭の註の「表の alias」)---------------------------------------------------------
+;; 書きの束の alias の段(ExpectAlias・SwapAlias)の判じと、alias の論理の名への書きの断りを 1 か所に置く(memory と PostgreSQL の handler が
+;; 同じ答えを返すため)。段は行の期待より先に見る — 付け替えの後の前の版の書き手には、行の衝突より先に「世代が違う」を返す。
+
+(defn #^ (| RowsRefused None) alias-write-refusal [#^ RecordsSchema schema #^ tuple writes]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+  "行の書きの並び writes(欄 table・key を持つ)のうち、alias の論理の名へ書く最初の行の断り(無ければ None)を作るため。論理の名への書きは
+   どの世代を組む書きかを名乗れず、付け替えの後に新しい世代へ入るので断る(書き手は物理の名 T~a・T~b で書く)。"
+  (for [#(index write) (enumerate writes)]
+    (when (schema.aliased? write.table)
+      (return (RowsRefused index write.table write.key
+                           (.format "表 {!r} は alias の論理の名で書けない — 物理の名 {!r} か {!r} で書く"
+                                    write.table (slot-table-name write.table "a") (slot-table-name write.table "b"))))))
+  None)
+
+
+(defn #^ (| RowsRefused None) judge-alias-steps [#^ RecordsSchema schema #^ tuple steps #^ (get dict #(str AliasState)) states
+                                                 #^ frozenset pending #^ int offset]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+  "束の alias の段 steps を、alias の今 states(名 → AliasState — 段の名を全部持つ)で判じるため。pending = 索引の用意が終わっていない表の
+   置き場の中の名の集合(付け替えの先の slot がそこに在れば断る)/ offset = 断りの index の始め(= 束の行の数)。答え = 段のどれかが通らなければ
+   段の順で最初の段の RowsRefused(index = offset + 段の位置・table = alias の名・key = 空)/ 全部通れば None。宣言に無い alias は
+   UndeclaredTable(組み立ての誤り)。"
+  (for [#(index step) (enumerate steps)]
+    (when (not (schema.aliased? step.name))
+      (raise (UndeclaredTable (.format "宣言に無い alias: {!r}" step.name) :tables #(step.name))))
+    (setv state (get states step.name)
+          at (+ offset index))
+    (when (!= state.generation step.generation)
+      (return (RowsRefused at step.name #()
+                           (.format "alias {!r} の世代は {} で、期待した世代 {} と違う(付け替えが先に入った)"
+                                    step.name state.generation step.generation))))
+    (when (isinstance step SwapAlias)
+      (when (= state.slot step.slot)
+        (return (RowsRefused at step.name #()
+                             (.format "alias {!r} は既に slot {!r} を指している" step.name step.slot))))
+      (setv storage (schema.slot-storage step.name step.slot))
+      (when (in storage pending)
+        (return (RowsRefused at step.name #()
+                             (.format "alias {!r} の付け替えの先 {!r} の索引の用意が終わっていない" step.name
+                                      (slot-table-name step.name step.slot)))))))
+  None)
+
+
+(defn #^ (get tuple #(AliasState ...)) swapped-states [#^ tuple steps #^ (get dict #(str AliasState)) states]  ; cannot be a defk: judge-alias-steps と同じ
+  "判じを通った束の付け替え(steps の SwapAlias)の後の alias の今を、段の順に作るため(期待だけの段は変えない)。"
+  (tuple (gfor step steps :if (isinstance step SwapAlias)
+               (AliasState :name step.name :slot step.slot :generation (+ (. (get states step.name) generation) 1)))))
+
+
 ;; --- 行の書きの冪等キー-------------------------------------------------------------------
 ;; 置き場(memory・PG)は確定した鍵つきの書きの答えと本文の指紋を覚え(values.RememberedWrite)、同じ鍵の次の書きを、期待と書きの判定の
 ;; 前にここで判じる: 同じ本文なら覚えた答えを送り直しと名乗って返し(行に触らない)、別の本文は冪等キーの断り。覚えの無い鍵と鍵の無い
@@ -199,18 +247,23 @@
     _ (raise (TypeError (.format "知らない期待: {!r}" expect)))))
 
 
-(defn #^ str write-digest [#^ bool rows #^ tuple writes #^ (| tuple None) [appends None]]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
+(defn #^ str write-digest [#^ bool rows #^ tuple writes #^ (| tuple None) [appends None] #^ tuple [aliases #()]]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ(この file の判断はすべて純関数の defn)
   "行の書き 1 つの本文の指紋を作るため(同じ冪等キーの書きが同じ書きの送り直しか、鍵の使い回しかを見分ける — 鍵と書き手の名は含めず、
    書きの種(rows = 束 PutRows か 1 行 PutRow か・追記の束を伴う PutRowsAppendEvents か)と、書きの並び writes の表・鍵・値・期待と、
    追記の束 appends(None = 追記を伴わない書き)の列・冪等キー・本文を含める)。writes = PutRow 1 つの tuple か行の束(どれも欄 table・key・
    value・expect を持つ)/ appends = 追記の束(欄 stream・idempotency-key・body — この file は effect の層に依らない)。追記を伴わない書きの
-   指紋の綴りは前のまま(置き場が覚えた前の版の指紋と比べられる)。"
+   指紋の綴りは前のまま(置き場が覚えた前の版の指紋と比べられる)。aliases = 束の alias の段(PutRows.aliases — 空なら綴りに足さない)。"
   (setv written (lfor write writes
                       {"table" write.table "key" (list write.key) "value" write.value "expect" (expect-form write.expect)}))
-  (if (is appends None)
-      (body-digest {"put" (if rows "rows" "row") "writes" written})
-      (body-digest {"put" "rows-events" "writes" written
-                    "appends" (lfor one appends {"stream" one.stream "idempotencyKey" one.idempotency-key "body" one.body})})))
+  (setv document (if (is appends None)
+                     {"put" (if rows "rows" "row") "writes" written}
+                     {"put" "rows-events" "writes" written
+                      "appends" (lfor one appends {"stream" one.stream "idempotencyKey" one.idempotency-key "body" one.body})}))
+  (when aliases
+    (setv (get document "aliases")
+          (lfor step aliases (| {"name" step.name "generation" step.generation}
+                                (if (isinstance step SwapAlias) {"kind" "swap" "slot" step.slot} {"kind" "expect"})))))
+  (body-digest document))
 
 
 (defn #^ (| Written WrittenRows WrittenAndAppended) replayed-answer [#^ (| Written WrittenRows WrittenAndAppended) answer]  ; cannot be a defk: judge-write-replay が同期に呼ぶ値の作り直し(この file の判断はすべて純関数の defn)
@@ -225,7 +278,7 @@
 
 (defn #^ (| Written WrittenRows WrittenAndAppended Refused RowsRefused None) judge-write-replay [#^ (| str None) key #^ bool rows #^ tuple writes
                                                                               #^ (| RememberedWrite None) remembered
-                                                                              #^ (| tuple None) [appends None]]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+                                                                              #^ (| tuple None) [appends None] #^ tuple [aliases #()]]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と transaction の中で同期に呼ぶ判断(この file の判断はすべて純関数の defn)
   "冪等キー key の書き(rows = 束か・writes = 書きの並び — write-digest と同じ)を、同じ鍵の覚え remembered(無ければ None)で判じるため
    (memory と PostgreSQL の handler が同じ答えを返す 1 か所)。appends = 追記の束(PutRowsAppendEvents — 指紋に含める。None = 追記を伴わない)。
    答え = 送り直しの答え(覚えた答えを replayed 真で — 期待も書きの判定も
@@ -233,7 +286,7 @@
    (鍵の無い書きを含む — 期待と書きの判定へ進む)。"
   (cond
     (or (is key None) (is remembered None)) None
-    (= remembered.body-digest (write-digest rows writes appends)) (replayed-answer remembered.answer)
+    (= remembered.body-digest (write-digest rows writes appends aliases)) (replayed-answer remembered.answer)
     True (do (setv reason (.format "行の書きの冪等キー {!r} は別の本文の書きで既に使われた" key)
                    head (get writes 0))
              (if rows (RowsRefused 0 head.table head.key reason) (Refused reason)))))

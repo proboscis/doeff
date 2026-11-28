@@ -18,14 +18,16 @@
 (require doeff-hy.record [defrecord])
 (import collections.abc [Callable])
 (import copy)
-(import dataclasses [dataclass field fields is-dataclass])
+(import dataclasses [dataclass field fields is-dataclass replace])
 (import json)
 (import re)
 (import typing [Protocol])
 (import doeff [Program])
 (import doeff_hy._frozen [FrozenMap freeze-json frozen-json-object frozen-map-of thaw-json])
 
-(setv #^ (get re.Pattern str) TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
+(setv #^ (get re.Pattern str) TABLE-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}(~[ab])?$"))
+;; 表の名の後ろの「~a」「~b」は alias の物理の slot の名(TableAlias の註)— 使い手の表の名は「~」を含まない(ALIAS-NAME-PATTERN)。
+(setv #^ (get re.Pattern str) ALIAS-NAME-PATTERN (re.compile "^[a-z][a-z0-9_-]{0,62}$"))
 (setv #^ (get re.Pattern str) FIELD-NAME-PATTERN (re.compile "^[A-Za-z_][A-Za-z0-9_]{0,62}$"))
 ;; 組で数える列の区切り(ByKeySuffix.separator)の字 — PostgreSQL の置き場は区切りを組の名の式の索引と文の式に文字列の literal で直に置く
 ;; (pg_sql.key-suffix-of・#3614)ので、引用符・逆斜線・空白・%・$・波括弧・ASCII の外を含まない 1〜16 字だけを許す(欄の名の FIELD-NAME-PATTERN と
@@ -51,7 +53,7 @@
 
 (defn #^ str checked-table-name [#^ str name #^ str what]
   (when (not (and (isinstance name str) (.match TABLE-NAME-PATTERN name)))
-    (raise (ValueError (.format "{} は英小文字で始まる英小文字・数字・_・- の 63 字まで: {!r}" what name))))
+    (raise (ValueError (.format "{} は英小文字で始まる英小文字・数字・_・- の 63 字まで(alias の物理の slot は後ろに ~a か ~b): {!r}" what name))))
   name)
 
 
@@ -359,16 +361,126 @@
       (raise (ValueError (.format "StreamDecl.size_budget は正の整数か None: {!r}" self.size-budget))))))
 
 
+;; --- 表の alias(影の slot と付け替え — Elasticsearch の index alias swap と同じ形)-------------------------------------------
+;; 導いた表の作り直しを、読み手に見えない影の表で組み、終わりに読み手の名の指し先を 1 回の書きで替える(作り直しの途中の行が読み手に
+;; 見えないため — 読み手は論理の名で読み続ける)。表 T を alias にすると、名は 3 つになる:
+;;   T     論理の名 — 読み(ReadRow・ListRows・CountRows・ReadBatch・WatchChanges)が、置き場の alias の今の指し先の slot を読む。
+;;         書きは断る(どの世代を組む書きかを名乗れず、付け替えの後に新しい世代へ入るため — 書き手は物理の名で書く)。
+;;   T~a   slot a の物理の名 — 置き場の中の T の行(alias を宣言する前からの行がそのまま a になり、移しは要らない)。
+;;   T~b   slot b の物理の名 — 影の表(宣言は T の TableDecl を名だけ替えた写し。RecordsSchema が tables に足す — 索引の用意・保持の刈り・
+;;         表の要約・書きの許しは他の表と同じ道で b を知る)。
+;; alias の今は AliasState(指す slot と世代 — 世代は付け替えのたびに 1 増え、宣言した時は a・0)。付け替えは PutRows の aliases の
+;; SwapAlias で、同じ束の行の書きと同じ錠・transaction の中で行い、変更の列に番号を 1 つ採る(付け替えの位置 — WatchChanges の Reset の
+;; floor)。読みは同じ錠・同じ SQL 文の中で alias を引くので、1 回の読みが 2 つの世代を跨がない。
+
+(val ALIAS-SLOTS #("a" "b"))
+
+
+(defn #^ str slot-table-name [#^ str alias #^ str slot]  ; cannot be a defk: 宣言の __post_init__ と handler(memory・PG)が錠の内と文の組み立てで同期に呼ぶ綴り
+  "alias の名 alias の slot slot(\"a\" | \"b\")の物理の名を綴るため(T~a・T~b)。"
+  (.format "{}~{}" alias slot))
+
+
+(defclass [(dataclass :frozen True)] TableAlias []
+  "表 name を alias にする宣言(頭の註)。name = RecordsSchema.tables に在る表の名(「~」を含まない)。"
+  (#^ str name)
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.name str) (.match ALIAS-NAME-PATTERN self.name)))
+      (raise (ValueError (.format "TableAlias.name は「~」を含まない表の名: {!r}" self.name))))))
+
+
+(defclass [(dataclass :frozen True)] AliasState []
+  "alias 1 つの今: name = alias の名 / slot = 論理の名の読みが読む slot(\"a\" | \"b\")/ generation = 付け替えの数(宣言した時 0)。"
+  (#^ str name)
+  (#^ str slot)
+  (#^ int generation)
+  (defn #^ None __post_init__ [self]
+    (when (not-in self.slot ALIAS-SLOTS)
+      (raise (ValueError (.format "AliasState.slot は \"a\" か \"b\": {!r}" self.slot))))
+    (when (or (isinstance self.generation bool) (not (isinstance self.generation int)) (< self.generation 0))
+      (raise (ValueError (.format "AliasState.generation は 0 以上の整数: {!r}" self.generation))))))
+
+
+(val INITIAL-SLOT "a")
+
+
+(defclass [(dataclass :frozen True)] ExpectAlias []
+  "PutRows の束の alias の期待: alias name の世代が generation の時だけ束を書く(違えば束ごと RowsRefused — 付け替えの後の前の版の
+   書き手の書きを断る)。"
+  (#^ str name)
+  (#^ int generation)
+  (defn #^ None __post_init__ [self]
+    (checked-alias-step self "ExpectAlias")))
+
+
+(defclass [(dataclass :frozen True)] SwapAlias []
+  "PutRows の束の付け替え: alias name の世代が generation の時だけ、指し先を slot へ替えて世代を 1 増やす(世代が違う・既に slot を
+   指している・slot の物理の表の索引の用意が終わっていない時は束ごと RowsRefused)。"
+  (#^ str name)
+  (#^ int generation)
+  (#^ str slot)
+  (defn #^ None __post_init__ [self]
+    (checked-alias-step self "SwapAlias")
+    (when (not-in self.slot ALIAS-SLOTS)
+      (raise (ValueError (.format "SwapAlias.slot は \"a\" か \"b\": {!r}" self.slot))))))
+
+
+(defn #^ None checked-alias-step [#^ object step #^ str what]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め
+  "alias の段(ExpectAlias・SwapAlias)の名と世代を作る時に検めるため。"
+  (when (not (and (isinstance step.name str) (.match ALIAS-NAME-PATTERN step.name)))
+    (raise (ValueError (.format "{}.name は「~」を含まない表の名: {!r}" what step.name))))
+  (when (or (isinstance step.generation bool) (not (isinstance step.generation int)) (< step.generation 0))
+    (raise (ValueError (.format "{}.generation は 0 以上の整数: {!r}" what step.generation)))))
+
+
+(setv AliasStep (| ExpectAlias SwapAlias))
+
+
+(defclass [(dataclass :frozen True)] TableName []
+  "要求の表の名 1 つを置き場の言葉に解いた物(RecordsSchema.resolve の答え): asked = 要求の名 / alias = 論理の名なら alias の名(物理の
+   名なら None)/ storage = 物理の名の置き場の中の名(slot a は T・slot b は T~b・alias でない表はその名 — 論理の名は None で、置き場が
+   alias の今から選ぶ)。"
+  (#^ str asked)
+  (#^ (| str None) alias)
+  (#^ (| str None) storage))
+
+
 (defclass [(dataclass :frozen True)] RecordsSchema []
   "置き場 1 つの宣言の全部: tables = 表の名 → TableDecl・streams = 列の名 → StreamDecl(どちらも凍らせた写像 —
-   作る時に受けた写像を写し取る)/ operators = operator の主体の名(身元の名簿の名 = 書き手の名)の tuple。
+   作る時に受けた写像を写し取る)/ operators = operator の主体の名(身元の名簿の名 = 書き手の名)の tuple /
+   aliases = alias にする表の宣言(TableAlias の tuple — 頭の註の「表の alias」。宣言した表 T ごとに影の表 T~b の宣言を tables に足す)。
    operators と表の operator-paths は宣言だけで、置き場の書きの判断は読まない(書き手の名では断らない・#2994)。"
   (setv #^ (get FrozenMap TableDecl) tables (field :default-factory FrozenMap))
   (setv #^ (get FrozenMap StreamDecl) streams (field :default-factory FrozenMap))
   (setv #^ (get tuple #(str ...)) operators #())
+  (setv #^ (get tuple #(TableAlias ...)) aliases #())
   (defn #^ None __post_init__ [self]
     (object.__setattr__ self "tables" (frozen-map-of self.tables "RecordsSchema.tables"))
     (object.__setattr__ self "streams" (frozen-map-of self.streams "RecordsSchema.streams"))
+    (when (not (and (isinstance self.aliases tuple) (all (gfor a self.aliases (isinstance a TableAlias)))))
+      (raise (TypeError (.format "RecordsSchema.aliases は TableAlias の tuple: {!r}" self.aliases))))
+    (setv alias-names (lfor a self.aliases a.name))
+    (when (!= (len alias-names) (len (set alias-names)))
+      (raise (ValueError (.format "RecordsSchema.aliases の名が重なる: {!r}" alias-names))))
+    (for [name alias-names]
+      (when (not-in name self.tables)
+        (raise (ValueError (.format "RecordsSchema.aliases の {!r} が tables に無い" name)))))
+    ;; 影の表の宣言(T の宣言を名だけ替えた写し)を足す。replace で作り直した宣言は既に持つので、同じ宣言なら足し直さない。
+    (setv shadows {})
+    (for [name alias-names]
+      (setv shadow-name (slot-table-name name "b")
+            shadow (replace (get self.tables name) :name shadow-name)
+            present (.get self.tables shadow-name))
+      (when (and (is-not present None) (!= present shadow))
+        (raise (ValueError (.format "影の表 {!r} の宣言が alias の表 {!r} の宣言の写しと違う" shadow-name name))))
+      (setv (get shadows shadow-name) shadow))
+    (for [name self.tables]
+      (when (and (.endswith name "~b") (not-in name shadows))
+        (raise (ValueError (.format "「~b」で終わる表 {!r} は alias の影の表だけ(aliases に元の表が無い)" name))))
+      (when (.endswith name "~a")
+        (raise (ValueError (.format "「~a」で終わる表 {!r} は宣言しない(slot a は元の表の名で置く)" name)))))
+    (when shadows
+      (object.__setattr__ self "tables" (FrozenMap (| (dict self.tables) shadows))))
     (when (not (and (isinstance self.operators tuple)
                     (all (gfor n self.operators (and (isinstance n str) n (not-in ":" n))))))
       (raise (ValueError (.format "RecordsSchema.operators は「:」を含まない空でない文字列の tuple: {!r}" self.operators))))
@@ -385,8 +497,32 @@
         (raise (ValueError (.format "RecordsSchema.streams[{!r}] は同じ名の StreamDecl" name))))))
 
   (defn #^ TableDecl table [self #^ str name]
-    (when (not-in name self.tables) (raise (UndeclaredTable (.format "宣言に無い表: {!r}" name) :tables #(name))))
-    (get self.tables name))
+    "表の名(物理の slot の名 T~a・T~b も)の宣言。T~a は元の表 T の宣言。"
+    (setv found (.get self.tables name))
+    (when (and (is found None) (.endswith name "~a") (self.aliased? (cut name -2)))
+      (setv found (get self.tables (cut name -2))))
+    (when (is found None) (raise (UndeclaredTable (.format "宣言に無い表: {!r}" name) :tables #(name))))
+    found)
+
+  (defn #^ bool aliased? [self #^ str name]
+    "name が alias の論理の名か。"
+    (any (gfor a self.aliases (= a.name name))))
+
+  (defn #^ (get tuple #(str ...)) table-names [self]
+    "要求が名指せる表の名の全部(tables の名と slot a の物理の名 T~a — 宣言に無い表を断る口が照らす)。"
+    (+ (tuple self.tables) (tuple (gfor a self.aliases (slot-table-name a.name "a")))))
+
+  (defn #^ TableName resolve [self #^ str name]
+    "要求の表の名 name を置き場の言葉に解くため(TableName の註 — 宣言に無い名は UndeclaredTable)。"
+    (self.table name)
+    (cond
+      (self.aliased? name) (TableName :asked name :alias name :storage None)
+      (and (.endswith name "~a") (self.aliased? (cut name -2))) (TableName :asked name :alias None :storage (cut name -2))
+      True (TableName :asked name :alias None :storage name)))
+
+  (defn #^ str slot-storage [self #^ str alias #^ str slot]
+    "alias の slot の置き場の中の名(a = 元の表の名・b = 影の表の名)。"
+    (if (= slot "a") alias (slot-table-name alias slot)))
 
   (defn #^ StreamDecl stream [self #^ str name]
     (when (not-in name self.streams) (raise (UndeclaredTable (.format "宣言に無い追記の列: {!r}" name) :streams #(name))))
@@ -439,13 +575,19 @@
 (defclass [(dataclass :frozen True)] ListCursor []
   "ListRows の次の頁の位置: epoch = 置き場の版 / after-key = 前の頁の最後の行の鍵の綴り /
    after-value = 並べて読む読み(ListRows の descending-by・ascending-by)の前の頁の最後の行の並べる欄の値(整数 — 次の頁は
-   (値, 鍵の綴り) がこの組より、descending-by なら小さい行から・ascending-by なら大きい行から読む。鍵の順の読みの位置は None)。"
+   (値, 鍵の綴り) がこの組より、descending-by なら小さい行から・ascending-by なら大きい行から読む。鍵の順の読みの位置は None)/
+   generation = alias の論理の名の読みの前の頁を読んだ時の alias の世代(None = 物理の名の読み・alias の無い表 — alias の読みでは 0 と
+   同じ)。続きの読みの時に alias の世代が違えば(頁の間に付け替えが入った)、2 つの世代を混ぜずに Reset(tables = その alias)を答える。"
   (#^ int epoch)
   (#^ str after-key)
   (setv #^ (| int None) after-value None)
+  (setv #^ (| int None) generation None)
   (defn #^ None __post_init__ [self]
     (when (and (is-not self.after-value None) (or (isinstance self.after-value bool) (not (isinstance self.after-value int))))
-      (raise (TypeError (.format "ListCursor.after_value は整数か None: {!r}" self.after-value))))))
+      (raise (TypeError (.format "ListCursor.after_value は整数か None: {!r}" self.after-value))))
+    (when (and (is-not self.generation None)
+               (or (isinstance self.generation bool) (not (isinstance self.generation int)) (< self.generation 0)))
+      (raise (TypeError (.format "ListCursor.generation は 0 以上の整数か None: {!r}" self.generation))))))
 
 
 ;; --- 成功の答え --------------------------------------------------------------------------------------------
@@ -516,13 +658,18 @@
   "ListRows の 1 頁: rows = 鍵の綴りの順の Row の tuple / next-cursor = 次の頁の位置(None = 終わり)/
    epoch・sequence = この頁を読んだ時の置き場の版と変更の番号(最初の頁の値から WatchChanges を始めると取りこぼしが無い)/
    joined = ListRows.join-tables で添えた表の名 → その頁の行と同じ鍵を持つ行の tuple(頁の行の順・行の無い鍵は入らない・
-   join-tables が空なら空の写像)の凍らせた写像。"
+   join-tables が空なら空の写像)の凍らせた写像 /
+   alias = alias の論理の名の読みで、頁を読んだ時の alias の今(AliasState — 頁の行と同じ断面で読んだ指し先と世代。物理の名の読み・
+   alias の無い表は None)。"
   (#^ (get tuple #(Row ...)) rows)
   (#^ (| ListCursor None) next-cursor)
   (#^ int epoch)
   (#^ int sequence)
   (setv #^ (get FrozenMap (get tuple #(Row ...))) joined (field :default-factory FrozenMap :kw-only True))
+  (setv #^ (| AliasState None) alias (field :default None :kw-only True))
   (defn #^ None __post_init__ [self]
+    (when (not (or (is self.alias None) (isinstance self.alias AliasState)))
+      (raise (TypeError (.format "Page.alias は AliasState か None: {!r}" self.alias))))
     (object.__setattr__ self "joined" (frozen-map-of self.joined "Page.joined"))
     (for [#(name group) (.items self.joined)]
       (checked-table-name name "Page.joined の表")
@@ -893,9 +1040,17 @@
 (defclass [(dataclass :frozen True)] Reset []
   "位置の epoch が置き場の版と違う(置き場が作り直された・変更の列が刈られた)— 一覧から読み直す。
    epoch = 置き場の今の版 / floor = その置き場で読める最も古い変更の位置(変更の列を保持の期限で刈った位置)。
-   WatchCursor(epoch, floor) から読めば、残っている変更を頭から全部読める。"
+   WatchCursor(epoch, floor) から読めば、残っている変更を頭から全部読める。
+   tables = 付け替えに絞った Reset の alias の論理の名(空 = 置き場の全部 — 前からの形)。空でない時は、頼んだ表のうちその alias の指し先が
+   位置の後に替わった: WatchChanges では floor = 付け替えの位置で、呼び手は tables の表だけを一覧から読み直し、WatchCursor(epoch, floor)
+   から続ける(他の表の付け替えの前の変更は前の答えで渡し終えている。読み直した一覧の頭までの tables の表の変更は、続きの読みにも
+   もう 1 度出得る — 版で照らして重ねる)。ListRows では頁の間に付け替えが入った(floor は置き場の floor)。"
   (#^ int epoch)
-  (#^ int floor))
+  (#^ int floor)
+  (setv #^ (get tuple #(str ...)) tables #())
+  (defn #^ None __post_init__ [self]
+    (when (not (and (isinstance self.tables tuple) (all (gfor n self.tables (isinstance n str)))))
+      (raise (TypeError (.format "Reset.tables は表の名の tuple: {!r}" self.tables))))))
 
 (defclass [(dataclass :frozen True)] BatchRead []
   "ReadBatch の束の答え: items = 束の順の、読み 1 つごとの答え(ReadRow の Row | Missing・ListRows の

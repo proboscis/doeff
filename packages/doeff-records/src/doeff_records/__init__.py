@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from doeff_records._faults import AddStoreFault as AddStoreFault
     from doeff_records._faults import AdvanceStoreEpoch as AdvanceStoreEpoch
     from doeff_records._faults import ClearStoreFaults as ClearStoreFaults
+    from doeff_records._faults import HoldTableIndexes as HoldTableIndexes
     from doeff_records._faults import SetStoreOutage as SetStoreOutage
     from doeff_records._faults import StoreFault as StoreFault
     from doeff_records._faults import StoreOperation as StoreOperation
@@ -90,6 +91,10 @@ if TYPE_CHECKING:
     from doeff_records._values import KeepForever as KeepForever
     from doeff_records._values import KeyMemory as KeyMemory
     from doeff_records._values import ListCursor as ListCursor
+    from doeff_records._values import TableAlias as TableAlias
+    from doeff_records._values import AliasState as AliasState
+    from doeff_records._values import ExpectAlias as ExpectAlias
+    from doeff_records._values import SwapAlias as SwapAlias
     from doeff_records._values import ListRowsAnswer as ListRowsAnswer
     from doeff_records._values import Missing as Missing
     from doeff_records._values import NotIndexed as NotIndexed
@@ -222,6 +227,10 @@ _LAZY_EXPORTS: dict[str, str] = {
     "KeepForever": "doeff_records._values",
     "KeyMemory": "doeff_records._values",
     "ListCursor": "doeff_records._values",
+    "TableAlias": "doeff_records._values",
+    "AliasState": "doeff_records._values",
+    "ExpectAlias": "doeff_records._values",
+    "SwapAlias": "doeff_records._values",
     "ListRowsAnswer": "doeff_records._values",
     "Missing": "doeff_records._values",
     "NotIndexed": "doeff_records._values",
@@ -286,6 +295,7 @@ _LAZY_EXPORTS: dict[str, str] = {
     "WatchEvents": "doeff_records._effects",
     "AddStoreFault": "doeff_records._faults",
     "AdvanceStoreEpoch": "doeff_records._faults",
+    "HoldTableIndexes": "doeff_records._faults",
     "ClearStoreFaults": "doeff_records._faults",
     "SetStoreOutage": "doeff_records._faults",
     "StoreFault": "doeff_records._faults",

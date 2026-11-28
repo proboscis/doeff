@@ -23,6 +23,13 @@
   (setv #^ (| (get frozenset str) None) names None))
 
 
+(defclass [(dataclass :frozen True)] HoldTableIndexes [EffectBase]
+  "表の索引の用意が終わっていない状態を起こす・戻すため(alias の付け替えの先の索引が揃う前の付け替えを断る筋書き —
+   PostgreSQL の置き場では索引の用意の task が作り終える前の状態)。names = 索引の用意が終わっていない表の置き場の中の名(slot a は元の表の名・
+   slot b は T~b — 空 = 全部の表が揃った)。答え = None。memory の置き場が答える。"
+  (#^ (get frozenset str) names))
+
+
 ;; --- 断りの故障 ----------------------------------------------------------------------------------
 ;; 置き場全体の不達(SetStoreOutage)より細かい故障: 名(表・列)と操作(読み / 書き)と絞り(effect の中身)で当たる effect だけに、
 ;; 決めた答え(Refused | Unreachable)を返させる。memory の置き場が各節の頭で当たる故障を探して答える(PostgreSQL の置き場は答えない)。
