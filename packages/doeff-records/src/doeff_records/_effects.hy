@@ -23,6 +23,7 @@
 (import dataclasses [dataclass field])
 (import doeff [EffectBase])
 (import doeff_hy._frozen [FrozenMap freeze-json])
+(import doeff_records._admission [check-portable-json])
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny Expectation WatchCursor ListCursor Page checked-table-name
                               checked-field-name freeze-field StreamEnd StreamEmpty Unreachable checked-write-key EventsMoved EventsQuiet
                               Event EventAbsent EventRetired Changes Reset Row Missing
@@ -88,6 +89,7 @@
   (freeze-field write "value" (+ what ".value"))
   (for [name write.value] (checked-field-name name (+ what ".value の欄")))
   (check-free-of-nul write.value (+ what ".value"))
+  (check-portable-json write.value (+ what ".value"))
   (when (not (isinstance write.expect #(ExpectAbsent ExpectVersion ExpectAny)))
     (raise (TypeError (+ what ".expect は ExpectAbsent | ExpectVersion | ExpectAny")))))
 
@@ -408,7 +410,8 @@
   (when (not (and (isinstance append.idempotency-key str) append.idempotency-key))
     (raise (ValueError (+ what ".idempotency_key は空でない文字列"))))
   (check-free-of-nul append.idempotency-key (+ what ".idempotency_key"))
-  (check-free-of-nul append.body (+ what ".body")))
+  (check-free-of-nul append.body (+ what ".body"))
+  (check-portable-json append.body (+ what ".body")))
 
 
 (defn #^ bool checked-event-append [#^ object append #^ str what]  ; cannot be a defk: defeffect の :pre が作る時に同期に呼ぶ検め

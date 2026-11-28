@@ -10,6 +10,7 @@
 (import datetime [datetime timezone])
 (import hashlib)
 (import json)
+(import math)
 (import collections.abc [Mapping])
 (import typing [TypeIs])
 (import doeff_hy._frozen [FrozenMap frozen-json-object thaw-json])
@@ -24,6 +25,36 @@
   "値の正規の綴り(鍵の昇順・空白なし・UTF-8 のまま)。上限の byte と冪等キーの本文の比べはこの綴りで測る。
    凍らせた値(FrozenMap・tuple)は thaw-json で JSON の形へ戻してから綴る — 置き場へ書く JSON もこの綴り。"
   (json.dumps (thaw-json value) :sort-keys True :separators #("," ":") :ensure-ascii False))
+
+
+;; 置き場の外の読み手(Rust の serde_json・PostgreSQL の jsonb)が同じ値に読める数だけを書きに通す境。Python の json は NaN・Infinity・
+;; -Infinity を綴りの外の語のまま書き、-0.0 と 64 bit を越える整数も書けるが、serde_json はそれらを読めないか別の値に読む(i64・u64 の外の
+;; 整数は f64 へ丸める・-0.0 は 0 と区別が落ちる)— 書きの effect を作る時に断る(ValueError — HTTP の口では 400 malformed)。
+(setv JSON-INTEGER-MIN (- (** 2 63)))
+(setv JSON-INTEGER-MAX (- (** 2 64) 1))
+
+
+(defn #^ None check-portable-json [#^ object value #^ str what]  ; cannot be a defk: frozen dataclass の __post_init__ が作る時に同期に呼ぶ検め(_effects.hy の check-free-of-nul と同じ道)
+  "書きの値(行の値・出来事の本文)の数が、非有限の浮動小数(NaN・Infinity・-Infinity)・-0.0・i64 の下限から u64 の上限の外の整数で
+   ない事を検めるため。真偽(bool)は数に数えない。正規の綴り(canonical-json)は変えない — 通った値は今までと同じ綴りで置かれる。"
+  (setv pending [value])
+  (while pending
+    (setv item (.pop pending))
+    (match item
+      (bool) None
+      (int)
+        (when (not (<= JSON-INTEGER-MIN item JSON-INTEGER-MAX))
+          (raise (ValueError (.format "{} の整数 {} は i64 の下限 {} から u64 の上限 {} の外(Rust の serde_json が整数のまま読めない)"
+                                      what item JSON-INTEGER-MIN JSON-INTEGER-MAX))))
+      (float)
+        (cond
+          (not (math.isfinite item))
+            (raise (ValueError (.format "{} の浮動小数 {!r} は有限でない(JSON の綴りの外 — Rust の serde_json が読めない)" what item)))
+          (and (= item 0.0) (< (math.copysign 1.0 item) 0.0))
+            (raise (ValueError (.format "{} の浮動小数 -0.0 は書けない(Rust の serde_json と jsonb が 0 と区別しない — 書き手が 0 にする)" what))))
+      (Mapping) (.extend pending (.values item))
+      (| (tuple) (list)) (.extend pending item)
+      _ None)))
 
 
 (defn #^ int json-bytes [#^ object value]
