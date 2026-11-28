@@ -29,7 +29,8 @@
 (import doeff_records._values [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written WrittenRows
                               RowChanged RowRemoved Changes Appended AppendedEvents Event Events Conflict Refused NotIndexed Reset
                               RowsConflict RowsRefused Count StreamEnd StreamEmpty StreamTail StreamTailEmpty UndeclaredTable EventsMoved
-                              EventsQuiet EventAbsent EventRetired BatchRead stored-text spellable-body WrittenAndAppended AppendRefused])
+                              EventsQuiet EventAbsent EventRetired BatchRead stored-text spellable-body WrittenAndAppended AppendRefused
+                              ExpectAlias SwapAlias AliasState])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent AppendEvents EventAppend
                                ReadEvents ReadStreamEnd ReadEventByKey ReadBatch CountRows PutRowsAppendEvents])
 
@@ -485,10 +486,13 @@
 
 (defk list-cursor-json [cursor]
   {:pre [(: cursor (| ListCursor None))] :post [(: % (| dict None))]}
-  "一覧の次の頁の位置を wire の値にする(None = 終わり / 最初から)。鍵 afterValue は上から読む読みの位置の時だけ載せる。"
-  (cond (is cursor None) None
-        (is cursor.after-value None) {"epoch" cursor.epoch "afterKey" cursor.after-key}
-        True {"epoch" cursor.epoch "afterKey" cursor.after-key "afterValue" cursor.after-value}))
+  "一覧の次の頁の位置を wire の値にする(None = 終わり / 最初から)。鍵 afterValue は上から読む読みの位置の時だけ・鍵 generation は alias の
+   論理の名の読みの位置の時だけ載せる(使わない読みの綴りは前と同じ)。"
+  (when (is cursor None)
+    (return None))
+  (| {"epoch" cursor.epoch "afterKey" cursor.after-key}
+     (if (is cursor.after-value None) {} {"afterValue" cursor.after-value})
+     (if (is cursor.generation None) {} {"generation" cursor.generation})))
 
 
 (defk list-cursor-from [value what answer]
@@ -496,10 +500,19 @@
   "wire の値から一覧の次の頁の位置を読む(null = 無し・鍵 afterValue は上から読む読みの位置の時だけ在る・answer = 答えの位置か — 要求の
    位置は知らない鍵を断る)。"
   (when (is value None) (return None))
-  (<- body (shape-of value what #("epoch" "afterKey") #("afterValue") answer))
+  (<- body (shape-of value what #("epoch" "afterKey") #("afterValue" "generation") answer))
   (ListCursor (! (integer-of (get body "epoch") (+ what ".epoch")))
               (! (string-of (get body "afterKey") (+ what ".afterKey")))
-              (if (in "afterValue" body) (! (integer-of (get body "afterValue") (+ what ".afterValue"))) None)))
+              (if (in "afterValue" body) (! (integer-of (get body "afterValue") (+ what ".afterValue"))) None)
+              :generation (if (in "generation" body) (! (integer-of (get body "generation") (+ what ".generation"))) None)))
+
+
+(defk alias-state-from [value]
+  {:pre [(: value JsonValue)] :post [(: % AliasState)]}
+  "答えの頁の鍵 alias の object から alias の今を読むため。"
+  (<- body (answer-object-of value "page.alias" #("name" "slot" "generation") #()))
+  (AliasState (! (string-of (get body "name") "page.alias.name")) (! (string-of (get body "slot") "page.alias.slot"))
+              (! (integer-of (get body "generation") "page.alias.generation"))))
 
 
 (defk expect-json [expect]
@@ -547,9 +560,42 @@
 (defk row-writes-from [body]
   {:pre [(: body JsonValue)] :post [(: % tuple)]}
   "put-rows の本文 {writes: [...]} から束の書き(RowWrite の tuple)を読む(同じ行が 2 度出る束・空の束は PutRows が作る時に断る)。"
-  (<- (object-of body "put-rows の本文" #("writes") #()))
+  (<- (object-of body "put-rows の本文" #("writes") #("aliases")))
   (<- writes tuple (row-write-items (get body "writes")))
   writes)
+
+
+(defk alias-step-json [step]
+  {:pre [(: step (| ExpectAlias SwapAlias))] :post [(: % dict)]}
+  "束の alias の段を wire の object(kind = expect | swap・name・generation・swap は slot も)にするため。"
+  (match step
+    (ExpectAlias :name name :generation generation) {"kind" "expect" "name" name "generation" generation}
+    (SwapAlias :name name :generation generation :slot slot) {"kind" "swap" "name" name "generation" generation "slot" slot}))
+
+
+(defk alias-steps-from [body]
+  {:pre [(: body JsonValue)] :post [(: % tuple)]}
+  "put-rows の本文の鍵 aliases(無ければ空)から束の alias の段の tuple を読むため(同じ alias が 2 度出る束は PutRows が作る時に断る)。"
+  (when (not (and (isinstance body dict) (in "aliases" body)))
+    (return #()))
+  (<- items (list-in (get body "aliases") "aliases"))
+  (val steps [])
+  (for [item items]
+    (when (not (isinstance item dict))
+      (raise (WireMalformed (.format "put-rows の alias の段は JSON の object: {!r}" item))))
+    (val kind (.get item "kind"))
+    (cond
+      (= kind "expect")
+        (do (<- (object-of item "put-rows の alias の段" #("kind" "name" "generation") #()))
+            (.append steps (ExpectAlias (! (string-of (get item "name") "aliases[].name"))
+                                        (! (integer-of (get item "generation") "aliases[].generation")))))
+      (= kind "swap")
+        (do (<- (object-of item "put-rows の alias の段" #("kind" "name" "generation" "slot") #()))
+            (.append steps (SwapAlias (! (string-of (get item "name") "aliases[].name"))
+                                      (! (integer-of (get item "generation") "aliases[].generation"))
+                                      (! (string-of (get item "slot") "aliases[].slot")))))
+      True (raise (WireMalformed (.format "put-rows の alias の段の kind は expect | swap: {!r}" item)))))
+  (tuple steps))
 
 
 (defk row-write-items [value]
@@ -656,10 +702,15 @@
       (WireRequest OP-WATCH-EVENTS {"stream" stream "after" after "timeout" (float timeout)})
     (ReadEventByKey :stream stream :idempotency_key idempotency-key)
       (WireRequest OP-READ-EVENT-BY-KEY {"stream" stream "idempotencyKey" idempotency-key})
-    (PutRows :writes writes)
+    (PutRows :writes writes :aliases aliases)
+      ;; 鍵 aliases は alias の段を持つ束の時だけ載せる(使わない束の本文は前と同じ — 古い service は知らない鍵を 400 で断るので、段を使う
+      ;; client より先に service を新しい版で起こす)。
       (do (val write-items [])
           (for [write writes] (.append write-items (! (row-write-json write))))
-          (WireRequest OP-PUT-ROWS {"writes" write-items}))
+          (val step-items [])
+          (for [step aliases] (.append step-items (! (alias-step-json step))))
+          (WireRequest OP-PUT-ROWS (| {"writes" write-items}
+                                      (if step-items {"aliases" step-items} {}))))
     (AppendEvents :appends appends)
       (do (var append-items [])
           (for [one appends]
@@ -793,7 +844,7 @@
             (when (in "keyHead" body) (setv (get keywords "key_head") (! (string-of (get body "keyHead") "keyHead"))))
             (ReadEvents (! (string-of (get body "stream") "stream")) #** keywords))
       "put-rows"
-        (PutRows (! (row-writes-from body)))
+        (PutRows (! (row-writes-from body)) :aliases (! (alias-steps-from body)))
       "read-stream-end"
         (do (<- (object-of body "read-stream-end の本文" #("stream") #()))
             (ReadStreamEnd (! (string-of (get body "stream") "stream"))))
@@ -993,8 +1044,11 @@
             (setv items [])
             (for [row group] (.append items (! (row-json row value-of))))
             (.append joined-encoded {"table" table "rows" items}))
+          ;; 鍵 alias は alias の論理の名の読みの答えの時だけ出す(省ける鍵 — 1 版前の読み手は読み捨てる)。
           (| {"kind" "page" "rows" encoded "nextCursor" (! (list-cursor-json next-cursor)) "epoch" epoch "sequence" sequence}
-             (if joined-encoded {"joined" joined-encoded} {})))
+             (if joined-encoded {"joined" joined-encoded} {})
+             (if (is answer.alias None) {}
+                 {"alias" {"name" answer.alias.name "slot" answer.alias.slot "generation" answer.alias.generation}})))
     ;; 鍵 position は書きの変更の位置を持つ答えの時だけ出す(省ける鍵 — 1 版前の読み手は知らない鍵を読み捨てる・test_wire_versions)。
     ;; 鍵 replayed は冪等キーの送り直しの答えの時だけ出す(省ける鍵 — 真の時だけ。1 版前の読み手は読み捨てる)。
     (Written :version version :value value :position position :replayed replayed)
@@ -1004,7 +1058,8 @@
     (Conflict :current current) {"kind" "conflict" "current" (! (answer-object current value-of))}
     (Refused :reason reason) {"kind" "refused" "reason" reason}
     (NotIndexed :fields fields) {"kind" "notIndexed" "fields" (list fields)}
-    (Reset :epoch epoch :floor floor) {"kind" "reset" "epoch" epoch "floor" floor}
+    ;; 鍵 tables は付け替えに絞った Reset の時だけ出す(省ける鍵 — 1 版前の読み手は置き場の全部の Reset として読む)。
+    (Reset :epoch epoch :floor floor :tables tables) (| {"kind" "reset" "epoch" epoch "floor" floor} (if tables {"tables" (list tables)} {}))
     (Changes :items items :cursor cursor :tails tails)
       (do (setv encoded [])
           (for [item items] (.append encoded (! (change-json item value-of))))
@@ -1240,13 +1295,14 @@
       {"kind" "row"} (! (row-from value))
       {"kind" "missing"} (do (<- (answer-object-of value "missing" #("kind") #())) (Missing))
       {"kind" "page"}
-        (do (<- (answer-object-of value "page" #("kind" "rows" "nextCursor" "epoch" "sequence") #("joined")))
+        (do (<- (answer-object-of value "page" #("kind" "rows" "nextCursor" "epoch" "sequence") #("joined" "alias")))
             (setv rows [])
             (for [item (! (list-in (get value "rows") "page.rows"))] (.append rows (! (row-from item))))
             (<- joined FrozenMap (joined-rows-from value))
             (Page (tuple rows) (! (list-cursor-from (get value "nextCursor") "page.nextCursor" True))
                   (! (integer-of (get value "epoch") "page.epoch")) (! (integer-of (get value "sequence") "page.sequence"))
-                  :joined joined))
+                  :joined joined
+                  :alias (if (in "alias" value) (! (alias-state-from (get value "alias"))) None)))
       {"kind" "written"}
         (do (<- (answer-object-of value "written" #("kind" "version" "value") #("position" "replayed")))
             (Written (! (integer-of (get value "version") "written.version")) (! (json-object-in (get value "value") "written.value"))
@@ -1264,8 +1320,9 @@
         (do (<- (answer-object-of value "notIndexed" #("kind" "fields") #()))
             (NotIndexed (! (strings-of (get value "fields") "notIndexed.fields"))))
       {"kind" "reset"}
-        (do (<- (answer-object-of value "reset" #("kind" "epoch" "floor") #()))
-            (Reset (! (integer-of (get value "epoch") "reset.epoch")) (! (integer-of (get value "floor") "reset.floor"))))
+        (do (<- (answer-object-of value "reset" #("kind" "epoch" "floor") #("tables")))
+            (Reset (! (integer-of (get value "epoch") "reset.epoch")) (! (integer-of (get value "floor") "reset.floor"))
+                   :tables (if (in "tables" value) (! (strings-of (get value "tables") "reset.tables")) #())))
       {"kind" "changes"}
         (do (<- (answer-object-of value "changes" #("kind" "items" "cursor") #("tails")))
             (setv items [])

@@ -223,8 +223,8 @@
 
 (defk metric-word [text]
   {:pre [(: text str)] :post [(: % str)] :tags {:context "records" :role "judgment"}}
-  "操作や錠の単位の名を、計器の名の 1 語にするため(Prometheus の名に使えない - と : を _ にする)。"
-  (.replace (.replace text "-" "_") ":" "_"))
+  "操作や錠の単位の名を、計器の名の 1 語にするため(Prometheus の名に使えない - と : と alias の slot の名の ~ を _ にする)。"
+  (.replace (.replace (.replace text "-" "_") ":" "_") "~" "_"))
 
 
 (defk lock-metric [operation unit phase]

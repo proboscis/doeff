@@ -101,7 +101,11 @@
    "CREATE INDEX IF NOT EXISTS records_kp_6dd0fe800114_909e6bf0ca53 ON records_state_rows ((CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END), key COLLATE \"C\") WHERE (CASE WHEN ledger = 'parts' THEN ((payload::jsonb) -> 'color') END) IS NOT NULL"
    "CREATE INDEX IF NOT EXISTS records_state_rows_key_c ON records_state_rows (ledger, key COLLATE \"C\")"
    "CREATE INDEX IF NOT EXISTS records_retired_keys_remembered ON records_retired_keys (ledger, remembered_at)"
-   "CREATE INDEX IF NOT EXISTS records_write_keys_remembered ON records_write_keys (remembered_at)"])
+   "CREATE INDEX IF NOT EXISTS records_write_keys_remembered ON records_write_keys (remembered_at)"
+   ;; 表の alias の今の表(_pg_sql.hy の table_aliases — LAW-SCHEMA は alias を宣言しないので初めの今の行は無い)。
+   "CREATE TABLE IF NOT EXISTS records_table_aliases (
+           name text PRIMARY KEY, slot text NOT NULL CHECK (slot IN ('a', 'b')), generation bigint NOT NULL,
+           moved_seq bigint NOT NULL)"])
 ;; 旧い版の錠の文と鍵の字面(_pg_sql.hy の lock-statement・migrate-lock-statement の写し — #880 の前)。
 (val BEFORE-880-LOCK-TEXT "SELECT pg_advisory_xact_lock(hashtext(%s))")
 (val BEFORE-880-WRITER-KEY (fn [prefix] (+ prefix "records-writer")))

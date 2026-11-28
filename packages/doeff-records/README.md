@@ -137,6 +137,29 @@ effect と型(定義・期待・答え)は入口 `doeff_records` から読む(`f
 - 例外で上がるのは組み立ての誤り(定義に無い表・列を名指した = `UndeclaredTable`)と実装の誤りだけ。`UndeclaredTable` の欄
   `tables`・`streams` は定義に無いと分かった名(分からない時は空)— 読み手はどの表の断りかを欄で照らし、文の綴りを読まない。
 
+## 表の alias(影の slot と付け替え)
+
+導いた表の作り直しを読み手に見えない影の表で組み、終わりに読み手の名の指し先を 1 回の書きで替える(Elasticsearch の index alias swap・
+1 transaction の表の付け替えと同じ形)。`RecordsSchema(aliases=(TableAlias("T"),))` で表 `T` を alias にすると、名は 3 つになる。
+
+| 名 | 意味 |
+|---|---|
+| `T` | 論理の名。読み(`ReadRow`・`ListRows`・`CountRows`・`ReadBatch`・`WatchChanges`)は alias の今の slot を読む。書きは断る(`Refused` / `RowsRefused` — どの世代を組む書きかを名乗れないため) |
+| `T~a` | slot a の物理の名(置き場の中は `T` — alias を宣言する前の行がそのまま a。移しは要らない) |
+| `T~b` | slot b の物理の名(影の表。宣言は `T` の写しを `RecordsSchema` が `tables` に足す — 索引の用意・保持の刈り・表の要約・書きの許しは他の表と同じ道) |
+
+- 付け替えは `PutRows(writes, aliases=(SwapAlias(T, 世代, slot),))` で、束の行と同じ錠・transaction の中で行う。束の行の変更の前に変更の列の
+  番号を 1 つ採る(付け替えの位置)。`ExpectAlias(T, 世代)` は世代の期待。段は行の期待より先に見て、世代が違う・既に指している slot・
+  索引の用意が終わっていない slot への付け替えは束ごと `RowsRefused(index = len(writes) + 段の位置, table = T, key = ())`。
+- 論理の名の `Page.alias` は頁の行と同じ断面の `AliasState(name, slot, generation)`、続きの位置 `ListCursor.generation` は世代。頁の間に
+  付け替えが入った続きの読みは `Reset(tables=(T,))`(2 つの世代を混ぜない)。
+- `WatchChanges` は論理の名を位置の時点の slot で読み、位置の後の最初の付け替えの手前で止め、次の読みで `Reset(epoch, floor = 付け替えの位置,
+  tables = 付け替えた論理の名)` を返す(付け替えた表を見ていない待ち手には返さない)。呼び手は `tables` の表だけを一覧から読み直し、
+  `WatchCursor(epoch, floor)` から続ける。影の slot に付け替えの前に書いた変更は論理の名の変更として出ない。
+- PostgreSQL の置き場は alias の今を表 `table_aliases` に置き、論理の名の読みを 2 つの slot の文を alias の行の副問いの LATERAL に並べた
+  1 つの SQL 文で流す(READ COMMITTED でも 1 回の読みが 2 つの世代を跨がない)。HTTP の口は鍵 `aliases`(put-rows の本文)・`generation`
+  (位置)・`alias`(頁)・`tables`(reset)を使う時だけ載せる。
+
 ## 表の定義
 
 `TableDecl(name, key_fields, fields, indexes, descending, descending_within, keyed_within, state_field, states, terminal, initial, operator_paths, retention, size_budget, bulk)`

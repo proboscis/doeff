@@ -83,7 +83,7 @@
   {:pre [(: schema RecordsSchema) (: ask PublicEffect)] :post [(: % (| str None))]}
   "公開 effect(ask)が名指す表・追記の列のうち、宣言に無い物の説明(全部在れば None)— 宣言に無い表を撃つと handler が組み立ての誤りで落ちるので先に断る。
    理由の綴りは _wire.hy の undeclared-reason の 1 か所(client が同じ綴りから UndeclaredTable の欄を戻す)。"
-  (<- reason (| str None) (undeclared-reason ask (tuple schema.tables) (tuple schema.streams)))
+  (<- reason (| str None) (undeclared-reason ask (schema.table-names) (tuple schema.streams)))
   reason)
 
 

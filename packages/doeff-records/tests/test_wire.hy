@@ -4,7 +4,7 @@
 (import json)
 (import doeff [run])
 (import doeff_hy._frozen [FrozenMap])
-(import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead Count WrittenAndAppended AppendRefused])
+(import doeff_records [ExpectAbsent ExpectVersion ExpectAny WatchCursor ListCursor Row Missing Page Written RowChanged RowRemoved Changes Appended Event Events Conflict Refused NotIndexed Reset WrittenRows RowsConflict RowsRefused StreamEnd StreamEmpty StreamTail StreamTailEmpty EventsMoved EventsQuiet EventAbsent EventRetired AppendedEvents BatchRead Count WrittenAndAppended AppendRefused AliasState ExpectAlias SwapAlias])
 (import doeff_records [ReadRow ListRows PutRow PutRows RowWrite WatchChanges WatchEvents AppendEvent ReadEvents ReadStreamEnd ReadEventByKey AppendEvents EventAppend ReadBatch CountRows PutRowsAppendEvents]
         doeff_records._effects [WHERE-ANY-LIMIT LIST-LIMIT-MAX READ-BATCH-MAX JOIN-TABLES-MAX])
 (import doeff_records [encode-request decode-request decode-answer]
@@ -62,7 +62,12 @@
    (PutRowsAppendEvents #((RowWrite "parts" #("p1") {"label" "a" "color" None} (ExpectVersion 2))
                           (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAbsent)))
                         #((EventAppend "pairs" "cause:r1" {"n" [1 {"m" None}]})
-                          (EventAppend "journal" "k1" "a string body")))])
+                          (EventAppend "journal" "k1" "a string body")))
+   ;; 表の alias の段を持つ束(鍵 aliases — 段を持つ束の時だけ載る)と、alias の論理の名の続きの頁の位置(鍵 generation)。
+   (PutRows #((RowWrite "parts~b" #("p1") {"label" "a"} (ExpectAny))
+              (RowWrite "tickets" #("g1" "t1") {"owner" "o1"} (ExpectAny)))
+            :aliases #((SwapAlias "parts" 2 "b") (ExpectAlias "charters" 0)))
+   (ListRows "parts" :cursor (ListCursor 2 "[\"p1\"]" :generation 3) :limit 5)])
 
 ;; 答え → それを答えてよい操作。
 (setv ANSWERS
@@ -122,7 +127,11 @@
    #("put-rows-append-events" (RowsConflict 0 "parts" #("p1") (Missing)))
    #("put-rows-append-events" (RowsRefused 0 "parts" #("p1") "行の書きの冪等キー 'k' は別の本文の書きで既に使われた"))
    #("put-rows-append-events" (AppendRefused 1 "journal" "k1" "別の本文"))
-   #("read-batch" (BatchRead #(ROW (Missing) (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9) (Reset 3 0) (NotIndexed #("note")))))])
+   #("read-batch" (BatchRead #(ROW (Missing) (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]") 1 9) (Reset 3 0) (NotIndexed #("note")))))
+   ;; 表の alias(2026-11-28): 論理の名の頁(鍵 alias と続きの位置の鍵 generation — どちらも省ける鍵)・付け替えに絞った Reset(鍵 tables)。
+   #("list-rows" (Page #(ROW) (ListCursor 1 "[\"g1\",\"t1\"]" :generation 2) 1 9 :alias (AliasState "parts" "b" 2)))
+   #("list-rows" (Reset 3 0 :tables #("parts")))
+   #("watch-changes" (Reset 2 41 :tables #("parts")))])
 
 
 (defn through-json [value]
