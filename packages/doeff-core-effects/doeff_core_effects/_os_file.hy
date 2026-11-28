@@ -96,7 +96,8 @@
   (try
     (val found (if follow-symlinks (os.stat path) (os.lstat path)))
     (<- kind PathKind (kind-of-mode found.st-mode))
-    (PathStat :kind kind :real-path (os.path.realpath path) :size found.st-size :modified found.st-mtime)
+    (PathStat :kind kind :real-path (os.path.realpath path) :size found.st-size :modified found.st-mtime
+              :flags (getattr found "st_flags" 0))
     (except [FileNotFoundError]
       (PathStat :kind PathKind.MISSING :real-path (os.path.abspath path) :size 0 :modified 0.0))
     (except [error OSError]
@@ -196,7 +197,8 @@
                      (EntryStat :name (if (= base ".") name (+ base "/" name))
                                 :kind (if (is seen None) PathKind.MISSING (.get KIND-OF-FORMAT (stat.S-IFMT seen.st-mode) PathKind.OTHER))
                                 :size (if (is seen None) 0 seen.st-size)
-                                :modified (if (is seen None) 0.0 seen.st-mtime))))
+                                :modified (if (is seen None) 0.0 seen.st-mtime)
+                                :flags (if (is seen None) 0 (getattr seen "st_flags" 0)))))
     (tuple (sorted found :key (fn [e] e.name)))
     (except [error OSError]
       (<- answer FileFailed (failed path error))

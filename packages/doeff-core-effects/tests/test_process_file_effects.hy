@@ -12,6 +12,7 @@
 (import pytest)
 (import stat)
 (import tempfile)
+(import shutil)
 (import dataclasses [dataclass])
 (import typing [TypeVar])
 (import doeff [run with_handlers Program])
@@ -615,3 +616,31 @@
   (assert (= memory real) #(memory real))
   (<- rooted tuple (with_handlers [(state) (memory-file-handler (MemoryFiles :dirs #("/r/in"))) (rooted-file-handler "/r")] (links-journey "/in")))
   (assert (= rooted real) #(rooted real)))
+
+
+(defk flagged-journey []
+  {:pre [] :post [(: % tuple)] :tags {:context "file-system" :role "program"}}
+  "A scenario that reads the st_flags of a file the memory store marks (e.g. an iCloud dataless file, SF_DATALESS 0x40000000) and of a plain one, by StatPath and by StatTree."
+  (<- marked (| PathStat FileFailed) (StatPath "/v/marked" :follow-symlinks False))
+  (<- plain (| PathStat FileFailed) (StatPath "/v/plain" :follow-symlinks False))
+  (<- stats tuple (StatTree "/v"))
+  #(marked.flags plain.flags (tuple (gfor e stats #(e.name e.flags)))))
+
+
+(deftest test-memory-store-answers-the-st-flags-it-was-given
+  ;; flags = 0 is the default for every file the store did not mark (and for an OS without st_flags).
+  (val files (MemoryFiles :files #((MemoryFile :path "/v/marked" :content b"" :flags 0x40000000) (MemoryFile :path "/v/plain" :content b"x"))
+                          :dirs #("/v")))
+  (<- shown tuple (with_handlers [(state) (memory-file-handler files)] (flagged-journey)))
+  (assert (= shown #(0x40000000 0 #(#("marked" 0x40000000) #("plain" 0)))) shown))
+
+
+(deftest test-real-file-system-answers-flags-as-an-int
+  ;; on Linux there is no st_flags, so a real file answers 0; on macOS a plain file in a temporary dir has no flag either.
+  (val root (tempfile.mkdtemp))
+  (<- (with_handlers [(state) os-file-handler] (WriteText (+ root "/a") "x")))
+  (<- seen (| PathStat FileFailed) (with_handlers [(state) os-file-handler] (StatPath (+ root "/a") :follow-symlinks False)))
+  (<- listed tuple (with_handlers [(state) os-file-handler] (StatTree root)))
+  (shutil.rmtree root)
+  (assert (and (is (type seen.flags) int) (= (& seen.flags 0x40000000) 0)) seen)
+  (assert (all (gfor e listed (is (type e.flags) int))) listed))

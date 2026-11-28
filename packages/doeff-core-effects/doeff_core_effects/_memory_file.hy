@@ -365,13 +365,14 @@
 
 (defk stat-in [store path]
   {:pre [(: store MemoryFiles) (: path str)] :post [(: % PathStat)]}
-  "To read the state of a path (no mtime is held so it is 0; the size of a link is the byte count of the target spelling, the same as the real lstat)."
+  "To read the state of a path (no mtime is held so it is 0; the size of a link is the byte count of the target spelling, the same as the real lstat; flags = the file's MemoryFile.flags)."
   (<- kind PathKind (kind-in store path))
   (val size (match kind
               PathKind.FILE (len (next (gfor f store.files :if (= f.path path) f.content)))
               PathKind.SYMLINK (len (.encode (next (gfor l store.links :if (= l.path path) l.target)) "utf-8"))
               _ 0))
-  (PathStat :kind kind :real-path path :size size :modified 0.0))
+  (val flags (if (= kind PathKind.FILE) (next (gfor f store.files :if (= f.path path) f.flags)) 0))
+  (PathStat :kind kind :real-path path :size size :modified 0.0 :flags flags))
 
 
 (defhandler memory-file-handler [#^ MemoryFiles initial]
@@ -600,7 +601,7 @@
   (var stats #())
   (for [entry below]
     (<- seen PathStat (stat-in store (posixpath.join path entry.name)))
-    (:= stats (+ stats #((EntryStat :name entry.name :kind entry.kind :size seen.size :modified seen.modified)))))
+    (:= stats (+ stats #((EntryStat :name entry.name :kind entry.kind :size seen.size :modified seen.modified :flags seen.flags)))))
   stats)
 
 

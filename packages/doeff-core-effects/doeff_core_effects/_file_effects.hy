@@ -73,11 +73,13 @@
 
 
 (defrecord PathStat
-  "The state of a path. kind = the kind (for a symlink, what it points to; MISSING if it does not exist), real-path = the absolute path after following, size = bytes, modified = mtime (epoch seconds)."
+  "The state of a path. kind = the kind (for a symlink, what it points to; MISSING if it does not exist), real-path = the absolute path after following, size = bytes, modified = mtime (epoch seconds),
+   flags = the BSD file flags st_flags (on macOS e.g. SF_DATALESS 0x40000000 for an iCloud file whose contents are not on the machine; 0 where the OS has no st_flags)."
   (#^ PathKind kind)
   (#^ str real-path)
   (#^ int size)
-  (#^ float modified))
+  (#^ float modified)
+  (setv #^ int flags 0))
 
 
 (defrecord DirEntry
@@ -88,11 +90,13 @@
 
 (defrecord EntryStat
   "The state of one entry under a dir (the answer of StatTree). name = the path relative to the dir (/ separated), kind = the kind (a symlink is not followed: SYMLINK; one that vanished after the listing is
-   MISSING), size = bytes, modified = mtime (epoch seconds) -- size and mtime are also those of the link itself for a symlink."
+   MISSING), size = bytes, modified = mtime (epoch seconds) -- size and mtime are also those of the link itself for a symlink. flags = the BSD file flags st_flags of the entry itself
+   (as PathStat.flags; 0 where the OS has none)."
   (#^ str name)
   (#^ PathKind kind)
   (#^ int size)
-  (#^ float modified))
+  (#^ float modified)
+  (setv #^ int flags 0))
 
 
 (defrecord DiskUsage
@@ -290,10 +294,12 @@
 
 
 (defrecord MemoryFile
-  "One file of the memory store (path = the absolute path, content = the bytes of the contents, mode = the mode given, or None)."
+  "One file of the memory store (path = the absolute path, content = the bytes of the contents, mode = the mode given, or None, flags = the st_flags StatPath and StatTree answer -- a test
+   marks e.g. an iCloud dataless file with it)."
   (#^ str path)
   (#^ bytes content)
-  (setv #^ (| int None) mode None))
+  (setv #^ (| int None) mode None
+        #^ int flags 0))
 
 
 (defrecord MemoryLink
