@@ -114,7 +114,7 @@
 (import json)
 (import sys)
 (import collections.abc [Callable])
-(import dataclasses [dataclass])
+(import dataclasses [dataclass replace])
 (import doeff [Program])
 (import doeff_hy._frozen [FrozenMap frozen-json-object])
 (import doeff_time [Delay GetMonotonic GetTime WaitWithin])
@@ -128,16 +128,17 @@
                               EventAbsent EventRetired Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS
                               StreamTail StreamTailEmpty stored-row stored-change
                               Event stored-event Events Reset WatchCursor ListCursor Refused Unreachable RowsConflict RowsRefused BatchRead
-                              WrittenAndAppended AppendRefused])
+                              WrittenAndAppended AppendRefused AliasState relabeled-change])
+(import doeff_records._values [SwapAlias])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents ReadEvents ReadStreamEnd
-                               ReadEventByKey ReadBatch CountRows write-parts PutRowsAppendEvents append-parts])
+                               ReadEventByKey ReadBatch CountRows write-parts PutRowsAppendEvents append-parts alias-parts])
 (import doeff_records._faults [AdvanceStoreEpoch])
 (import doeff_records._event_source [RECORDS-SIGNAL-SOURCE ReadSignalSource])
 (import doeff_records._maintenance [SweepExpired PruneChanges ReadChangeLog ChangeLog Swept Pruned ReadExpiredEvents ExpiredEvents ExpiredCursor
                                    RetireArchivedEvents RetiredEvents MoveBulkFields BulkMoved])
 (import doeff_records._admission [AppendNew AppendReplay judge-expect judge-put judge-put-rows judge-append row-expired? retention-cutoff-ms
                                  where-refusal key-head-refusal listed-row key-text key-from-text canonical-json next-watch-sequence epoch-ms body-digest
-                                 judge-write-replay write-digest])
+                                 judge-write-replay write-digest alias-write-refusal judge-alias-steps swapped-states alias-watch-window])
 (import doeff_records._watching [wait-for-signal moved-of Held])
 (import doeff_records._pg_sql [Statement RowExpiry EventExpiry TailRead DEFAULT-PREFIX checked-prefix writer-lock-key migrate-lock-key
                               unit-lock-key stream-unit table-unit ROWS-UNIT writer-lock-statement numbering-lock-statement write-key-lock-statement schema-steps drop-statements
@@ -157,7 +158,8 @@
                               SchemaStep columns-statement drop-keys-statement forget-keys-statement
                               find-write-key-statement remember-write-statement forget-write-keys-statement
                               insert-positioned-event-statement remember-rows-events-statement
-                              NUMBERING-LOCK NUMBERING-XACT NUMBERINGS held-changes-statement numbering-state-statement switch-numbering-statements])
+                              NUMBERING-LOCK NUMBERING-XACT NUMBERINGS held-changes-statement numbering-state-statement switch-numbering-statements
+                              aliased-statement alias-states-statement swap-mark-statement swap-alias-statement ALIAS-LEDGER])
 
 (val MODULE-TAGS {:context "records" :role "foundation"})
 
@@ -1321,19 +1323,94 @@
 (defk pg-read-row [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadRow) (: now-ms int)] :post [(: % (| Row Missing))]
    :tags {:context "records" :role "foundation"}}
-  "ReadRow に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも Missing — 文の条件・頭の註)。"
+  "ReadRow に答えるため(刻 now-ms で保持の期限を過ぎた終端の行は、回収の前でも Missing — 文の条件・頭の註)。alias の論理の名は今の
+   slot を同じ文で読む(aliased-statement)。"
   (<- statement Statement (read-row-plan store ask now-ms))
-  (<- records (query-rows store.database statement))
-  (if records (row-of (get records 0)) (Missing)))
+  (<- found (query-rows store.database statement))
+  (<- read (aliased-records store ask.table (tuple found)))
+  (if read.records (row-of (get read.records 0)) (Missing)))
+
+
+;; --- 表の alias の読み(_values.hy の頭の註の「表の alias」・_pg_sql.hy の「論理の名の読み」)-----------------------------------------
+
+(defrecord AliasedRead
+  "読みの文の答えの行から alias の今を外した物(aliased-records の答え): state = 論理の名の読みなら文と同じ snapshot の alias の今
+   (AliasState — 物理の名の読みは None)/ records = 読みの文そのものの答えの行。"
+  (#^ (| AliasState None) state)
+  (#^ tuple records))
+
+
+(defk aliased-records [store table records]
+  {:pre [(: store PreparedStore) (: table str) (: records tuple)] :post [(: % AliasedRead)]
+   :tags {:context "records" :role "foundation"}}
+  "表 table の読みの文の答えの行 records を、alias の今と読みの行に分けるため: 論理の名の読みの文(aliased-statement)の行の頭の 2 列は
+   slot と世代で、読みの文が行を返さない時の 1 行(残りの列が全部 NULL)は捨てる。物理の名の読みはそのまま。"
+  (when (not (store.schema.aliased? table))
+    (return (AliasedRead :state None :records records)))
+  (val first (get records 0))
+  (AliasedRead :state (AliasState :name table :slot (get first 0) :generation (int (get first 1)))
+               :records (tuple (gfor record records
+                                     :setv rest (tuple (cut record 2 None))
+                                     :if (any (gfor column rest (is-not column None)))
+                                     rest))))
+
+
+(defk slot-plans [store ask now-ms build]
+  {:pre [(: store PreparedStore) (: ask (| ReadRow ListRows CountRows)) (: now-ms int) (: build Callable)] :post [(: % (| Statement NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "読み ask の文を作るため: build = (store ask 置き場の中の名 now-ms strict) → その名の読みの文(Statement | NotIndexed)の defk(strict 偽 =
+   索引の無い索引の欄も索引なしの文で組む)。物理の名はその置き場の中の名で 1 つ・論理の名は 2 つの slot の文を aliased-statement に並べる
+   (どちらの slot も索引の欄の索引が無ければ slot a の NotIndexed — 片方の slot に索引が在れば、無い slot は索引なしの文で組む。付け替えは
+   索引の揃った slot へしか動かない — pending-storages)。"
+  (val resolved (store.schema.resolve ask.table))
+  (when (is resolved.alias None)
+    (<- plain (| Statement NotIndexed) (build store ask resolved.storage now-ms True))
+    (return plain))
+  (val a-name (store.schema.slot-storage ask.table "a"))
+  (val b-name (store.schema.slot-storage ask.table "b"))
+  (<- a (| Statement NotIndexed) (build store ask a-name now-ms True))
+  (<- b (| Statement NotIndexed) (build store ask b-name now-ms True))
+  (when (and (isinstance a NotIndexed) (isinstance b NotIndexed))
+    (return a))
+  (var a-loose a)
+  (var b-loose b)
+  (when (isinstance a NotIndexed)
+    (<- a-built Statement (build store ask a-name now-ms False))
+    (:= a-loose a-built))
+  (when (isinstance b NotIndexed)
+    (<- b-built Statement (build store ask b-name now-ms False))
+    (:= b-loose b-built))
+  (<- statement Statement (aliased-statement store.prefix ask.table a-loose b-loose))
+  statement)
+
+
+(defk pending-storages [store]
+  {:pre [(: store PreparedStore)] :post [(: % frozenset)]
+   :tags {:context "records" :role "foundation"}}
+  "alias の slot の置き場の中の名のうち、宣言した索引の欄に使える索引がまだ無い名の集合を読むため(付け替えの先がここに在れば断る —
+   admission.judge-alias-steps の pending)。"
+  (frozenset (gfor alias store.schema.aliases
+                   slot #("a" "b")
+                   :setv storage (store.schema.slot-storage alias.name slot)
+                   :setv decl (store.schema.table storage)
+                   :if (any (gfor name decl.indexes (not (.covers store.indexes storage name))))
+                   storage)))
 
 
 (defk read-row-plan [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask ReadRow) (: now-ms int)] :post [(: % Statement)]
    :tags {:context "records" :role "foundation"}}
-  "ReadRow の文を作るため(1 つの読みの pg-read-row と束の読みの pg-read-batch が同じ文を流す 1 点)。"
-  (val decl (store.schema.table ask.table))
-  (<- expiry (row-expiry decl now-ms))
-  (<- statement Statement (read-row-statement store.prefix ask.table (key-text ask.key) expiry))
+  "ReadRow の文を作るため(1 つの読みの pg-read-row と束の読みの pg-read-batch が同じ文を流す 1 点 — alias の論理の名は slot-plans)。"
+  (<- statement Statement (slot-plans store ask now-ms storage-read-row-plan))
+  statement)
+
+
+(defk storage-read-row-plan [store ask storage now-ms strict]
+  {:pre [(: store PreparedStore) (: ask ReadRow) (: storage str) (: now-ms int) (: strict bool)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の中の名 storage の ReadRow の文を作るため(slot-plans の build — 行の読みは索引を待たない)。"
+  (<- expiry (row-expiry (store.schema.table storage) now-ms))
+  (<- statement Statement (read-row-statement store.prefix storage (key-text ask.key) expiry))
   statement)
 
 
@@ -1379,8 +1456,26 @@
     (except [error RecordsSqlFailed]
       (<- shape (list-rows-shape ask))
       (raise (RecordsSqlFailed error.sqlstate (.format "{} — {}" error.reason shape)))))
-  (<- page Page (list-rows-page store ask records head))
+  (<- page (| Page Reset) (aliased-page store ask (tuple records) head))
   page)
+
+
+(defk aliased-page [store ask records head]
+  {:pre [(: store PreparedStore) (: ask ListRows) (: records tuple) (: head StoreHead)] :post [(: % (| Page Reset))]
+   :tags {:context "records" :role "foundation"}}
+  "ListRows の文の答えの行 records から頁を組むため(1 つの読みと束の読みの 1 点): alias の論理の名の読みは、文と同じ snapshot の alias の今が
+   続きの位置の世代と違えば(頁の間に付け替えが入った)Reset(tables = その名)を答え、頁の続きの位置に今の世代を、Page.alias に今を
+   持たせる(aliased-records)。"
+  (<- read (aliased-records store ask.table records))
+  (val state read.state)
+  (when (and (is-not state None) (is-not ask.cursor None)
+             (!= (if (is ask.cursor.generation None) 0 ask.cursor.generation) state.generation))
+    (return (Reset head.epoch head.floor :tables #(ask.table))))
+  (<- page Page (list-rows-page store ask read.records head))
+  (if (is state None)
+      page
+      (replace page :alias state
+               :next-cursor (if (is page.next-cursor None) None (replace page.next-cursor :generation state.generation)))))
 
 
 (defk list-rows-shape [ask]
@@ -1406,19 +1501,30 @@
   {:pre [(: store PreparedStore) (: ask ListRows) (: now-ms int)] :post [(: % (| Statement NotIndexed))]
    :tags {:context "records" :role "foundation"}}
   "ListRows の文を作るか、索引の無い欄の断り NotIndexed を返すため(1 つの読みの pg-list-rows-at と束の読みの pg-read-batch が同じ文を流す
-   1 点 — 置き場の版の照らし Reset は頭を読んだ後に呼び手がする)。"
-  (val decl (store.schema.table ask.table))
+   1 点 — 置き場の版の照らし Reset は頭を読んだ後に呼び手がする。alias の論理の名は slot-plans)。"
   (for [name ask.join-tables]
-    (store.schema.table name))
+    (store.schema.table name)
+    (when (store.schema.aliased? name)
+      (raise (ValueError (.format "ListRows.join_tables に alias の論理の名 {!r} は使えない(物理の名で添える)" name)))))
+  (<- plan (| Statement NotIndexed) (slot-plans store ask now-ms storage-list-rows-plan))
+  plan)
+
+
+(defk storage-list-rows-plan [store ask storage now-ms strict]
+  {:pre [(: store PreparedStore) (: ask ListRows) (: storage str) (: now-ms int) (: strict bool)] :post [(: % (| Statement NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の中の名 storage の ListRows の文を作るため(slot-plans の build — strict 偽は索引の無い索引の欄を NotIndexed にせず索引なしの
+   文で組む)。添える表(join-tables)は物理の名の置き場の中の名。"
+  (val decl (store.schema.table storage))
   (val refusal (where-refusal decl ask.where ask.where-any (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by)))
   (when refusal (return refusal))
   (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
-  (when unbuilt (return (NotIndexed unbuilt)))
+  (when (and unbuilt strict) (return (NotIndexed unbuilt)))
   (<- expiry (row-expiry decl now-ms))
   (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
   (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
   ;; 表の欄の式の索引が在る欄は表の欄の式で照らす(作り終える前の欄は前の文の形 — pg_sql の頭の註)。
-  (val scoped (.scoped-fields store.indexes ask.table))
+  (val scoped (.scoped-fields store.indexes storage))
   (val ordered-by (if (is-not ask.descending-by None) ask.descending-by ask.ascending-by))
   ;; 返す欄 fields が表の大きい欄を 1 つも含まなければ、文は列 bulk を選ばない(大きい欄の本体を読まない — pg_sql の頭の註の state_rows)。
   ;; fields が無い読みと、大きい欄を含む読みは payload と bulk を合わせて読む。
@@ -1427,11 +1533,11 @@
   (if (is-not ordered-by None)
       ;; 並べて読む読み(ListRows の註): cursor の位置の (値, 鍵の綴り) を越えた行から 1 頁 + 1 行(続きの有無を知るため)。降順は位置より小さい
       ;; 行・昇順は大きい行。表の上から読む欄は並べる式の索引の順に(昇順は逆に)辿る形(pg_sql の頭の註)。
-      (do (<- top-statement Statement (ordered-rows-statement store.prefix ask.table decl.key-fields scoped ordered-by
+      (do (<- top-statement Statement (ordered-rows-statement store.prefix storage decl.key-fields scoped ordered-by
                                                               (in ordered-by decl.descending) (is-not ask.ascending-by None) ask.cursor
                                                               where-json where-any-json ask.limit expiry with-bulk))
           (:= base top-statement))
-      (do (<- key-statement Statement (list-rows-statement store.prefix ask.table decl.key-fields scoped
+      (do (<- key-statement Statement (list-rows-statement store.prefix storage decl.key-fields scoped
                                                            (if (is ask.cursor None) None ask.cursor.after-key)
                                                            where-json
                                                            where-any-json
@@ -1442,10 +1548,11 @@
   (when (not ask.join-tables)
     (return base))
   (var join-expiries #())
-  (for [name ask.join-tables]
+  (val joins (tuple (gfor name ask.join-tables (. (store.schema.resolve name) storage))))
+  (for [name joins]
     (<- join-expiry (| RowExpiry None) (row-expiry (store.schema.table name) now-ms))
     (:= join-expiries (+ join-expiries #(join-expiry))))
-  (<- joined-statement Statement (joined-list-statement store.prefix base ask.limit ask.join-tables join-expiries))
+  (<- joined-statement Statement (joined-list-statement store.prefix base ask.limit joins join-expiries))
   joined-statement)
 
 
@@ -1506,21 +1613,33 @@
   {:pre [(: store PreparedStore) (: ask CountRows) (: now-ms int)] :post [(: % (| Count NotIndexed))]
    :tags {:context "records" :role "foundation"}}
   "CountRows に答えるため: 絞りに合う行の件数を 1 文で数える(刻 now-ms で保持の期限を過ぎた終端の行は回収の前でも数えない — ListRows と
-   同じ条件・索引の無い欄の絞りは NotIndexed)。下限 at-least の欄が表の上から読む欄なら、並べる式の索引の範囲で数える。"
-  (val decl (store.schema.table ask.table))
+   同じ条件・索引の無い欄の絞りは NotIndexed)。下限 at-least の欄が表の上から読む欄なら、並べる式の索引の範囲で数える。alias の論理の名は
+   今の slot を同じ文で数える(slot-plans)。"
+  (<- plan (| Statement NotIndexed) (slot-plans store ask now-ms storage-count-rows-plan))
+  (when (isinstance plan NotIndexed)
+    (return plan))
+  (<- found (query-rows store.database plan))
+  (<- read (aliased-records store ask.table (tuple found)))
+  (Count (int (get (get read.records 0) 0))))
+
+
+(defk storage-count-rows-plan [store ask storage now-ms strict]
+  {:pre [(: store PreparedStore) (: ask CountRows) (: storage str) (: now-ms int) (: strict bool)] :post [(: % (| Statement NotIndexed))]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の中の名 storage の CountRows の文を作るため(slot-plans の build — storage-list-rows-plan と同じ strict)。"
+  (val decl (store.schema.table storage))
   (val refusal (where-refusal decl ask.where ask.where-any (if (is ask.at-least None) None (get ask.at-least 0))))
   (when refusal (return refusal))
   (<- unbuilt (unbuilt-fields store decl (+ (tuple ask.where) (tuple ask.where-any))))
-  (when unbuilt (return (NotIndexed unbuilt)))
+  (when (and unbuilt strict) (return (NotIndexed unbuilt)))
   (<- expiry (row-expiry decl now-ms))
   (val where-json (dfor #(name value) (.items ask.where) name (canonical-json value)))
   (val where-any-json (dfor #(name members) (.items ask.where-any) name (tuple (gfor value members (canonical-json value)))))
-  (val scoped (.scoped-fields store.indexes ask.table))
-  (<- statement Statement (count-rows-statement store.prefix ask.table decl.key-fields scoped ask.at-least
+  (val scoped (.scoped-fields store.indexes storage))
+  (<- statement Statement (count-rows-statement store.prefix storage decl.key-fields scoped ask.at-least
                                                 (and (is-not ask.at-least None) (in (get ask.at-least 0) decl.descending))
                                                 where-json where-any-json expiry))
-  (<- records (query-rows store.database statement))
-  (Count (int (get (get records 0) 0))))
+  statement)
 
 
 (defk pg-read-batch [store ask now-ms]
@@ -1556,12 +1675,13 @@
   "束の読み 1 つの答えを、流した文の答えの行 records と置き場の頭 head から組むため(1 つの読みと同じ順: 置き場の版の照らし Reset → 索引の
    断り NotIndexed → 頁か行)。"
   (when (isinstance one ReadRow)
-    (return (if records (row-of (get records 0)) (Missing))))
+    (<- read (aliased-records store one.table records))
+    (return (if read.records (row-of (get read.records 0)) (Missing))))
   (when (and (is-not one.cursor None) (!= one.cursor.epoch head.epoch))
     (return (Reset head.epoch head.floor)))
   (when (isinstance plan NotIndexed)
     (return plan))
-  (<- page Page (list-rows-page store one records head))
+  (<- page (| Page Reset) (aliased-page store one records head))
   page)
 
 
@@ -1671,7 +1791,8 @@
   (when (is ask.idempotency-key None)
     (return #()))
   (<- answer str (remembered-answer-json (isinstance ask PutRows) epoch stageds))
-  #((! (remember-write-statement store.prefix ask.idempotency-key (write-digest (isinstance ask PutRows) (write-parts ask)) answer now-ms))))
+  #((! (remember-write-statement store.prefix ask.idempotency-key (write-digest (isinstance ask PutRows) (write-parts ask) None (alias-parts ask))
+                                 answer now-ms))))
 
 
 (defk remember-rows-events-statements [store ask epoch stageds appended now-ms]
@@ -1747,7 +1868,10 @@
   "PutRows の束を全部か 0 で、行の数に依らず 2 往復で書くため(頭の註): 1 往復目に置き場の頭と全部の行を錠つきで読み(期限を過ぎた行は
    片付けて無い行として — locked-row。鍵つきの束は同じ鍵の覚えも読み、PutRow と同じく覚えで先に判じる)、判定(admission.judge-put-rows)が
    全部通った時だけ、2 往復目に片付けと束の順の書き・変更と(鍵つきなら)答えの覚えを COMMIT と同じ往復で流す(行の表の文 → 番号の錠 →
-   変更と覚え — numbered-statements。番号の錠の中で積むので番号は束の中で続く)。往復の途中の失敗は transaction ごと戻る。"
+   変更と覚え — numbered-statements。番号の錠の中で積むので番号は束の中で続く)。往復の途中の失敗は transaction ごと戻る。
+   ask の表の名は置き場の中の名(handler の節が物理の名を解いた後 — placed-rows)。alias の段(ask.aliases)は 1 往復目に alias の今を行の錠
+   つきで読み(alias-states-statement)、行の期待より先に判じ(admission.judge-alias-steps)、通った付け替えは 2 往復目に束の行の変更の前に
+   付け替えの印と alias の今の書きを流す(swap-steps)。"
   (for [write ask.writes] (store.schema.table write.table))
   (val texts (tuple (gfor write ask.writes (key-text write.key))))
   (<- head-statement (store-head-statement store.prefix))
@@ -1755,14 +1879,25 @@
   (for [#(write text) (zip ask.writes texts :strict True)]
     (<- lock-statement (lock-row-statement store.prefix write.table text))
     (:= reads (+ reads #(lock-statement))))
+  (val step-names (tuple (gfor step ask.aliases step.name)))
+  (var alias-reads #())
+  (when step-names
+    (<- alias-read (alias-states-statement store.prefix step-names True))
+    (:= alias-reads #(alias-read)))
   (<- key-reads (write-key-reads store ask))
-  (<- read (batch-rows store.database (+ reads key-reads) False))
+  (<- read (batch-rows store.database (+ reads alias-reads key-reads) False))
   (<- remembered (remembered-write-of (if key-reads (get read -1) #())))
-  (val replay (judge-write-replay ask.idempotency-key True ask.writes remembered))
+  (val replay (judge-write-replay ask.idempotency-key True ask.writes remembered None ask.aliases))
   (when (is-not replay None)
     (<- replayed (committed store #() replay))
     (return replayed))
   (<- head (head-of (get read 0)))
+  (<- states (alias-states-of store step-names (if alias-reads (tuple (get read (len reads))) #())))
+  (<- pending (pending-storages store))
+  (val step-refusal (judge-alias-steps store.schema ask.aliases states pending (len ask.writes)))
+  (when step-refusal
+    (<- step-refused (committed store #() step-refusal))
+    (return step-refused))
   (var found #())
   (for [#(write text records) (zip ask.writes texts (cut read 1 (len reads)) :strict True)]
     (<- one (locked-row store (store.schema.table write.table) text records now-ms head.epoch))
@@ -1778,17 +1913,68 @@
   (for [#(write text current admitted) (zip ask.writes texts currents verdict :strict True)]
     (<- staged (staged-row store origin-host writer write.table text current admitted.value now-ms head.epoch))
     (:= stageds (+ stageds #(staged))))
-  (<- steps (joined-steps (+ #(cleanup) (tuple (gfor staged stageds (RowSteps :rows #(staged.upsert) :changes #(staged.change)))))))
+  (<- swapping (swap-steps store ask.aliases states now-ms head.epoch))
+  (<- steps (joined-steps (+ #(cleanup swapping) (tuple (gfor staged stageds (RowSteps :rows #(staged.upsert) :changes #(staged.change)))))))
   (<- remembers (remember-statements store ask head.epoch stageds now-ms))
   (<- statements (numbered-statements store steps remembers))
   (<- rows (batch-rows store.database statements True))
-  ;; 束の i 番目の変更の文の答えの位置: 行の表の文と番号の錠の後、片付けの変更の後の i 番目(numbered-statements の並び)。
-  (val first (+ (len steps.rows) 1 (len cleanup.changes)))
+  ;; 束の i 番目の変更の文の答えの位置: 行の表の文と番号の錠の後、片付けの変更と付け替えの文の後の i 番目(numbered-statements の並び)。
+  (val first (+ (len steps.rows) 1 (len cleanup.changes) (len swapping.changes)))
   (var written #())
   (for [#(index staged) (enumerate stageds)]
     (<- answered (written-of staged rows (+ first index) head.epoch))
     (:= written (+ written #(answered))))
   (WrittenRows written))
+
+
+(defk alias-states-of [store names records]
+  {:pre [(: store PreparedStore) (: names tuple) (: records tuple)] :post [(: % dict)]
+   :tags {:context "records" :role "foundation"}}
+  "alias-states-statement の答えの行 records から、名 names ごとの alias の今(名 → AliasState — 行の無い宣言した alias は slot a・世代 0・
+   宣言に無い名は None で、判じ admission.judge-alias-steps が UndeclaredTable で断る)を作るため。"
+  (val found (dfor record records (get record 0) (AliasState :name (get record 0) :slot (get record 1) :generation (int (get record 2)))))
+  (dfor name names
+        name (cond (in name found) (get found name)
+                   (store.schema.aliased? name) (AliasState :name name :slot "a" :generation 0)
+                   True None)))
+
+
+(defk swap-steps [store steps states now-ms epoch]
+  {:pre [(: store PreparedStore) (: steps tuple) (: states dict) (: now-ms int) (: epoch int)] :post [(: % RowSteps)]
+   :tags {:context "records" :role "foundation"}}
+  "判じを通った束の付け替え(steps の SwapAlias)の 2 往復目の文を作るため: 変更の列に付け替えの印を 1 つ積む文と、alias ごとの今の書き
+   (印の番号を最後の付け替えの番号にする — 印の直ぐ後ろ)。どちらも変更の文の組(番号の錠の中 — 束の行の変更の前)に置く。付け替えが
+   無ければ空の組。"
+  (val swapped (swapped-states steps states))
+  (when (not swapped)
+    (return NO-STEPS))
+  (<- mark (swap-mark-statement store.prefix (tuple (gfor state swapped #(state.name (. (get states state.name) slot) state.slot)))
+                                now-ms epoch))
+  (var writes #())
+  (for [state swapped]
+    (<- write (swap-alias-statement store.prefix state.name state.slot state.generation))
+    (:= writes (+ writes #(write))))
+  (RowSteps :rows #() :changes (+ #(mark) writes)))
+
+
+(defk placed-rows [store writes]
+  {:pre [(: store PreparedStore) (: writes tuple)] :post [(: % tuple)]
+   :tags {:context "records" :role "foundation"}}
+  "行の書きの並び writes(PutRow | RowWrite)の表の名を、置き場の中の名にするため(物理の名 T~a は元の表の名 — alias の論理の名への書きは
+   呼び手が先に断る・admission.alias-write-refusal)。"
+  (tuple (gfor write writes (replace write :table (. (store.schema.resolve write.table) storage)))))
+
+
+(defk asked-answer [answer writes]
+  {:pre [(: answer (| Written WrittenRows WrittenAndAppended Conflict Refused RowsConflict RowsRefused AppendRefused Unreachable))
+         (: writes tuple)]
+   :post [(: % (| Written WrittenRows WrittenAndAppended Conflict Refused RowsConflict RowsRefused AppendRefused Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "置き場の中の名で判じた書きの答え answer の、束の行の断り・衝突(RowsConflict | RowsRefused — 行の index)の表の名を、要求の名 writes に
+   戻すため(alias の段の断りは alias の名のまま)。"
+  (if (and (isinstance answer #(RowsConflict RowsRefused)) (< answer.index (len writes)))
+      (replace answer :table (. (get writes answer.index) table))
+      answer))
 
 
 (defk positioned-payload [plain writer epoch]
@@ -1932,6 +2118,69 @@
   tails)
 
 
+(defk aliased-watch-scan [store ask now-ms]
+  {:pre [(: store PreparedStore) (: ask WatchChanges) (: now-ms int)] :post [(: % (| Changes Reset Held))]
+   :tags {:context "records" :role "foundation"}}
+  "alias の名(論理の名か物理の slot の名 T~a)を頼んだ WatchChanges の 1 回ぶんの読み(pg-watch-scan と同じ答えの形 — 頭の註の
+   「表の alias」)。alias の今を変更の列の読みより前に読み(読みの間に入った付け替えは、変更の列の読みに印として出るか、頭より後で
+   読みの外)、頼んだ表の 2 つの slot の置き場の中の名と付け替えの印(ALIAS-LEDGER)を同じ文で読み、admission.alias-watch-window で
+   位置の後の最初の付け替えの手前で切る。手前に変更が無ければ表に絞った Reset(floor = 付け替えの位置)。印が頭より後に在る付け替え
+   (alias の今の最後の付け替えの番号が位置より後で、読んだ範囲に印が無い)は、印が頭の内に入るまで位置を動かさない空の変更で答える。"
+  (val requested (tuple (gfor name ask.tables (store.schema.resolve name))))
+  (val logical (tuple (sorted (sfor r requested :if (is-not r.alias None) r.alias))))
+  (var alias-rows #())
+  (when logical
+    (<- alias-statement (alias-states-statement store.prefix logical False))
+    (<- found (query-rows store.database alias-statement))
+    (:= alias-rows (tuple found)))
+  (val slots (| (dfor name logical name "a") (dfor record alias-rows (get record 0) (get record 1))))
+  (val moved (dfor record alias-rows (get record 0) (int (get record 3))))
+  (val storages (tuple (sorted (sfor r requested
+                                     storage (if (is r.alias None) #(r.storage)
+                                                 (tuple (gfor slot #("a" "b") (store.schema.slot-storage r.alias slot))))
+                                     storage))))
+  (<- reads tuple (tail-reads store ask.streams now-ms))
+  (<- head-statement Statement (watch-head-statement store.prefix reads))
+  (<- head-rows tuple (query-rows store.database head-statement))
+  (<- head StoreHead (head-of head-rows))
+  (val cursor ask.cursor)
+  (when (or (!= cursor.epoch head.epoch) (< cursor.sequence head.floor) (> cursor.sequence head.bound))
+    (return (Reset head.epoch head.floor)))
+  (<- tails tuple (tails-of ask.streams (tuple (cut (get head-rows 0) 5 None))))
+  (val reached (max head.head cursor.sequence))
+  (val quiet (Changes #() (WatchCursor head.epoch cursor.sequence) tails))
+  (when (>= cursor.sequence reached)
+    (return (Changes #() (WatchCursor head.epoch reached) tails)))
+  (<- expiries (table-expiries store storages now-ms))
+  (val ledgers (+ storages (if logical #(ALIAS-LEDGER) #())))
+  (<- statement (changes-statement store.prefix cursor.sequence reached ledgers ask.limit expiries))
+  (<- records (query-rows store.database statement))
+  (val marks (tuple (gfor record records :if (= (get record 1) ALIAS-LEDGER)
+                          #((int (get record 0))
+                            (tuple (gfor move (get (json.loads (get record 4)) "moves") (tuple move)))))))
+  (val window (alias-watch-window store.schema (tuple ask.tables) marks slots))
+  ;; 印が頭より後に在る付け替え: 読んだ範囲の変更の slot を決められないので、印が頭の内に入るまで待つ。
+  (when (and (is window.bound None) (any (gfor name logical (> (.get moved name 0) cursor.sequence))))
+    (return (Held :answer quiet)))
+  (val last-read (if (>= (len records) ask.limit) (int (get (get records -1) 0)) reached))
+  (val upto (if (is window.bound None) last-read (min last-read (- window.bound 1))))
+  (<- changes (decoded-batch (tuple (gfor record records :if (and (!= (get record 1) ALIAS-LEDGER) (<= (int (get record 0)) upto)) record))
+                             changes-of))
+  (val items (tuple (gfor change changes
+                          :if (in change.table window.labels)
+                          label (get window.labels change.table)
+                          (relabeled-change change label))))
+  (when (and (is-not window.bound None) (not items))
+    (return (Reset head.epoch window.bound :tables window.reset-tables)))
+  (val answer (Changes items (WatchCursor head.epoch upto) tails))
+  (when (or items (!= head.numbering NUMBERING-XACT))
+    (return answer))
+  ;; 空の変更の transaction の形の読みは、頼んだ表の commit 済みの変更が頭の後ろで止まっていないかを読む(pg-watch-scan と同じ Held)。
+  (<- held-statement (held-changes-statement store.prefix reached ledgers))
+  (<- held-rows (query-rows store.database held-statement))
+  (if (get held-rows 0 0) (Held :answer answer) answer))
+
+
 (defk pg-watch-scan [store ask now-ms]
   {:pre [(: store PreparedStore) (: ask WatchChanges) (: now-ms int)] :post [(: % (| Changes Reset Held))]
    :tags {:context "records" :role "foundation"}}
@@ -1943,6 +2192,10 @@
    位置が頭より後でも位置の上限(StoreHead.bound — transaction の形の置き場で、commit 済みの書きの答えの位置が頭を越えている間・pg_sql の
    頭の註の「番号の形」)までは Reset にせず、位置を動かさない空の変更で答える(頭が追いつくまで待つ)。上限より後は Reset。"
   (for [name ask.tables] (store.schema.table name))
+  (val requested (tuple (gfor name ask.tables (store.schema.resolve name))))
+  (when (any (gfor r requested (or (is-not r.alias None) (!= r.storage r.asked))))
+    (<- aliased (aliased-watch-scan store ask now-ms))
+    (return aliased))
   (<- reads tuple (tail-reads store ask.streams now-ms))
   (<- head-statement Statement (watch-head-statement store.prefix reads))
   (<- head-rows tuple (query-rows store.database head-statement))
@@ -2544,6 +2797,45 @@
 
 ;; --- handler ------------------------------------------------------------------------------------------------
 
+(defk watched-storages [store tables]
+  {:pre [(: store PreparedStore) (: tables tuple)] :post [(: % (get tuple #(str ...)))]
+   :tags {:context "records" :role "foundation"}}
+  "WatchChanges の待ち手が呼び鈴を掛ける表の置き場の中の名を作るため(論理の名は 2 つの slot の両方・物理の名はその置き場の中の名 —
+   宣言に無い名はそのまま。読み pg-watch-scan が宣言に無い名を UndeclaredTable で断る)。"
+  (tuple (gfor name tables
+               storage (cond (store.schema.aliased? name) (tuple (gfor slot #("a" "b") (store.schema.slot-storage name slot)))
+                             (in name (store.schema.table-names)) #((. (store.schema.resolve name) storage))
+                             True #(name))
+               storage)))
+
+
+(defk rows-events-answered [store gated origin-host writer ask]
+  {:pre [(: store PreparedStore) (: gated bool) (: origin-host str) (: writer str) (: ask PutRowsAppendEvents)]
+   :post [(: % (| WrittenAndAppended RowsConflict RowsRefused AppendRefused Unreachable))]
+   :tags {:context "records" :role "foundation"}}
+  "PutRowsAppendEvents の節の答え(alias の論理の名への書きは置き場に触らずに断り、物理の名を置き場の中の名に解いて書く — PutRows の節と同じ)。"
+  (val writes ask.writes)
+  (val appends ask.appends)
+  (val refusal (alias-write-refusal store.schema writes))
+  (when refusal
+    (return refusal))
+  (<- now (GetTime))
+  (val effect ask)
+  (<- placed (placed-rows store writes))
+  (val tables (tuple (gfor write placed write.table)))
+  (val streams (tuple (gfor one appends one.stream)))
+  (<- topics (notice-topics tables streams))
+  (<- table-locks (table-units tables))
+  (var units table-locks)
+  (for [stream (sorted (set streams))]
+    (<- unit (stream-unit stream))
+    (:= units (+ units #(unit))))
+  (<- answer (reached (batched-writing store gated "put-rows-append-events" units topics
+                                       (put-rows-append-events-locked store origin-host writer (replace effect :writes placed) (epoch-ms now)))))
+  (<- asked (asked-answer answer writes))
+  asked)
+
+
 (defhandler pg-records-handler [#^ PreparedStore store #^ str writer #^ str origin-host #^ bool [gated False]]
   ;; 引数に残す理由: store は用意し終えた置き場(prepare-records-store の答え — 表の用意を済ませた証)で、置き場ごとに違う。
   ;; writer は呼び手が名乗った書き手の名(要求ごとに違う — 書き手の名を effect の引数にしない)。origin-host は行に刻む機体の名で、
@@ -2573,23 +2865,40 @@
     (<- answer (reached (pg-read-batch store effect (epoch-ms now))))
     (resume answer))
   ;; 書きの節は触る名(表 | 列)の合図を、待ちの節は待つ名の呼び鈴を使う(頭の註 — notice-topics)。
+  ;; 表の alias(_values.hy の頭の註): 論理の名への書きは置き場に触らずに断り、物理の名は置き場の中の名に解いてから書く(placed-rows)。
+  ;; 付け替えの束は alias の 2 つの slot の錠の単位も持ち、2 つの slot の名を合図する(論理の名の待ち手は 2 つの名で待つ)。
   (PutRow [table key value expect]
-    (<- now (GetTime))
-    (<- topics (notice-topics #(table) #()))
-    (<- unit (table-unit table))
-    (<- answer (reached (batched-writing store gated "put-row" #(unit) topics
-                                         (put-row-locked store origin-host writer effect (epoch-ms now)))))
-    (resume answer))
+    (val refusal (alias-write-refusal store.schema #(effect)))
+    (if refusal
+        (resume (Refused refusal.reason))
+        (do (<- now (GetTime))
+            (<- placed (placed-rows store #(effect)))
+            (val ask (get placed 0))
+            (<- topics (notice-topics #(ask.table) #()))
+            (<- unit (table-unit ask.table))
+            (<- answer (reached (batched-writing store gated "put-row" #(unit) topics
+                                                 (put-row-locked store origin-host writer ask (epoch-ms now)))))
+            (resume answer))))
   (PutRows [writes]
-    (<- now (GetTime))
-    (<- topics (notice-topics (tuple (gfor write writes write.table)) #()))
-    (<- units (table-units (tuple (gfor write writes write.table))))
-    (<- answer (reached (batched-writing store gated "put-rows" units topics
-                                         (put-rows-locked store origin-host writer effect (epoch-ms now)))))
-    (resume answer))
+    (val refusal (alias-write-refusal store.schema writes))
+    (if refusal
+        (resume refusal)
+        (do (<- now (GetTime))
+            (<- placed (placed-rows store writes))
+            (val swap-tables (tuple (gfor step effect.aliases :if (isinstance step SwapAlias)
+                                          slot #("a" "b") (store.schema.slot-storage step.name slot))))
+            (val touched (+ (tuple (gfor write placed write.table)) swap-tables))
+            (<- topics (notice-topics touched #()))
+            (<- units (table-units touched))
+            (<- answer (reached (batched-writing store gated "put-rows" units topics
+                                                 (put-rows-locked store origin-host writer (replace effect :writes placed) (epoch-ms now)))))
+            (<- asked (asked-answer answer writes))
+            (resume asked))))
   (WatchChanges [tables cursor timeout limit]
     ;; 呼び鈴の名は頼んだ表だけ — 末尾を名指した列(streams)への追記では待ち手を起こさない(tails は答えを返す時点の末尾・#3718)。
-    (<- topics (notice-topics (tuple tables) #()))
+    ;; 表の alias の論理の名は 2 つの slot の置き場の中の名・物理の名はその置き場の中の名で待つ(書きは置き場の中の名で合図する)。
+    (<- storages (watched-storages store (tuple tables)))
+    (<- topics (notice-topics storages #()))
     (<- answer (wait-for-signal (fn [now-ms] (reached (pg-watch-scan store effect now-ms)))
                                 (fn [] (hung-bell store topics)) (fn [bell] (dropped-bell store bell)) timeout))
     (resume answer))
@@ -2609,17 +2918,7 @@
   (PutRowsAppendEvents [writes appends]
     ;; 行の束と追記の束を 1 つの書きの錠の transaction で 2 往復で積み、触る表と列の名を合図する(put-rows-append-events-locked)。錠の単位は
     ;; 触る表と列の全部(名の順 — writer-locks)。
-    (<- now (GetTime))
-    (val tables (tuple (gfor write writes write.table)))
-    (val streams (tuple (gfor one appends one.stream)))
-    (<- topics (notice-topics tables streams))
-    (<- table-locks (table-units tables))
-    (var units table-locks)
-    (for [stream (sorted (set streams))]
-      (<- unit (stream-unit stream))
-      (:= units (+ units #(unit))))
-    (<- answer (reached (batched-writing store gated "put-rows-append-events" units topics
-                                         (put-rows-append-events-locked store origin-host writer effect (epoch-ms now)))))
+    (<- answer (rows-events-answered store gated origin-host writer effect))
     (resume answer))
   (AppendEvents [appends]
     ;; 束の追記を 1 つの書きの錠の transaction で 2 往復で積み、束が触る列の名を合図する(append-events-locked)。

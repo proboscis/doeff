@@ -233,6 +233,37 @@
                (AliasState :name step.name :slot step.slot :generation (+ (. (get states step.name) generation) 1)))))
 
 
+(defclass [(dataclass :frozen True)] AliasWatchWindow []
+  "WatchChanges の 1 回の読みの、表の alias の切り方(alias-watch-window の答え): labels = 読む変更の置き場の中の名 → 要求の名の list
+   (論理の名は位置の時点の slot・物理の名はその slot)/ bound = 位置の後の最初の付け替え(頼んだ alias のどれか)の番号 — この番号より前の
+   変更だけを読む(None = 付け替えが無い)/ reset-tables = bound の付け替えで指し先が替わった頼んだ論理の名(頼んだ順)。"
+  (#^ dict labels)
+  (#^ (| int None) bound)
+  (#^ tuple reset-tables))
+
+
+(defn #^ AliasWatchWindow alias-watch-window [#^ RecordsSchema schema #^ tuple tables #^ tuple moves #^ dict slots]  ; cannot be a defk: handler(memory・PG)が置き場の錠の内と読みの間に同期に呼ぶ判断(この file の判断はすべて純関数の defn)
+  "WatchChanges の頼んだ表 tables の読みを、位置の後の付け替え moves(#(番号 #(#(名 前の slot 後の slot) …)) の番号の順の tuple)と
+   alias の今の slot slots(名 → slot)で切るため(memory と PostgreSQL の handler が同じ答えを返す 1 か所)。論理の名の位置の時点の slot は、
+   位置の後の最初のその alias の付け替えの前の slot(無ければ今の slot)。"
+  (setv requested (tuple (gfor name tables (schema.resolve name)))
+        logical (sfor r requested :if (is-not r.alias None) r.alias)
+        hits (tuple (gfor #(sequence changed) moves :if (any (gfor #(name _ _) changed (in name logical))) #(sequence changed)))
+        labels {})
+  (for [r requested]
+    (setv storage (if (is r.alias None)
+                      r.storage
+                      (schema.slot-storage r.alias (next (gfor #(_ changed) hits #(name before _) changed :if (= name r.alias) before)
+                                                         (get slots r.alias)))))
+    (.append (.setdefault labels storage []) r.asked))
+  (if (not hits)
+      (AliasWatchWindow :labels labels :bound None :reset-tables #())
+      (do (setv #(bound changed) (get hits 0)
+                swapped (sfor #(name _ _) changed name))
+          (AliasWatchWindow :labels labels :bound bound
+                            :reset-tables (tuple (gfor r requested :if (and (is-not r.alias None) (in r.alias swapped)) r.asked))))))
+
+
 ;; --- 行の書きの冪等キー-------------------------------------------------------------------
 ;; 置き場(memory・PG)は確定した鍵つきの書きの答えと本文の指紋を覚え(values.RememberedWrite)、同じ鍵の次の書きを、期待と書きの判定の
 ;; 前にここで判じる: 同じ本文なら覚えた答えを送り直しと名乗って返し(行に触らない)、別の本文は冪等キーの断り。覚えの無い鍵と鍵の無い

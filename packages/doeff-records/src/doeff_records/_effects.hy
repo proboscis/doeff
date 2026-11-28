@@ -330,9 +330,9 @@
    出す)/ Unreachable = 失敗(<- は Raise(Unreachable) を出す)。不在は無い。答える handler は今までどおり 4 つとも値で答える(R4)。
    aliases = 束の alias の段(_values.hy の頭の註の「表の alias」— ExpectAlias = 世代の期待・SwapAlias = 付け替え。同じ alias は 1 度だけ・
    既定 = 無し)。段は行の期待より先に見て、世代が違う・付け替えられない段があれば束ごと RowsRefused(index = len(writes) + 段の位置・
-   table = alias の名・key = 空)。付け替えは行の書きと同じ錠・transaction の中で、束の行の変更の後に変更の列の番号を 1 つ採る。
-   行の書きは物理の名(T~a・T~b)だけ — alias の論理の名への書きは RowsRefused。冪等キーの本文の指紋は段を含まない(段を使う束は
-   冪等キーを付けない — 付けた束は断る)。"
+   table = alias の名・key = 空)。付け替えは行の書きと同じ錠・transaction の中で、束の行の変更の前に変更の列の番号を 1 つ採る。
+   行の書きは物理の名(T~a・T~b)だけ — alias の論理の名への書きは RowsRefused。冪等キーの本文の指紋は段を含む(同じ鍵・同じ束の送り直しは前の答え・
+   同じ鍵の別の段の束は冪等キーの断り)。"
   {:fields [(: writes (get tuple #(RowWrite ...))) (: idempotency-key (| str None) None)
             (: aliases (get tuple #(AliasStep ...)) #())]
    :pre [(checked-put-rows writes idempotency-key aliases)]

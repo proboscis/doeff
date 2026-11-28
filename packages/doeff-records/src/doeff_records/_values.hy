@@ -370,8 +370,8 @@
 ;;   T~b   slot b の物理の名 — 影の表(宣言は T の TableDecl を名だけ替えた写し。RecordsSchema が tables に足す — 索引の用意・保持の刈り・
 ;;         表の要約・書きの許しは他の表と同じ道で b を知る)。
 ;; alias の今は AliasState(指す slot と世代 — 世代は付け替えのたびに 1 増え、宣言した時は a・0)。付け替えは PutRows の aliases の
-;; SwapAlias で、同じ束の行の書きと同じ錠・transaction の中で行い、変更の列に番号を 1 つ採る(付け替えの位置 — WatchChanges の Reset の
-;; floor)。読みは同じ錠・同じ SQL 文の中で alias を引くので、1 回の読みが 2 つの世代を跨がない。
+;; SwapAlias で、同じ束の行の書きと同じ錠・transaction の中で行い、束の行の変更の前に変更の列の番号を 1 つ採る(付け替えの位置 —
+;; WatchChanges の Reset の floor。束の行の変更は付け替えの後に見える)。読みは同じ錠・同じ SQL 文の中で alias を引くので、1 回の読みが 2 つの世代を跨がない。
 
 (val ALIAS-SLOTS #("a" "b"))
 
@@ -737,6 +737,21 @@
   (#^ str table)
   (#^ (get tuple #(str ...)) key)
   (#^ int sequence))
+
+
+(defn #^ object relabeled-change [#^ (| RowChanged RowRemoved) change #^ str table]  ; cannot be a defk: handler(memory・PG)が変更の読みの内包表記の中で変更ごとに同期に呼ぶ値の作り直し
+  "置き場の中の名で積んだ変更を、要求の表の名 table の変更にするため(同じ名ならそのまま・値の保存の綴りは運ぶ)。"
+  (cond
+    (= change.table table) change
+    (isinstance change RowRemoved) (replace change :table table)
+    True (do (setv text (stored-text change))
+             (setv moved (object.__new__ RowChanged))
+             (for [name #("key" "version" "sequence" "at")]
+               (object.__setattr__ moved name (getattr change name)))
+             (object.__setattr__ moved "table" table)
+             (if (is text None)
+                 (do (object.__setattr__ moved "value" change.value) moved)
+                 (with-stored-text moved text)))))
 
 (defrecord StreamTail
   "WatchChanges の答えの tails の 1 つ — 名指した列 1 つの末尾(#3718): stream = 列の名 / sequence = 列に今ある、保持の期限を過ぎていない

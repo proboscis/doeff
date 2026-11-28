@@ -287,7 +287,7 @@
 ;; 索引の用意の錠の鍵の接尾(session の advisory lock — 同じ置き場の索引を 2 つの process が同時に CONCURRENTLY で作らない)。
 (val INDEX-LOCK-SUFFIX "records-indexes")
 ;; 置き場の表(接頭辞の後ろの名)— 表の用意の観測(relations-statement)と索引の観測(indexes-statement)が引く。
-(val STORE-RELATIONS #("state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys" "write_keys"))
+(val STORE-RELATIONS #("state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys" "write_keys" "table_aliases"))
 (val INDEXED-RELATIONS #("state_rows" "append_rows" "row_changes" "retired_keys" "write_keys"))
 
 
@@ -818,6 +818,12 @@
   (for [index added]
     (<- added-made (index-steps index))
     (:= added-steps (+ added-steps added-made)))
+  ;; 宣言した alias の初めの今の行(下の註の table_aliases)。
+  (var alias-rows #())
+  (for [alias schema.aliases]
+    (<- alias-row (table-step (.format "INSERT INTO {p}table_aliases (name, slot, generation, moved_seq)
+           VALUES ('{n}', 'a', 0, 0) ON CONFLICT (name) DO NOTHING" :p p :n alias.name)))
+    (:= alias-rows (+ alias-rows #(alias-row))))
   ;; 覚えた刻の列(頭の註の retired_keys)は表の後ろ・索引の前(覚えの外しの索引がこの列を引く)。
   ;; 行の書きの冪等キーの覚えの表(頭の註の write_keys)は覚えた刻の列の後ろ・索引の前(覚えの外しの索引がこの表を引く)。
   (+ tables
@@ -831,7 +837,11 @@
            remembered_at bigint NOT NULL)" :p p)))
        (! (bulk-column-step p))
        (! (numbering-column-step p)))
-     added-steps))
+     added-steps
+     ;; 表の alias の今の表(頭の註の table_aliases)は旧い版の文の後ろ。宣言した alias の行を初めの今(slot a・世代 0)で置く
+     ;; (在れば触らない — 書きの束の alias の段が行の錠で付け替えと並ぶため、行は付け替えの前から在る)。
+     #((! (alias-table-step p)))
+     alias-rows))
 
 
 (defk numbering-column-step [prefix]
@@ -1085,7 +1095,7 @@
   {:pre [(: prefix str)] :post [(: % (get tuple #(Statement ...)))]
    :tags {:context "records" :role "foundation"}}
   "検の後片付けの文(この接頭辞の表を消す)を作るため。"
-  (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys" "write_keys"]
+  (tuple (gfor table ["state_rows" "append_rows" "row_changes" "store_epoch" "retired_keys" "write_keys" "table_aliases"]
                (Statement :text (.format "DROP TABLE IF EXISTS {}{}" prefix table) :params #()))))
 
 
@@ -1743,11 +1753,11 @@
   "変更の列の after より後・頭(watermark-expression — 同じ文の断面)までの変更を番号の順に limit 件まで、表と保持の期限で絞らずに読む
    文を作るため(手入れの送りの読み ReadChangeLog — 主鍵 seq の索引で引く)。頭で切るのは、transaction の形の置き場で、頭より後の
    commit 済みの変更の手前に後から commit する番号が残るため(頭の註の「番号の形」— 錠の形の頭は変更の列の最大の番号で、切らないのと同じ)。
-   行の並びは changes-statement と同じ(change-of が読む)。"
+   行の並びは changes-statement と同じ(change-of が読む)。表の alias の付け替えの印(ALIAS-LEDGER — 表の変更でない)は読まない。"
   (Statement :text (.format "SELECT seq, ledger, key, version, payload, at FROM {p}row_changes
-                       WHERE seq > :after AND seq <= (SELECT {w} FROM {p}store_epoch AS e WHERE e.id = 1)
+                       WHERE seq > :after AND seq <= (SELECT {w} FROM {p}store_epoch AS e WHERE e.id = 1) AND ledger <> '{l}'
                        ORDER BY seq LIMIT :limit"
-                            :p prefix :w (! (watermark-expression prefix "e")))
+                            :p prefix :w (! (watermark-expression prefix "e")) :l ALIAS-LEDGER)
              :params (! (params-of #(#("after" after) #("limit" limit))))))
 
 
@@ -2294,3 +2304,98 @@
   (Statement :text (.format "SELECT old.seq, old.at, old.payload FROM {p}append_rows AS old WHERE {w}{a} ORDER BY old.at, old.seq LIMIT :limit"
                             :p prefix :w where :a position)
              :params (+ params after bound)))
+
+
+;; --- 表の alias(_values.hy の頭の註の「表の alias」)-----------------------------------------------------------------
+;;   table_aliases  alias の今 — PK = name・slot = 論理の名の読みが読む slot('a' | 'b')・generation = 付け替えの数・moved_seq = 最後の
+;;                  付け替えが採った変更の列の番号。行の無い alias は slot a・世代 0・番号 0(宣言した時の今 — 移しは要らない)。付け替え
+;;                  (PutRows の SwapAlias)が行の書きと同じ transaction の中で入れる。旧い版の文の後ろに足した表(旧い版は読まない)。
+;;   付け替えの印     変更の列(row_changes)の行 1 つ: ledger = ALIAS-LEDGER(表の名の綴りの外 — 表の変更と混ざらない)・key = ALIAS-MARK・
+;;                  version = 0・payload = {"moves": [[名, 前の slot, 後の slot], …]}。束 1 つの付け替えで 1 行 — 束の行の変更の前に積む
+;;                  (付け替えの位置 — WatchChanges の表に絞った Reset の floor)。
+;; 論理の名の読み(aliased-statement): 読みの文を 2 つの slot の置き場の中の名で 1 つずつ組み、alias の今を読む副問いの LATERAL の中で
+;; UNION ALL に並べ、slot の条件で片方だけを流す(副問いの外の値だけの条件は planner が一度だけ判じる gating の条件にするので、指していない
+;; slot の文は流れない)。alias の今と行を 1 つの SQL 文 = 1 つの snapshot で読むので、READ COMMITTED でも読みの途中の付け替えが 2 つの世代を
+;; 混ぜない。答えの行の頭の 2 列は slot と世代(行の無い読みも 1 行 — 残りの列は NULL)。各 slot の文は表の名を直に置く文のまま(表の欄の式の
+;; 索引に当たる — 頭の註)。
+(val ALIAS-LEDGER "~alias")
+(val ALIAS-MARK "swap")
+
+
+(defk alias-table-step [prefix]
+  {:pre [(: prefix str)] :post [(: % SchemaStep)]
+   :tags {:context "records" :role "foundation"}}
+  "表の alias の今の表(頭の註の table_aliases)を用意する段を作るため(いつも流す — IF NOT EXISTS)。"
+  (SchemaStep :statement (Statement :text (.format "CREATE TABLE IF NOT EXISTS {p}table_aliases (
+           name text PRIMARY KEY, slot text NOT NULL CHECK (slot IN ('a', 'b')), generation bigint NOT NULL,
+           moved_seq bigint NOT NULL)" :p prefix)
+                                    :params #())
+              :index None))
+
+
+(defk renamed-statement [statement suffix]
+  {:pre [(: statement Statement) (: suffix str)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "文 statement の引数の名を全部 suffix を足した名に替えるため(2 つの文を 1 つの文に並べる時に引数の名が重ならない — aliased-statement)。
+   中立の記法の引数 `:name` だけを替え、型の綴り `::jsonb` には触らない。"
+  (var text statement.text)
+  (for [param (sorted statement.params :key (fn [p] (- (len p.name))))]
+    (:= text (re.sub (.format "(?<![:\\w]):{}(?![\\w])" (re.escape param.name)) (.format ":{}{}" param.name suffix) text)))
+  (Statement :text text :params (tuple (gfor param statement.params (SqlParam :name (+ param.name suffix) :value param.value)))))
+
+
+(defk aliased-statement [prefix alias a-statement b-statement]
+  {:pre [(: prefix str) (: alias str) (.match TABLE-NAME-PATTERN alias) (: a-statement Statement) (: b-statement Statement)]
+   :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "alias の論理の名の読みの文を作るため(頭の註の「論理の名の読み」): a-statement・b-statement = slot a・b の置き場の中の名で組んだ同じ形の
+   読みの文。答えの行 = slot・世代・読みの文の列(読みの文が行を返さなければ slot と世代だけの 1 行)。alias の名は宣言を通った表の名の綴り
+   (引用符を含まない — 文に直に置く)。"
+  (<- a (renamed-statement a-statement "__a"))
+  (<- b (renamed-statement b-statement "__b"))
+  (Statement :text (.format "SELECT g.slot, g.generation, s.* FROM
+                       (SELECT coalesce(max(x.slot), 'a') AS slot, coalesce(max(x.generation), 0) AS generation
+                          FROM {p}table_aliases AS x WHERE x.name = '{n}') AS g
+                       LEFT JOIN LATERAL (
+                         (SELECT * FROM ({a}) AS sa WHERE g.slot = 'a')
+                         UNION ALL
+                         (SELECT * FROM ({b}) AS sb WHERE g.slot = 'b')) AS s ON TRUE"
+                            :p prefix :n alias :a a.text :b b.text)
+             :params (+ a.params b.params)))
+
+
+(defk alias-states-statement [prefix names locked]
+  {:pre [(: prefix str) (: names tuple) (> (len names) 0) (: locked bool)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "alias names の今(名・slot・世代・最後の付け替えの番号 — 行の無い alias は答えに出ない)を読む文を作るため(書きの 1 往復目と
+   WatchChanges の変更の読みの前)。locked = 行の錠(FOR UPDATE)つきで読む(書きの束の alias の段 — 同じ alias の付け替えと期待を並べる)。"
+  (<- members (in-list "n" names))
+  (Statement :text (.format "SELECT name, slot, generation, moved_seq FROM {p}table_aliases WHERE name IN ({m}) ORDER BY name{l}"
+                            :p prefix :m members.text :l (if locked " FOR UPDATE" ""))
+             :params members.params))
+
+
+(defk swap-mark-statement [prefix moves at epoch]
+  {:pre [(: prefix str) (: moves tuple) (> (len moves) 0) (: at int) (: epoch int)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "束の付け替えの印(頭の註)を変更の列に 1 つ積む文を作るため(番号の採り方は行の変更と同じ append-change-statement)。moves = 付け替えた
+   alias ごとの #(名 前の slot 後の slot)(束の段の順)。"
+  (<- statement (append-change-statement prefix ALIAS-LEDGER ALIAS-MARK 0
+                                         (json.dumps {"moves" (lfor #(name before after) moves [name before after])}
+                                                     :separators #("," ":") :ensure-ascii False)
+                                         at epoch))
+  statement)
+
+
+(defk swap-alias-statement [prefix name slot generation]
+  {:pre [(: prefix str) (: name str) (: slot str) (in slot #("a" "b")) (: generation int)] :post [(: % Statement)]
+   :tags {:context "records" :role "foundation"}}
+  "alias name の今を slot・世代 generation にし、最後の付け替えの番号を同じ transaction の付け替えの印の番号にする文を作るため(印の文の
+   直ぐ後ろ・束の行の変更の前に流す — その時の自分の transaction の最後の変更が印。own-last-change-expression)。"
+  (Statement :text (.format "INSERT INTO {p}table_aliases (name, slot, generation, moved_seq)
+                       VALUES (CAST(:name AS text), CAST(:slot AS text), CAST(:generation AS bigint),
+                               {o})
+                       ON CONFLICT (name) DO UPDATE SET slot = EXCLUDED.slot, generation = EXCLUDED.generation,
+                                                        moved_seq = EXCLUDED.moved_seq"
+                            :p prefix :o (! (own-last-change-expression prefix)))
+             :params (! (params-of #(#("name" name) #("slot" slot) #("generation" generation))))))

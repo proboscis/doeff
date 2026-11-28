@@ -75,7 +75,7 @@
                               AppendedEvents Event RetiredKey Events EventsMoved EventsQuiet Reset WatchCursor ListCursor Refused RowsConflict RowsRefused
                               Unreachable Conflict NotIndexed StreamEnd StreamEmpty StreamTail StreamTailEmpty WaitsClosed
                               EventAbsent EventRetired BatchRead Count key-memory-ms RememberedWrite WRITE-KEY-MEMORY-SECONDS spelled-row spelled-change
-                              WrittenAndAppended AppendRefused AliasState stored-text with-stored-text])
+                              WrittenAndAppended AppendRefused AliasState relabeled-change])
 (import doeff_records._watching [closing-wake?])
 (import doeff_records._effects [ReadRow ListRows PutRow PutRows WatchChanges WatchEvents AppendEvent AppendEvents EventAppend ReadEvents
                                ReadStreamEnd ReadEventByKey ReadBatch CountRows AwaitRecordsBack ReadSourcePatience write-parts
@@ -90,7 +90,7 @@
                                  listed-row key-text canonical-json json-equal-token
                                  next-watch-sequence
                                  epoch-ms terminal-row? body-digest row-expired? event-expired? judge-write-replay write-digest
-                                 alias-write-refusal judge-alias-steps swapped-states])
+                                 alias-write-refusal judge-alias-steps swapped-states alias-watch-window])
 
 (defclass StoredRow []
   "置き場の行 1 つ: row = 答えに出す Row / updated-ms = 最後に書かれた刻。"
@@ -565,21 +565,6 @@
                storage)))
 
 
-(defn #^ object relabeled-change [#^ (| RowChanged RowRemoved) change #^ str table]  ; cannot be a defk: 錠の内で同期に呼ぶ値の作り直し(memory-watch-scan が内包表記の中で変更ごとに呼ぶ)
-  "置き場の中の名で積んだ変更を、要求の表の名 table の変更にするため(同じ名ならそのまま・値の保存の綴りは運ぶ)。"
-  (cond
-    (= change.table table) change
-    (isinstance change RowRemoved) (replace change :table table)
-    True (do (setv text (stored-text change))
-             (setv moved (object.__new__ RowChanged))
-             (for [name #("key" "version" "sequence" "at")]
-               (object.__setattr__ moved name (getattr change name)))
-             (object.__setattr__ moved "table" table)
-             (if (is text None)
-                 (do (object.__setattr__ moved "value" change.value) moved)
-                 (with-stored-text moved text)))))
-
-
 (defn #^ (| Row Missing) memory-read-row [#^ MemoryStore store #^ ReadRow ask #^ int now-ms]  ; cannot be a defk: 錠の内(read-at-now の operation)で同期に呼ぶ置き場の読み
   "ReadRow に答えるため: 行が無いか、刻 now-ms で保持の期限を過ぎた終端の行(回収の前でも)なら Missing。alias の論理の名は今の slot を読む。"
   (setv storage (memory-storage store ask.table)
@@ -787,6 +772,9 @@
   (when (and (is-not state None) (is-not ask.cursor None) (= ask.cursor.epoch store.epoch)
              (!= (if (is ask.cursor.generation None) 0 ask.cursor.generation) state.generation))
     (return (Reset store.epoch store.floor :tables #(ask.table))))
+  (for [name ask.join-tables]
+    (when (store.schema.aliased? name)
+      (raise (ValueError (.format "ListRows.join_tables に alias の論理の名 {!r} は使えない(物理の名で添える)" name)))))
   (setv joins (tuple (gfor name ask.join-tables (memory-storage store name)))
         storage (memory-storage store ask.table)
         cursor (if (is ask.cursor None) None (replace ask.cursor :generation None))
@@ -949,10 +937,10 @@
 (defn #^ object memory-put-row [#^ MemoryStore store #^ str writer #^ PutRow ask #^ int now-ms]
   "PutRow に答えるため: 鍵つきの書きは同じ鍵の覚えで先に判じ(送り直しは行に触らずに前の答え)、他は期待と書きの判定を通った時だけ
    書いて、鍵つきなら答えを覚える。"
-  (setv replay (write-replay store ask))
-  (when (is-not replay None) (return replay))
   (setv aliased (alias-write-refusal store.schema #(ask)))
   (when aliased (return (Refused aliased.reason)))
+  (setv replay (write-replay store ask))
+  (when (is-not replay None) (return replay))
   (setv storage (memory-storage store ask.table)
         decl (store.schema.table storage)
         current (writable-row store decl ask.key now-ms))
@@ -968,16 +956,19 @@
 (defn #^ (| WrittenRows RowsConflict RowsRefused) memory-put-rows [#^ MemoryStore store #^ str writer #^ PutRows ask #^ int now-ms]  ; cannot be a defk: memory の handler が同期に呼ぶ置き場の書き(memory-put-row と同じ作法)
   "PutRows の束を全部か 0 で書く: 鍵つきの束は同じ鍵の覚えで先に判じ(memory-put-row と同じ)、他は全部の行を束の順に引き(期限を過ぎた
    行は消して無い行として — writable-row)、判定(admission.judge-put-rows)が通った時だけ、束の順に 1 行ずつ書いて変更を積み、鍵つきなら
-   答えを覚える。alias の段(ask.aliases)は行の期待より先に判じ(admission.judge-alias-steps)、通った付け替えは束の行の変更の後に
+   答えを覚える。alias の段(ask.aliases)は行の期待より先に判じ(admission.judge-alias-steps)、通った付け替えは束の行の変更の前に
    変更の列の番号を 1 つ採って alias の今を替える(memory-swap-aliases)。"
   (for [write ask.writes] (store.schema.table write.table))
+  (setv aliased (alias-write-refusal store.schema ask.writes))
+  (when aliased (return aliased))
   (setv replay (write-replay store ask))
   (when (is-not replay None) (return replay))
   (setv staged (staged-rows store ask.writes ask.aliases now-ms))
   (when (not (isinstance staged StagedWrites)) (return staged))
+  ;; 付け替えは束の行の変更の前に番号を採る(束の行の変更は付け替えの後の位置 — 束の最後の変更の位置は最後の行のまま)。
+  (memory-swap-aliases store ask.aliases staged.states now-ms)
   (setv written (WrittenRows (tuple (gfor #(write current admitted) (zip staged.writes staged.currents staged.admitted :strict True)
                                           (memory-store-row store write.table write.key current admitted.value writer write.value now-ms)))))
-  (memory-swap-aliases store ask.aliases staged.states now-ms)
   (remember-write store ask written now-ms)
   written)
 
@@ -1011,8 +1002,8 @@
 
 
 (defn #^ None memory-swap-aliases [#^ MemoryStore store #^ tuple steps #^ dict states #^ int now-ms]  ; cannot be a defk: 錠の内で同期に呼ぶ置き場の書き(束の行を書いた後)
-  "判じを通った束の付け替え(steps の SwapAlias)を置き場に着けるため: 変更の列の番号を 1 つ採り(行の変更は積まない — 番号は付け替えの
-   位置)、付け替えの控え(AliasMove)を積み、alias の今を替え、論理の名の待ち手(2 つの slot の名)を鳴らす。付け替えが無ければ何もしない。"
+  "判じを通った束の付け替え(steps の SwapAlias)を、束の行を書く前に置き場に着けるため: 変更の列の番号を 1 つ採り(行の変更は積まない —
+   番号は付け替えの位置)、付け替えの控え(AliasMove)を積み、alias の今を替え、論理の名の待ち手(2 つの slot の名)を鳴らす。付け替えが無ければ何もしない。"
   (setv swapped (swapped-states steps states))
   (when (not swapped)
     (return None))
@@ -1036,20 +1027,12 @@
   (when (or (!= cursor.epoch store.epoch) (< cursor.sequence store.floor) (> cursor.sequence store.head))
     (return (Reset store.epoch store.floor)))
   ;; 表の alias(頭の註): 論理の名は位置の時点の slot の変更を読み、位置の後の最初の付け替え(頼んだ alias のどれか)の手前で止める。
-  ;; 手前に変更が無ければ、付け替えた alias に絞った Reset(floor = 付け替えの位置)。
-  (setv requested (tuple (gfor name ask.tables (store.schema.resolve name)))
-        logical (sfor r requested :if (is-not r.alias None) r.alias)
-        moves (lfor move store.alias-moves
-                    :if (and (> move.sequence cursor.sequence) (any (gfor #(name _ _) move.moves (in name logical))))
-                    move)
-        bound (if moves (. (get moves 0) sequence) None))
-  (setv labels {})
-  (for [r requested]
-    (setv storage (if (is r.alias None)
-                      r.storage
-                      (store.schema.slot-storage r.alias (next (gfor move moves #(name before _) move.moves :if (= name r.alias) before)
-                                                               (. (get store.aliases r.alias) slot)))))
-    (.append (.setdefault labels storage []) r.asked))
+  ;; 手前に変更が無ければ、付け替えた alias に絞った Reset(floor = 付け替えの位置 — admission.alias-watch-window)。
+  (setv window (alias-watch-window store.schema (tuple ask.tables)
+                                   (tuple (gfor move store.alias-moves :if (> move.sequence cursor.sequence) #(move.sequence move.moves)))
+                                   (dfor #(name state) (.items store.aliases) name state.slot))
+        bound window.bound
+        labels window.labels)
   (setv items (tuple (cut (lfor change store.changes
                                 :if (and (> change.sequence cursor.sequence) (or (is bound None) (< change.sequence bound))
                                          (in change.table labels) (not (hidden-change? store change now-ms)))
@@ -1057,11 +1040,7 @@
                                 (relabeled-change change label))
                           ask.limit)))
   (when (and (is-not bound None) (not items))
-    (return (Reset store.epoch bound
-                   :tables (tuple (gfor r requested
-                                        :if (and (is-not r.alias None)
-                                                 (any (gfor #(name _ _) (. (get moves 0) moves) (= name r.alias))))
-                                        r.asked)))))
+    (return (Reset store.epoch bound :tables window.reset-tables)))
   (setv tails #())
   (for [name ask.streams]
     ;; 列の最後の生きている出来事(memory-read-stream-end と同じ探し方 — 列の出来事は番号の昇順なので後ろから・期限を過ぎた出来事は数えない)。
@@ -1268,6 +1247,8 @@
    答えを覚える。答え = WrittenAndAppended | RowsConflict | RowsRefused | AppendRefused。"
   (for [write ask.writes] (store.schema.table write.table))
   (for [one ask.appends] (store.schema.stream one.stream))
+  (setv aliased (alias-write-refusal store.schema ask.writes))
+  (when aliased (return aliased))
   (setv replay (write-replay store ask))
   (when (is-not replay None) (return replay))
   (setv staged (staged-rows store ask.writes #() now-ms))
