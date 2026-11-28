@@ -92,15 +92,18 @@ CODE_TAG = "doeff-hy/code-store/3"
 CODE_ENTRIES_PER_KEY = 16
 
 #: Lower bound for placing a just-added entry's timestamp ahead of the key's other entries (never place it further back than this from now). Much shorter than the sweep's 7 days — so that an added
-#: entry that was never checked and used is not placed at a timestamp past the sweep threshold and deleted immediately.
-NEW_ENTRY_FLOOR_SECONDS = 24 * 3600
+#: entry that was never checked and used is not placed at a timestamp past the sweep threshold and deleted immediately — and longer than :data:`TOUCH_AFTER_SECONDS`, so an
+#: added entry's first use advances its time and brings it to the head (:func:`_place_after`).
+NEW_ENTRY_FLOOR_SECONDS = 2 * 24 * 3600
 
-#: A hit advances an entry's used time only when the time is older than this (the used mark is read by the sweep's 7 days and by the order of the key's entries — an hour
-#: does not move either). Advancing it on every hit wrote the file's metadata twice per placed .pyc: the worker tools place about 3,000 .pyc for one root, and on a busy
+#: A hit advances an entry's used time only when the time is older than this (the used mark is read by the sweep's 7 days and by the order of the key's entries — a day
+#: does not move either; kept well under the sweep's 7 days so an entry in use is marked several times before the sweep could remove it). Advancing it on every hit wrote the file's metadata twice per placed .pyc: the worker tools place about 3,000 .pyc for one root, and on a busy
 #: disk the writes were a large part of the bytecode stage (2026-11-08 — 6,500 utime calls for one root). Every read that marks an entry used goes through this
 #: (:func:`read_entry`, :func:`stored_code`, :func:`mark_used` and the source-code lookups — an entry behind another of the key too): marking on every read rewrote the
 #: entry's inode on every CLI and hook start — one entry took about 212 utime calls in 8 minutes, and the store's inode writes were about 5 GB a day (2026-11-15).
-TOUCH_AFTER_SECONDS = 3600
+#: An hour was too short: at each hour mark the ~13,000 entries in use had their mtime rewritten at once, and the reads after it wrote the inodes back through relatime and
+#: lazytime (2026-11-27: 16.53 MB of the store's 30.68 MB inode writes in 480 seconds — about 1.4 GB a day).
+TOUCH_AFTER_SECONDS = 24 * 3600
 
 #: Cap on the number of entries held per key for trees expanded by import-time compilation (when adding goes over it, the oldest by timestamp are removed — removed the same way as code entries).
 #: A tree is several times the size of the code for the same source (about as large as the code even when stored compressed), and its user does one lookup to avoid re-expanding the same source, so
@@ -288,7 +291,7 @@ def current_data(store: str, key: str, is_current: Callable[[bytes], bool], *, c
 def _mark_used(path: str, at: int, *, first: bool) -> None:
     """Put the used mark on a source-code entry that was checked and used (its time was at, ns) — advanced only when older than :data:`TOUCH_AFTER_SECONDS`, the head entry
     and an entry behind another of the key alike, so the order of the key's entries is kept at that grain. An entry used behind another comes to the head at its first use
-    after its time is an hour old (an added entry is placed more than an hour back — :func:`_place_after` — so its first use brings it to the head). Bringing it to the
+    after its time is older than TOUCH_AFTER_SECONDS (an added entry is placed further back than that — :func:`_place_after` — so its first use brings it to the head). Bringing it to the
     head on every use made two environments that use the same key in turn rewrite both entries' times on every read (2026-11-15)."""
     del first  # the head and the entries behind it are marked the same way
     _touch_if_older(path, at)
@@ -359,7 +362,7 @@ def _add_entry(store: str, key: str, name: str, suffix: str, limit: int, data: b
 def _place_after(path: str, others: tuple[tuple[int, str], ...]) -> None:
     """Place the added entry's time 1 second before every other entry of the key (others — newest time first) and more than :data:`TOUCH_AFTER_SECONDS` back from now
     (but never further back than NEW_ENTRY_FLOOR_SECONDS from now) — so its first use advances its time and brings it to the head even when the key's other entries were
-    all used within the hour (:func:`_mark_used`). If it cannot be placed, one line naming it is printed (the entry is still usable — it is just at the head of the order)."""
+    all used within TOUCH_AFTER_SECONDS (:func:`_mark_used`). If it cannot be placed, one line naming it is printed (the entry is still usable — it is just at the head of the order)."""
     import time  # loaded only when adding to the store
 
     now = time.time_ns()

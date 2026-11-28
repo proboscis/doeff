@@ -99,7 +99,7 @@ def test_only_the_entry_used_moves_its_time(tmp_path: Path) -> None:
     code_store.add_code(store, key, _code(RECORD_SIX))
     entries = code_store.code_entries(store, key)
     for path in entries:
-        _age(path, 3600)
+        _age(path, code_store.TOUCH_AFTER_SECONDS + 60)
     before = {path: os.stat(path).st_mtime for path in entries}
     assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
     moved = {path for path in entries if os.stat(path).st_mtime != before[path]}
@@ -245,11 +245,36 @@ def test_a_recently_used_head_entry_is_not_touched_but_an_old_one_is(tmp_path: P
     _age(entry, code_store.TOUCH_AFTER_SECONDS + 60)
     stale = os.stat(entry).st_mtime_ns
     assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
-    assert os.stat(entry).st_mtime_ns > stale, "an entry not used for over an hour did not get the used mark"
+    assert os.stat(entry).st_mtime_ns > stale, "an entry not used for over TOUCH_AFTER_SECONDS did not get the used mark"
+
+
+def test_an_entry_used_hours_ago_keeps_its_time_until_a_day_has_passed(tmp_path: Path) -> None:
+    """Failure case (2026-11-27): with an hour's grain, at each hour mark the ~13,000 entries in use had their mtime rewritten at once (16.53 MB of the store's 30.68 MB
+    inode writes in 480 seconds). An entry used a few hours ago is not written again; the mark comes back only after TOUCH_AFTER_SECONDS (a day)."""
+    store, key = str(tmp_path), _key()
+    code_store.add_code(store, key, _code(RECORD_FIVE))
+    entry = _entry_of(store, key, RECORD_FIVE)
+    assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
+    _age(entry, 3 * 3600)
+    before = os.stat(entry).st_mtime_ns
+    assert code_store.current_code(store, key, _is(RECORD_FIVE)) is not None
+    code_store.mark_used(entry)
+    assert os.stat(entry).st_mtime_ns == before, "an entry used three hours ago was written again"
+
+
+def test_the_used_mark_grain_sits_between_an_added_entry_and_the_sweep() -> None:
+    """The grain of the used mark (TOUCH_AFTER_SECONDS) stays well under the sweep's 7 days (an entry in use is marked at least four times before the sweep could remove
+    it), and an added entry is placed further back than the grain (NEW_ENTRY_FLOOR_SECONDS) but well short of the sweep — so its first use brings it to the head and an
+    added entry is never placed past the sweep threshold."""
+    sweep = 7 * 24 * 3600
+    assert code_store.TOUCH_AFTER_SECONDS == 24 * 3600
+    assert code_store.TOUCH_AFTER_SECONDS < code_store.NEW_ENTRY_FLOOR_SECONDS
+    assert code_store.TOUCH_AFTER_SECONDS * 4 <= sweep
+    assert code_store.NEW_ENTRY_FLOOR_SECONDS * 2 <= sweep
 
 
 def test_two_environments_taking_turns_on_one_key_do_not_rewrite_the_times(tmp_path: Path) -> None:
-    """Two writers with different records that read the same key in turn (the CLI and hook starts of two layers) leave both entries' times alone within the hour — bringing
+    """Two writers with different records that read the same key in turn (the CLI and hook starts of two layers) leave both entries' times alone within TOUCH_AFTER_SECONDS — bringing
     the entry behind to the head on every use rewrote both entries' inodes on every read (2026-11-15: about 212 utime calls on one entry in 8 minutes)."""
     store, key = str(tmp_path), _key()
     for record in (RECORD_FIVE, RECORD_SIX):
@@ -260,11 +285,11 @@ def test_two_environments_taking_turns_on_one_key_do_not_rewrite_the_times(tmp_p
     for _ in range(3):
         assert _read(store, key, RECORD_FIVE)
         assert _read(store, key, RECORD_SIX)
-    assert {path: os.stat(path).st_mtime_ns for path in entries} == before, "a read within the hour rewrote an entry's time"
+    assert {path: os.stat(path).st_mtime_ns for path in entries} == before, "a read within TOUCH_AFTER_SECONDS rewrote an entry's time"
 
 
 @pytest.mark.parametrize("read", [code_store.read_entry, code_store.stored_code, code_store.mark_used], ids=["read_entry", "stored_code", "mark_used"])
-def test_a_read_that_marks_use_advances_the_time_only_after_an_hour(tmp_path: Path, read) -> None:
+def test_a_read_that_marks_use_advances_the_time_only_after_the_grain(tmp_path: Path, read) -> None:
     """The reads that mark an entry used by default (the .binding, .digests and .code readers, and the import trees through mark_used) advance its time only when it is
     older than TOUCH_AFTER_SECONDS — before, every read called utime (2026-11-15: the store's inode writes were about 5 GB a day)."""
     store, key = str(tmp_path), _key()
@@ -277,4 +302,4 @@ def test_a_read_that_marks_use_advances_the_time_only_after_an_hour(tmp_path: Pa
     _age(entry, code_store.TOUCH_AFTER_SECONDS + 60)
     stale = os.stat(entry).st_mtime_ns
     read(entry)
-    assert os.stat(entry).st_mtime_ns > stale, "a read of an entry not used for over an hour did not get the used mark"
+    assert os.stat(entry).st_mtime_ns > stale, "a read of an entry not used for over TOUCH_AFTER_SECONDS did not get the used mark"

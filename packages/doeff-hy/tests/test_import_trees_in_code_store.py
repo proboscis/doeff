@@ -153,8 +153,8 @@ def test_reading_a_tree_marks_it_used(store: Path) -> None:
     assert time.time() - entry.stat().st_mtime < 60
 
 
-def test_reading_a_tree_used_within_the_hour_keeps_its_time(store: Path) -> None:
-    """A hit on a tree used within code_store.TOUCH_AFTER_SECONDS does not write its time again (the mark is for the 7-day cleanup — an hour does not move it)."""
+def test_reading_a_tree_used_within_the_grain_keeps_its_time(store: Path) -> None:
+    """A hit on a tree used within code_store.TOUCH_AFTER_SECONDS does not write its time again (the mark is for the 7-day cleanup — a day does not move it)."""
     expansion_trees.add_import_tree("pkg.m", SOURCE, record(), TREE)
     [entry] = trees_under(store)
     minute_ago = time.time() - 60
