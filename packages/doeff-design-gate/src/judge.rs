@@ -4,7 +4,6 @@
 //! base covers the new spelling.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use doeff_linter::project::architecture::DesignEvidenceDecl;
 use doeff_linter::project::design_evidence::{self as evidence, ExistingShapes};
@@ -17,7 +16,7 @@ use doeff_linter::project::typed_values::substitute_hits;
 use serde::Serialize;
 
 use crate::declaration::{spelling_now, BaseDeclaration};
-use crate::git::{read_now, BaseTree, FileRead};
+use crate::git::{BaseTree, ChangedTree, FileRead};
 
 /// One reason to refuse the change.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,14 +127,14 @@ fn module_counts(at: &AtBase, rel: &str, base: Option<&str>) -> Result<Substitut
 }
 
 /// The hits of one module of the population, as it is after the change.
-fn judge_module(at: &AtBase, repo: &Path, rel: &str) -> Result<Vec<Hit>, String> {
-    let source = match read_now(repo, rel) {
+fn judge_module(at: &AtBase, now: &ChangedTree, rel: &str) -> Result<Vec<Hit>, String> {
+    let source = match now.read(rel) {
         FileRead::Present(text) => text,
         FileRead::Absent => return Ok(Vec::new()),
         FileRead::Unreadable(reason) => return Err(reason),
     };
     let evidence_rel = evidence::evidence_rel(rel);
-    let evidence_text = match read_now(repo, &evidence_rel) {
+    let evidence_text = match now.read(&evidence_rel) {
         FileRead::Present(text) => Some(text),
         FileRead::Absent => None,
         FileRead::Unreadable(reason) => return Err(reason),
@@ -170,10 +169,10 @@ fn judge_module(at: &AtBase, repo: &Path, rel: &str) -> Result<Vec<Hit>, String>
 }
 
 /// The hits of a changed ledger or approvals file (DOEFF214), against its version at the base.
-fn judge_guarded(at: &AtBase, repo: &Path, rel: &str) -> Result<Vec<Hit>, String> {
+fn judge_guarded(at: &AtBase, now: &ChangedTree, rel: &str) -> Result<Vec<Hit>, String> {
     let decl = at.decl();
-    let now = |parse: &dyn Fn(&str) -> Result<(), String>| -> Result<Option<String>, String> {
-        match read_now(repo, rel) {
+    let read = |parse: &dyn Fn(&str) -> Result<(), String>| -> Result<Option<String>, String> {
+        match now.read(rel) {
             FileRead::Present(text) => parse(&text).map(|_| Some(text)).map_err(|reason| format!("{} cannot be parsed: {}", rel, reason)),
             FileRead::Absent => Ok(None),
             FileRead::Unreadable(reason) => Err(reason),
@@ -181,17 +180,17 @@ fn judge_guarded(at: &AtBase, repo: &Path, rel: &str) -> Result<Vec<Hit>, String
     };
     let mut hits = Vec::new();
     if decl.existing.as_deref() == Some(rel) {
-        let text = now(&|t| ExistingShapes::parse(t).map(|_| ()))?;
+        let text = read(&|t| ExistingShapes::parse(t).map(|_| ()))?;
         let shapes = text.map(|t| ExistingShapes::parse(&t)).transpose()?.unwrap_or_default();
         hits.extend(from_guard(LEDGER_GUARD, guard::grown_shapes(rel, &shapes, &at.shapes, &at.approvals)));
     }
     if decl.existing_substitutes.as_deref() == Some(rel) {
-        let text = now(&|t| SubstituteCounts::parse(t).map(|_| ()))?;
+        let text = read(&|t| SubstituteCounts::parse(t).map(|_| ()))?;
         let counts = text.map(|t| SubstituteCounts::parse(&t)).transpose()?.unwrap_or_default();
         hits.extend(from_guard(LEDGER_GUARD, guard::grown_substitutes(rel, &counts, &at.substitutes, &at.approvals)));
     }
     if decl.guard.as_ref().and_then(|g| g.approvals.as_deref()) == Some(rel) {
-        let text = now(&|t| Approvals::parse(t).map(|_| ()))?;
+        let text = read(&|t| Approvals::parse(t).map(|_| ()))?;
         let approvals = text.map(|t| Approvals::parse(&t)).transpose()?.unwrap_or_default();
         hits.extend(from_guard(LEDGER_GUARD, guard::unspelled_approvals(rel, &approvals, &at.approvals_raw, at.approval_pattern.as_ref())));
     }
@@ -199,13 +198,13 @@ fn judge_guarded(at: &AtBase, repo: &Path, rel: &str) -> Result<Vec<Hit>, String
 }
 
 /// The hit if the declaration after the change differs from the base's and no approval at the base covers the new spelling (removing it needs the value `absent`).
-fn judge_declaration(at: &AtBase, repo: &Path) -> Result<Option<Hit>, String> {
+fn judge_declaration(at: &AtBase, now: &ChangedTree) -> Result<Option<Hit>, String> {
     let file = &at.declaration.file;
-    let now = spelling_now(repo, file)?;
-    if now.as_deref() == Some(at.declaration.spelling.as_str()) {
+    let spelled = spelling_now(now, file)?;
+    if spelled.as_deref() == Some(at.declaration.spelling.as_str()) {
         return Ok(None);
     }
-    let value = now.as_deref().map(declaration_fingerprint).unwrap_or_else(|| REMOVED_DECLARATION.to_string());
+    let value = spelled.as_deref().map(declaration_fingerprint).unwrap_or_else(|| REMOVED_DECLARATION.to_string());
     if at.approvals.covers(ApprovalLedger::Declaration, ":design-evidence", &value) {
         return Ok(None);
     }
@@ -221,26 +220,25 @@ fn judge_declaration(at: &AtBase, repo: &Path) -> Result<Option<Hit>, String> {
 }
 
 /// Judges the changed paths (Err = cannot judge: something the judgment reads at the base or in the tree cannot be read).
-pub(crate) fn judge(base: &BaseTree, declaration: &BaseDeclaration, paths: &[String]) -> Result<Vec<Hit>, String> {
+pub(crate) fn judge(base: &BaseTree, now: &ChangedTree, declaration: &BaseDeclaration, paths: &[String]) -> Result<Vec<Hit>, String> {
     let at = AtBase::load(base, declaration)?;
-    let repo = base.repo();
-    let mut hits: Vec<Hit> = judge_declaration(&at, repo)?.into_iter().collect();
+    let mut hits: Vec<Hit> = judge_declaration(&at, now)?.into_iter().collect();
     for rel in paths {
-        hits.extend(judge_guarded(&at, repo, rel)?);
+        hits.extend(judge_guarded(&at, now, rel)?);
     }
-    for rel in modules(repo, paths, at.decl()) {
-        hits.extend(judge_module(&at, repo, &rel)?);
+    for rel in modules(now, paths, at.decl()) {
+        hits.extend(judge_module(&at, now, &rel)?);
     }
     Ok(hits)
 }
 
 /// The modules of the population a change touches: each changed .hy or .rs, and the module next to each changed evidence file.
-pub(crate) fn modules(repo: &Path, paths: &[String], decl: &DesignEvidenceDecl) -> BTreeSet<String> {
+pub(crate) fn modules(now: &ChangedTree, paths: &[String], decl: &DesignEvidenceDecl) -> BTreeSet<String> {
     let suffix = ".evidence.toml";
     let mut modules: BTreeSet<String> = BTreeSet::new();
     for rel in paths {
         if let Some(stem) = rel.strip_suffix(suffix) {
-            modules.extend([format!("{}.hy", stem), format!("{}.rs", stem)].into_iter().filter(|m| repo.join(m).exists()));
+            modules.extend([format!("{}.hy", stem), format!("{}.rs", stem)].into_iter().filter(|m| now.has(m)));
         } else {
             modules.insert(rel.clone());
         }

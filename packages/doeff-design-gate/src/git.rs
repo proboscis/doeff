@@ -1,4 +1,5 @@
-//! The base commit and what is read at it. The gate reads the declaration, the ledgers, and the approvals only at the base, so a change cannot loosen what judges it.
+//! The base commit and what is read at it, and the tree after the change (the work tree, the staged index, or a commit). The gate reads the declaration, the ledgers,
+//! and the approvals only at the base, so a change cannot loosen what judges it.
 
 use std::cell::RefCell;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -22,7 +23,33 @@ pub(crate) enum FileRead {
 pub(crate) struct BaseTree {
     repo: PathBuf,
     commit: CommitId,
-    reader: RefCell<Option<CatFile>>,
+    reader: Batch,
+}
+
+/// Where the tree after the change is read: the work tree (the default), the staged index (`--index` — the index `GIT_INDEX_FILE` names, else the repo's), or a
+/// commit (`--head <sha>`). A commit hook judges what it commits and a push hook what it pushes, so neither can be passed by a work tree that differs from it.
+pub(crate) enum ReadSource {
+    Worktree,
+    Index,
+    Commit(String),
+}
+
+/// The tree after the change, read where `ReadSource` says (the index and a commit through one `git cat-file --batch`, as at the base).
+pub(crate) struct ChangedTree {
+    repo: PathBuf,
+    at: ChangedAt,
+    reader: Batch,
+}
+
+enum ChangedAt {
+    Worktree,
+    Index,
+    Commit(CommitId),
+}
+
+/// One `git cat-file --batch` started on the first read and started again after a failed one.
+struct Batch {
+    cat: RefCell<Option<CatFile>>,
 }
 
 /// The running `git cat-file --batch` (killed and waited for on drop, so a gate stopped early leaves no git behind).
@@ -95,9 +122,35 @@ impl CommitId {
     }
 }
 
+impl Batch {
+    fn new() -> Batch {
+        Batch { cat: RefCell::new(None) }
+    }
+
+    /// The object `name` as text: absent if git says it is missing, unreadable if git fails or the bytes are not UTF-8 (`rel` and `at` name it in the reason).
+    fn read(&self, repo: &Path, name: &str, rel: &str, at: &str) -> FileRead {
+        let mut cat = self.cat.borrow_mut();
+        if cat.is_none() {
+            match CatFile::start(repo) {
+                Ok(started) => *cat = Some(started),
+                Err(reason) => return FileRead::Unreadable(reason),
+            }
+        }
+        let Some(reader) = cat.as_mut() else { return FileRead::Unreadable("git cat-file did not start".to_string()) };
+        match reader.read(name) {
+            Ok(None) => FileRead::Absent,
+            Ok(Some(bytes)) => String::from_utf8(bytes).map(FileRead::Present).unwrap_or_else(|_| FileRead::Unreadable(format!("{} {} is not UTF-8", rel, at))),
+            Err(reason) => {
+                *cat = None;
+                FileRead::Unreadable(reason)
+            }
+        }
+    }
+}
+
 impl BaseTree {
     pub(crate) fn open(repo: &Path, reference: &str) -> Result<BaseTree, String> {
-        Ok(BaseTree { repo: repo.to_path_buf(), commit: CommitId::resolve(repo, reference)?, reader: RefCell::new(None) })
+        Ok(BaseTree { repo: repo.to_path_buf(), commit: CommitId::resolve(repo, reference)?, reader: Batch::new() })
     }
 
     pub(crate) fn repo(&self) -> &Path {
@@ -106,22 +159,7 @@ impl BaseTree {
 
     /// A file's contents at the base: absent if the base has no such path, unreadable if git fails or the bytes are not UTF-8.
     pub(crate) fn read(&self, rel: &str) -> FileRead {
-        let mut reader = self.reader.borrow_mut();
-        if reader.is_none() {
-            match CatFile::start(&self.repo) {
-                Ok(started) => *reader = Some(started),
-                Err(reason) => return FileRead::Unreadable(reason),
-            }
-        }
-        let Some(cat) = reader.as_mut() else { return FileRead::Unreadable("git cat-file did not start".to_string()) };
-        match cat.read(&format!("{}:{}", self.commit.0, rel)) {
-            Ok(None) => FileRead::Absent,
-            Ok(Some(bytes)) => String::from_utf8(bytes).map(FileRead::Present).unwrap_or_else(|_| FileRead::Unreadable(format!("{} at the base is not UTF-8", rel))),
-            Err(reason) => {
-                *reader = None;
-                FileRead::Unreadable(reason)
-            }
-        }
+        self.reader.read(&self.repo, &format!("{}:{}", self.commit.0, rel), rel, "at the base")
     }
 
     /// The paths of the base's tree (for the declaration's file globs).
@@ -131,8 +169,37 @@ impl BaseTree {
     }
 }
 
-/// A file of the tree after the change (absent if the change removed it).
-pub(crate) fn read_now(repo: &Path, rel: &str) -> FileRead {
+impl ChangedTree {
+    /// The tree after the change in `repo` (Err if `--head` does not name a commit).
+    pub(crate) fn open(repo: &Path, source: ReadSource) -> Result<ChangedTree, String> {
+        let at = match source {
+            ReadSource::Worktree => ChangedAt::Worktree,
+            ReadSource::Index => ChangedAt::Index,
+            ReadSource::Commit(reference) => ChangedAt::Commit(CommitId::resolve(repo, &reference)?),
+        };
+        Ok(ChangedTree { repo: repo.to_path_buf(), at, reader: Batch::new() })
+    }
+
+    /// A file of the tree after the change (absent if the change removed it).
+    pub(crate) fn read(&self, rel: &str) -> FileRead {
+        match &self.at {
+            ChangedAt::Worktree => read_worktree(&self.repo, rel),
+            // `:<path>` is the path's entry of stage 0 in the index — the entry a commit takes (an unmerged path has none, and cannot be committed).
+            ChangedAt::Index => self.reader.read(&self.repo, &format!(":{}", rel), rel, "in the index"),
+            ChangedAt::Commit(commit) => self.reader.read(&self.repo, &format!("{}:{}", commit.0, rel), rel, &format!("at {}", commit.0)),
+        }
+    }
+
+    /// Whether the tree after the change has the path (a path that cannot be read counts as there, so reading it fails closed).
+    pub(crate) fn has(&self, rel: &str) -> bool {
+        match &self.at {
+            ChangedAt::Worktree => self.repo.join(rel).exists(),
+            ChangedAt::Index | ChangedAt::Commit(_) => !matches!(self.read(rel), FileRead::Absent),
+        }
+    }
+}
+
+fn read_worktree(repo: &Path, rel: &str) -> FileRead {
     let path = repo.join(rel);
     if !path.exists() {
         return FileRead::Absent;

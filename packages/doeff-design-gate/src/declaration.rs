@@ -7,7 +7,7 @@ use doeff_linter::project::architecture::{Architecture, DesignEvidenceDecl};
 use doeff_linter::project::ledger_guard::declaration_spelling;
 use doeff_linter::project::paths::glob_matches;
 
-use crate::git::{read_now, BaseTree, FileRead};
+use crate::git::{BaseTree, ChangedTree, FileRead};
 
 /// The declaration at the base and the file that holds it.
 pub(crate) struct BaseDeclaration {
@@ -64,8 +64,8 @@ pub(crate) fn at_base(base: &BaseTree) -> Result<BaseDeclaration, String> {
 }
 
 /// The declaration's spelling in the tree after the change (None if the file or the key is gone — a removed declaration is a change).
-pub(crate) fn spelling_now(repo: &Path, file: &str) -> Result<Option<String>, String> {
-    match read_now(repo, file) {
+pub(crate) fn spelling_now(now: &ChangedTree, file: &str) -> Result<Option<String>, String> {
+    match now.read(file) {
         FileRead::Present(text) => Ok(declaration_spelling(&text)),
         FileRead::Absent => Ok(None),
         FileRead::Unreadable(reason) => Err(reason),

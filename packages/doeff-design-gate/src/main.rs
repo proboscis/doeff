@@ -4,6 +4,9 @@
 //! Why a separate binary: the gate has 5 seconds, and doeff-linter builds the project's facts (minutes on a cold tree) even for one file. This binary reads only the
 //! changed paths, their sibling evidence, and the declaration, ledgers, and approvals at the base — never the facts.
 //!
+//! The tree after the change is the work tree by default; `--index` reads the staged index instead (the one `GIT_INDEX_FILE` names, as a commit hook is given) and
+//! `--head <commit>` reads a commit (the tip a push hook pushes), so a hook judges what it commits or pushes, not a work tree that differs from it.
+//!
 //! Exit code: 0 = pass, 1 = refuse (the reasons on stdout), 2 = cannot judge (the reason on stderr — the gate holds the change; nothing passes unjudged).
 //!
 //! `--format json` writes the verdict, the hits, and the facts of the changed types (width, gained fields, fields the defining module never touches, LCOM4 before and
@@ -20,6 +23,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use facts::{Fact, Trigger};
+use git::ReadSource;
 use judge::Hit;
 use serde::Serialize;
 
@@ -118,18 +122,26 @@ fn write_json(verdict: &Verdict, facts: &[Fact], classified: bool) {
     }
 }
 
-const USAGE: &str = "usage: doeff-design-gate --base <commit> [--repo <dir>] [--format text|json] [--classify-trigger] [--disable DOEFF217] --paths <path>…";
+const USAGE: &str =
+    "usage: doeff-design-gate --base <commit> [--repo <dir>] [--index | --head <commit>] [--format text|json] [--classify-trigger] [--disable DOEFF217] --paths <path>…";
 
-/// The arguments: `--base <commit>` (required), `--repo <dir>` (default the current dir), `--paths <path>…` (the rest).
+/// The arguments: `--base <commit>` (required), `--repo <dir>` (default the current dir), where the tree after the change is read (`--index` or `--head <commit>`,
+/// default the work tree), `--paths <path>…` (the rest).
 struct Args {
     base: String,
     repo: PathBuf,
+    source: ReadSource,
     paths: Vec<String>,
 }
 
 fn args(given: impl Iterator<Item = String>) -> Result<(Args, Report), String> {
     let mut base = None;
     let mut repo = PathBuf::from(".");
+    let mut source = None;
+    let mut read_from = |chosen: ReadSource| match source.replace(chosen) {
+        None => Ok(()),
+        Some(_) => Err(format!("--index and --head are one choice of where the change is read, given twice ({})", USAGE)),
+    };
     let mut paths = Vec::new();
     let (mut json, mut classify, mut lcom4) = (false, false, Lcom4::Refuses);
     let mut given = given.peekable();
@@ -137,6 +149,8 @@ fn args(given: impl Iterator<Item = String>) -> Result<(Args, Report), String> {
         match word.as_str() {
             "--base" => base = Some(given.next().ok_or("--base needs a commit")?),
             "--repo" => repo = PathBuf::from(given.next().ok_or("--repo needs a dir")?),
+            "--index" => read_from(ReadSource::Index)?,
+            "--head" => read_from(ReadSource::Commit(given.next().ok_or("--head needs a commit")?))?,
             "--format" => match given.next().as_deref() {
                 Some("text") => json = false,
                 Some("json") => json = true,
@@ -157,7 +171,8 @@ fn args(given: impl Iterator<Item = String>) -> Result<(Args, Report), String> {
         (true, true) => Format::JsonClassified,
         (false, true) => return Err(format!("--classify-trigger needs --format json ({})", USAGE)),
     };
-    Ok((Args { base: base.ok_or("--base is required")?, repo, paths }, Report { format, lcom4 }))
+    let source = source.unwrap_or(ReadSource::Worktree);
+    Ok((Args { base: base.ok_or("--base is required")?, repo, source, paths }, Report { format, lcom4 }))
 }
 
 fn run(args: Args, lcom4: Lcom4) -> (Verdict, Vec<Fact>) {
@@ -165,15 +180,19 @@ fn run(args: Args, lcom4: Lcom4) -> (Verdict, Vec<Fact>) {
         Ok(base) => base,
         Err(reason) => return (Verdict::Unjudgeable(reason), Vec::new()),
     };
+    let now = match git::ChangedTree::open(&args.repo, args.source) {
+        Ok(now) => now,
+        Err(reason) => return (Verdict::Unjudgeable(reason), Vec::new()),
+    };
     let declaration = match declaration::at_base(&base) {
         Ok(declaration) => declaration,
         Err(reason) => return (Verdict::Unjudgeable(reason), Vec::new()),
     };
-    let facts = match facts::facts(&base, &declaration.decl, &args.paths) {
+    let facts = match facts::facts(&base, &now, &declaration.decl, &args.paths) {
         Ok(facts) => facts,
         Err(reason) => return (Verdict::Unjudgeable(reason), Vec::new()),
     };
-    let verdict = match judge::judge(&base, &declaration, &args.paths) {
+    let verdict = match judge::judge(&base, &now, &declaration, &args.paths) {
         Ok(mut hits) => {
             if lcom4 == Lcom4::Refuses {
                 hits.extend(facts::lcom4_hits(&facts));

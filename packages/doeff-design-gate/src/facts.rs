@@ -9,14 +9,13 @@
 //! 3. `cross-module-design`: a design document names modules in 2 or more directories, or the shared intent types.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
 
 use doeff_linter::project::architecture::DesignEvidenceDecl;
 use doeff_linter::project::design_evidence::{shapes_of, RecordShape, ShapeKind};
 use doeff_linter::project::srp_metrics::{cohesion_of, degrades, Cohesion};
 use serde::Serialize;
 
-use crate::git::{read_now, BaseTree, FileRead};
+use crate::git::{BaseTree, ChangedTree, FileRead};
 use crate::judge::{modules, Hit};
 
 const LCOM4_DEGRADED: &str = "DOEFF217";
@@ -70,8 +69,8 @@ fn kind_of(shape: &RecordShape) -> FactKind {
     }
 }
 
-fn now_text(repo: &Path, rel: &str) -> Result<Option<String>, String> {
-    match read_now(repo, rel) {
+fn now_text(now: &ChangedTree, rel: &str) -> Result<Option<String>, String> {
+    match now.read(rel) {
         FileRead::Present(text) => Ok(Some(text)),
         FileRead::Absent => Ok(None),
         FileRead::Unreadable(reason) => Err(reason),
@@ -161,19 +160,18 @@ fn design_doc_fact(rel: &str, text: &str) -> Fact {
 }
 
 /// The facts of the changed paths (Err = cannot judge: a changed file or its base version cannot be read or parsed).
-pub(crate) fn facts(base: &BaseTree, decl: &DesignEvidenceDecl, paths: &[String]) -> Result<Vec<Fact>, String> {
-    let repo = base.repo();
+pub(crate) fn facts(base: &BaseTree, now: &ChangedTree, decl: &DesignEvidenceDecl, paths: &[String]) -> Result<Vec<Fact>, String> {
     let mut changed: BTreeMap<String, String> = BTreeMap::new();
     for rel in paths.iter().filter(|rel| rel.ends_with(".hy") || rel.ends_with(".rs") || is_design_doc(rel)) {
-        if let Some(text) = now_text(repo, rel)? {
+        if let Some(text) = now_text(now, rel)? {
             changed.insert(rel.clone(), text);
         }
     }
     let mut out = Vec::new();
-    for rel in modules(repo, paths, decl) {
+    for rel in modules(now, paths, decl) {
         let source = match changed.get(&rel) {
             Some(text) => text.clone(),
-            None => match now_text(repo, &rel)? {
+            None => match now_text(now, &rel)? {
                 Some(text) => text,
                 None => continue,
             },
