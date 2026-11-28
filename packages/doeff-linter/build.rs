@@ -1,4 +1,7 @@
 //! Embeds the doeff commit this binary was built from as env DOEFF_LINTER_COMMIT (reported by `--version` and by `linter` in editor-json).
+//! It also embeds the key of that commit's build inputs as env DOEFF_LINTER_INPUT_KEY (the second line of `--version`): the build entry
+//! (tools/doeff_cargo_backend.py) passes it in env DOEFF_LINTER_BUILD_INPUT_KEY — the answer of scripts/doeff_linter_locked.py `key <commit>`, the one
+//! definition of the key that downstream hooks compare instead of the commit (ADR-DOE-BUILD-001 R4e). Without it (a hand build), `unknown`.
 //!
 //! - Automatic rebuilds (dotfiles agentcli doeff_linter_follow) pass a 40-digit sha in env DOEFF_LINTER_BUILD_COMMIT — it is used as is.
 //!   The wheel build entry (tools/doeff_cargo_backend.py — uv sync, uv build) also passes it: the last commit that changed a key file of
@@ -51,4 +54,10 @@ fn main() {
         },
     };
     println!("cargo:rustc-env=DOEFF_LINTER_COMMIT={}", commit);
+    println!("cargo:rerun-if-env-changed=DOEFF_LINTER_BUILD_INPUT_KEY");
+    let input_key = match std::env::var("DOEFF_LINTER_BUILD_INPUT_KEY") {
+        Ok(given) if !given.trim().is_empty() => given.trim().to_string(),
+        _ => "unknown".to_string(),
+    };
+    println!("cargo:rustc-env=DOEFF_LINTER_INPUT_KEY={}", input_key);
 }

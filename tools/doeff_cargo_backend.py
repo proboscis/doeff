@@ -33,8 +33,16 @@ build commit (_build_commit, ADR-DOE-BUILD-001 R4 addendum 3): a package whose b
 agora-controllers' commit hook looks it up in its doeff checkout) declares the env build.rs reads it from in `[tool.doeff-cargo-backend] build-commit-env`. For that package the
 entry decides the commit itself -- the caller's value in that env, else the last commit reachable from HEAD that changed a key file (`+dirty` when the key files differ from it,
 `unknown` without git) -- puts it in the key, and passes it to build.rs while building. Before this, build.rs read git's HEAD, which the key did not see: a wheel built in a
-checkout whose HEAD was a commit nobody else had (not pushed) was taken by every checkout with the same source, and their linter named that commit (2026-11-12). The commit is read with git (the one child process of key creation -- only for a declaring package; a missing or failing git gives `unknown` and never
+checkout whose HEAD was a commit nobody else had (not pushed) was taken by every checkout with the same source, and their linter named that commit (2026-11-12). The commit is read with git (a child process of key creation -- only for a declaring package; a missing or failing git gives `unknown` and never
 fails the key).
+
+build-input key (_with_input_key, ADR-DOE-BUILD-001 R4e -- addendum 4 to R4): a commit names where a binary was built, not what it was built from, and a downstream check that looks
+the commit up stops whenever its checkout lacks it (history rewritten, a branch commit) even though the linter's inputs are the same. So a package that declares
+`[tool.doeff-cargo-backend] build-input-key = { env, script }` also embeds the key of the build inputs of that commit -- the declared script's `key <commit>` answer
+(doeff-linter: scripts/doeff_linter_locked.py, the one definition of the key that the snapshot store, land-arm and downstream hooks compare), or the caller's value in
+that env, or `unknown` for a `+dirty` or `unknown` commit. It goes into the key with the commit (so a wheel stored before the key was embedded is not reused) and build.rs
+names it on the second line of `--version`. The key is made of git object ids, so two commits with the same inputs give the same key. Running the script is the second
+child process of key creation (only for a declaring package; a missing or failing script gives `unknown` and never fails the key).
 
 store (_wheel_slot, _store_wheel): `<store>/<package>-<key>/<wheel>` plus a used marker `.used` (replaced on every use to advance the dir's mtime).
 The store = env DOEFF_WHEEL_CACHE, else `$XDG_CACHE_HOME/doeff-cargo-wheels` (else under ~/.cache). The layout is the same as doeff-cluster's worker
@@ -83,6 +91,7 @@ from __future__ import annotations
 
 import base64
 import csv
+import dataclasses
 import fnmatch
 import glob
 import hashlib
@@ -91,6 +100,7 @@ import io
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -144,6 +154,10 @@ PLACE_ONLY_ENV_NAMES = frozenset({"CARGO_BUILD_TARGET_DIR", BUILD_DIR_ENV, "CARG
 BUILD_COMMIT_TABLE = "doeff-cargo-backend"
 # Commit named when there is no git or the files have no git history (the same word build.rs uses).
 UNKNOWN_COMMIT = "unknown"
+# A clean commit (a 40-digit sha) -- the only build commit whose build-input key is asked for (a `+dirty` or `unknown` commit names no commit's inputs).
+CLEAN_COMMIT = re.compile(r"[0-9a-f]{40}")
+# Seconds the declared build-input key script may take (it reads git objects only).
+INPUT_KEY_TIMEOUT_SECONDS = 60
 # Suffixes of native extension module files (the build products that editable places in the venv's products dir).
 NATIVE_SUFFIXES = (".so", ".pyd", ".dylib")
 
@@ -172,10 +186,14 @@ class StoredWheel:
 @dataclass(frozen=True)
 class BuildCommit:
     """The doeff commit a package's build embeds (build commit from the header note): env = the env through which build.rs reads it (the package's declaration);
-    value = the commit passed there (40-digit sha, `+dirty` appended when the key files differ from it, or `unknown`)."""
+    value = the commit passed there (40-digit sha, `+dirty` appended when the key files differ from it, or `unknown`); key_env = the env through which build.rs
+    reads the build-input key of that commit (the package's `build-input-key` declaration -- None without it); key = that key (the declared script's answer for a
+    clean commit, the caller's value in key_env, or `unknown` -- the build-input key from the header note)."""
 
     env: str
     value: str
+    key_env: str | None = None
+    key: str | None = None
 
 
 @dataclass(frozen=True)
@@ -555,34 +573,66 @@ def _build_commit(package: Path) -> BuildCommit | None:
             return None
     given = os.environ.get(env, "").strip()
     if given:
-        return BuildCommit(env=env, value=given)
+        return _with_input_key(package, BuildCommit(env=env, value=given))
     pathspecs = [f":(glob){pattern}" for pattern in _source_globs(package)]
     match _git(package, ["log", "-1", "--format=%H", "--", *pathspecs]):
         case str() as commit if commit:
             pass
         case _:
-            return BuildCommit(env=env, value=UNKNOWN_COMMIT)
+            return _with_input_key(package, BuildCommit(env=env, value=UNKNOWN_COMMIT))
     changed = _git(package, ["status", "--porcelain", "--untracked-files=all", "--", *pathspecs])
-    return BuildCommit(env=env, value=f"{commit}+dirty" if changed else commit)
+    return _with_input_key(package, BuildCommit(env=env, value=f"{commit}+dirty" if changed else commit))
+
+
+def _with_input_key(package: Path, claim: BuildCommit) -> BuildCommit:
+    """Add the build-input key of the claim's commit, for a package that declares it (`[tool.doeff-cargo-backend] build-input-key = { env, script }` -- the
+    build-input key from the header note); the claim as is without the declaration. A value the caller passes in that env is used as is. Otherwise, for a clean
+    commit, the declared script (a path from the package dir) answers `<script> key <commit>` on one line; a `+dirty` or `unknown` commit, a missing script, and a
+    script that fails or times out give `unknown` (making the key never fails)."""
+    match _pyproject(package).get("tool"):
+        case {"doeff-cargo-backend": {"build-input-key": {"env": str() as env, "script": str() as script}}}:
+            pass
+        case _:
+            return claim
+    given = os.environ.get(env, "").strip()
+    if given:
+        return dataclasses.replace(claim, key_env=env, key=given)
+    entry = package / script
+    if not CLEAN_COMMIT.fullmatch(claim.value) or not entry.is_file():
+        return dataclasses.replace(claim, key_env=env, key=UNKNOWN_COMMIT)
+    environ = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    try:
+        done = subprocess.run(
+            [sys.executable, "-I", "-B", str(entry), "key", claim.value],
+            cwd=package, env=environ, capture_output=True, text=True, check=False, timeout=INPUT_KEY_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return dataclasses.replace(claim, key_env=env, key=UNKNOWN_COMMIT)
+    key = done.stdout.strip()
+    return dataclasses.replace(claim, key_env=env, key=key if done.returncode == 0 and key and "\n" not in key else UNKNOWN_COMMIT)
 
 
 @contextmanager
 def _build_commit_env(claim: BuildCommit | None) -> Iterator[None]:
-    """Pass the build commit (the value in the key) to build.rs through its env while building, then restore the env."""
+    """Pass the build commit and its build-input key (the values in the key) to build.rs through their envs while building, then restore the envs."""
     match claim:
         case None:
-            yield
-        case BuildCommit(env=env, value=value):
-            before = os.environ.get(env)
-            os.environ[env] = value
-            try:
-                yield
-            finally:
-                match before:
-                    case None:
-                        del os.environ[env]
-                    case str():
-                        os.environ[env] = before
+            passed: dict[str, str] = {}
+        case BuildCommit(env=env, value=value, key_env=None):
+            passed = {env: value}
+        case BuildCommit(env=env, value=value, key_env=str() as key_env, key=key):
+            passed = {env: value, key_env: key or UNKNOWN_COMMIT}
+    before = {name: os.environ.get(name) for name in passed}
+    os.environ.update(passed)
+    try:
+        yield
+    finally:
+        for name, value in before.items():
+            match value:
+                case None:
+                    del os.environ[name]
+                case str():
+                    os.environ[name] = value
 
 
 def _python_abi() -> str:

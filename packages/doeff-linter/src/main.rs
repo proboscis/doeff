@@ -40,7 +40,7 @@ fn purge_freed_pages_at_once() {
 
 #[derive(Parser, Debug)]
 #[command(name = "doeff-linter")]
-#[command(version = doeff_linter::VERSION_TEXT, about = "A linter for enforcing code quality and immutability patterns")]
+#[command(version = doeff_linter::VERSION_TEXT, long_version = doeff_linter::LONG_VERSION_TEXT, about = "A linter for enforcing code quality and immutability patterns")]
 #[command(after_help = r#"SUPPRESSING RULES:
   Use noqa comments to suppress rules on specific lines or entire files.
 

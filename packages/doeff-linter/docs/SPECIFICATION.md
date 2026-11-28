@@ -100,6 +100,10 @@ looks the same way. DOEFF100 is emitted even if it is not in the `enable` list, 
 `DOEFF_LINTER_BUILD_COMMIT` (passed by the automatic rebuild), or, for a hand build, git's HEAD (`+dirty` if the linter or indexer dir has uncommitted changes
 ).
 
+The second line of `--version` (`inputs: <key>`) names the key of that commit's build inputs — what the binary was built from (the commit only names where):
+the build env `DOEFF_LINTER_BUILD_INPUT_KEY`, which the wheel build entry fills with `scripts/doeff_linter_locked.py key <commit>`, or `unknown` (a hand build, a `+dirty`
+commit). Two commits with the same inputs name the same key, so a downstream hook compares it with its doeff checkout's key instead of looking the commit up. `-V` prints the first line only.
+
 With `--modified` (text, json), layer-rule violations are also emitted only for changed files.
 
 Known violations in the registry (warning) and violations of rules under reconciliation (info) do not give exit code 1. This is so that CI and agent hooks "block only new violations"

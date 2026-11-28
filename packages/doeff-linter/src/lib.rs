@@ -7,7 +7,7 @@
 
 pub mod build_info;
 // Names read by external crates (main.rs and tests). Inside the crate, build_info is read directly (reading lib.rs back would make a dependency cycle — #2119).
-pub use build_info::{BUILD_COMMIT, VERSION_TEXT};
+pub use build_info::{BUILD_COMMIT, INPUT_KEY, LONG_VERSION_TEXT, VERSION_TEXT};
 
 pub mod baseline;
 pub mod check_slot;

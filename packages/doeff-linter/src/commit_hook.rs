@@ -1335,7 +1335,9 @@ pub fn answer_key(tree_id: &str, linter: &str, rules: &[String], overlay: &[(Str
 fn linter_identity(linter: &Path) -> Option<String> {
     let output = Command::new(linter).arg("--version").stdin(Stdio::null()).output().ok().filter(|o| o.status.success())?;
     let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !version.contains("dirty") && !version.contains("unknown") {
+    // The first line names the commit; the second (`inputs: <key>`) says `unknown` for any build the entry did not pass a key to, a clean one included.
+    let commit_line = version.lines().next().unwrap_or("");
+    if !commit_line.contains("dirty") && !commit_line.contains("unknown") {
         return Some(version);
     }
     let meta = std::fs::metadata(linter.canonicalize().ok()?).ok()?;

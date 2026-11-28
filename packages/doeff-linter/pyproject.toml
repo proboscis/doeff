@@ -65,8 +65,12 @@ cache-keys = [
 # build.rs embeds the doeff commit this binary was built from (`--version`). The build entry decides that commit itself and puts it in the
 # wheel store key: the last commit that changed a cache-keys file above (not HEAD — so a wheel built on a commit that is not pushed is never
 # handed to another checkout with the same source), passed to build.rs in this env (tools/doeff_cargo_backend.py, ADR-DOE-BUILD-001 R4d).
+# It also embeds the key of that commit's build inputs (the second line of `--version`): the answer of `key <commit>` of the script below — the
+# one definition of the linter's key (snapshot store, land-arm, and the downstream hooks compare it, not the commit) — passed in env DOEFF_LINTER_BUILD_INPUT_KEY,
+# `unknown` for a `+dirty` or unknown commit (ADR-DOE-BUILD-001 R4e).
 [tool.doeff-cargo-backend]
 build-commit-env = "DOEFF_LINTER_BUILD_COMMIT"
+build-input-key = { env = "DOEFF_LINTER_BUILD_INPUT_KEY", script = "../../scripts/doeff_linter_locked.py" }
 
 
 

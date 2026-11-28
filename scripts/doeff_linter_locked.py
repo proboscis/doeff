@@ -45,6 +45,9 @@ DEV_RECORD: str = "installed.json"
 RECORDED_KEY: str = "input_key"
 # The built commit that the linter's `--version` declares (DOEFF_LINTER_COMMIT in build.rs). A +dirty one is not made a commit key.
 BUILT_COMMIT = re.compile(r"\(doeff ([0-9a-f]{40})\)")
+# The build-input key the linter's `--version` names on its second line (DOEFF_LINTER_INPUT_KEY in build.rs -- the build entry passes this file's `key <commit>`
+# answer, ADR-DOE-BUILD-001 R4e). It names what the binary was built from, so it is read before the commit (which git may not know -- history rewritten, a branch).
+NAMED_KEY = re.compile(r"^inputs: (.*\S)\s*$", re.MULTILINE)
 
 
 @dataclass(frozen=True)
@@ -112,8 +115,9 @@ def input_key(top: Path, commit: str) -> str | None:
 
 
 def binary_key(top: Path, binary: Path) -> str:
-    """The key of a binary: the key of the build inputs of the commit that `--version` declares. When it declares none, is +dirty, or the commit is unknown to git, the first
-    line of `--version` itself (matches no store's key, so it becomes "unmeasurable" -- never silently compared against a different version)."""
+    """The key of a binary: the build-input key `--version` names on its second line (NAMED_KEY), else the key of the build inputs of the commit it declares. When it names
+    neither a key nor a clean commit git knows, the first line of `--version` itself (matches no store's key, so it becomes "unmeasurable" -- never silently compared against
+    a different version)."""
     completed: subprocess.CompletedProcess[str] = subprocess.run(
         [str(binary), "--version"], cwd=top, capture_output=True, text=True, check=False,
     )
@@ -121,6 +125,9 @@ def binary_key(top: Path, binary: Path) -> str:
     if completed.returncode != 0 or not lines:
         raise SystemExit(f"could not read the version of {binary} (rc {completed.returncode}): {completed.stderr.strip()[:300]}")
     named: str = lines[0].strip()
+    given = NAMED_KEY.search(completed.stdout)
+    if given is not None and KEY_DIGEST.search(given.group(1)) is not None:
+        return given.group(1)
     built = BUILT_COMMIT.search(named)
     key: str | None = input_key(top, built.group(1)) if built is not None and "+dirty" not in named else None
     return key if key is not None else named
