@@ -321,6 +321,7 @@ dependencies = [
  "doeff-linter",
  "regex",
  "serde",
+ "serde_json",
  "tempfile",
  "toml",
 ]

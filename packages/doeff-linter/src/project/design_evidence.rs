@@ -214,20 +214,21 @@ fn rust_optional(type_text: &str) -> bool {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum TokenKind {
+pub(super) enum TokenKind {
     Ident(String),
     Punct(char),
     Literal,
 }
 
 #[derive(Debug, Clone)]
-struct Token {
-    kind: TokenKind,
-    start: usize,
-    end: usize,
+pub(super) struct Token {
+    pub(super) kind: TokenKind,
+    pub(super) start: usize,
+    pub(super) end: usize,
 }
 
-fn tokenize_rust(source: &str) -> Vec<Token> {
+/// The tokens of a Rust source without its comments and attributes (also read by srp_metrics for the functions of a module).
+pub(super) fn tokenize_rust(source: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let bytes = source.as_bytes();
     let len = bytes.len();

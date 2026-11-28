@@ -224,18 +224,26 @@ pub(crate) fn judge(base: &BaseTree, declaration: &BaseDeclaration, paths: &[Str
     let at = AtBase::load(base, declaration)?;
     let repo = base.repo();
     let mut hits: Vec<Hit> = judge_declaration(&at, repo)?.into_iter().collect();
+    for rel in paths {
+        hits.extend(judge_guarded(&at, repo, rel)?);
+    }
+    for rel in modules(repo, paths, at.decl()) {
+        hits.extend(judge_module(&at, repo, &rel)?);
+    }
+    Ok(hits)
+}
+
+/// The modules of the population a change touches: each changed .hy or .rs, and the module next to each changed evidence file.
+pub(crate) fn modules(repo: &Path, paths: &[String], decl: &DesignEvidenceDecl) -> BTreeSet<String> {
     let suffix = ".evidence.toml";
     let mut modules: BTreeSet<String> = BTreeSet::new();
     for rel in paths {
-        hits.extend(judge_guarded(&at, repo, rel)?);
         if let Some(stem) = rel.strip_suffix(suffix) {
             modules.extend([format!("{}.hy", stem), format!("{}.rs", stem)].into_iter().filter(|m| repo.join(m).exists()));
         } else {
             modules.insert(rel.clone());
         }
     }
-    for rel in modules.iter().filter(|rel| evidence::wants(rel, at.decl())) {
-        hits.extend(judge_module(&at, repo, rel)?);
-    }
-    Ok(hits)
+    modules.retain(|rel| evidence::wants(rel, decl));
+    modules
 }
