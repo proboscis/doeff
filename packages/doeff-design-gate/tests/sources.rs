@@ -2,8 +2,9 @@
 //! Each test makes the work tree and what is read differ, so a gate that read the wrong one would give the other answer.
 //!   * `--index` refuses a staged DOEFF215/216 change under a clean work tree, also from an index `GIT_INDEX_FILE` names; it passes a clean index under a dirty work tree.
 //!   * `--head <commit>` judges that commit, not the work tree or HEAD.
-//!   * `--index` with `--head`, and a `--head` that is not a commit, cannot be judged (2).
-//!   * 265 changed paths are judged in under a second from the index and from a commit.
+//!   * `--index` with `--head`, a `--head` that is not a commit, a `GIT_INDEX_FILE` that names no file, a dir outside a repo, and no git cannot be judged (2, the
+//!     reason on stderr); a path the index or the commit lacks is absent, never read from the work tree.
+//!   * 265 changed paths are judged in under a second from the index and from a commit, with at most three git processes and each object asked once.
 
 use std::path::Path;
 use std::process::Command;
@@ -178,5 +179,91 @@ fn the_index_and_a_commit_of_265_paths_take_under_a_second() {
         eprintln!("doeff-design-gate {:?} over {} paths: {:?}", extra, paths.len(), took);
         assert_eq!(code, 0, "{}", out);
         assert!(took < Duration::from_secs(1), "{:?} over {} paths took {:?}", extra, paths.len(), took);
+    }
+}
+
+/// A `git` first on PATH that logs each process it starts (its first argument) to `<dir>/started` and what `cat-file --batch` is asked to `<dir>/asked`.
+fn counting_git(dir: &Path) -> std::path::PathBuf {
+    let real = Command::new("sh").args(["-c", "command -v git"]).output().unwrap();
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+    let bin = dir.join("bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    let script = format!(
+        "#!/bin/sh\necho \"$1\" >> '{log}/started'\nif [ \"$1\" = cat-file ]; then tee -a '{log}/asked' | '{real}' \"$@\"; else exec '{real}' \"$@\"; fi\n",
+        log = dir.display(),
+        real = real
+    );
+    std::fs::write(bin.join("git"), script).unwrap();
+    Command::new("chmod").args(["755"]).arg(bin.join("git")).status().unwrap();
+    bin
+}
+
+#[test]
+fn one_judgment_starts_at_most_three_gits_and_reads_each_object_once_over_265_paths() {
+    let files: Vec<(String, String)> =
+        (0..265).map(|i| (format!("app/m{}/kept_{}.hy", i % 13, i), format!("(defrecord Kept{}\n  (#^ str card))\n", i))).collect();
+    let refs: Vec<(&str, &str)> = files.iter().map(|(r, t)| (r.as_str(), t.as_str())).collect();
+    let dir = base(&refs);
+    let root = dir.path();
+    for (rel, text) in &files {
+        write(root, rel, &format!(";; touched\n{}", text));
+    }
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "touch"]);
+    let paths: Vec<&str> = files.iter().map(|(r, _)| r.as_str()).collect();
+    for extra in [&["--index"][..], &["--head", "HEAD"][..]] {
+        let logs = tempfile::TempDir::new().unwrap();
+        let bin = counting_git(logs.path());
+        let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap());
+        let (code, out) = gate(root, extra, &[("PATH", Path::new(&path))], &paths);
+        assert_eq!(code, 0, "{}", out);
+        let started = std::fs::read_to_string(logs.path().join("started")).unwrap();
+        let asked = std::fs::read_to_string(logs.path().join("asked")).unwrap();
+        let names: Vec<&str> = asked.lines().collect();
+        let distinct: std::collections::BTreeSet<&str> = names.iter().copied().collect();
+        eprintln!("doeff-design-gate {:?} over {} paths: {} git processes ({}), {} objects asked", extra, paths.len(), started.lines().count(), started.split_whitespace().collect::<Vec<_>>().join(" "), names.len());
+        assert!(started.lines().count() <= 3, "{:?} started {:?}", extra, started);
+        assert_eq!(names.len(), distinct.len(), "{:?} asked an object twice", extra);
+    }
+}
+
+#[test]
+fn git_index_file_that_names_no_file_cannot_be_judged() {
+    let dir = base(&[(LENDING_REL, LENDING)]);
+    let root = dir.path();
+    let (code, out) = gate(root, &["--index"], &[("GIT_INDEX_FILE", &root.join("no-such-index"))], &[LENDING_REL]);
+    assert_eq!(code, 2, "{}", out);
+    assert!(out.contains("cannot judge") && out.contains("GIT_INDEX_FILE"), "{}", out);
+}
+
+#[test]
+fn a_path_the_index_or_the_commit_lacks_is_absent_not_read_from_the_work_tree() {
+    let dir = base(&[(LENDING_REL, LENDING)]);
+    let root = dir.path();
+    let new_rel = "app/core/fresh.hy";
+    write(root, new_rel, "(defrecord Fresh\n  (#^ str card))\n");
+    let (code, out) = gate(root, &[], &[], &[new_rel]);
+    assert_eq!(code, 1, "the work tree has a new type without evidence: {}", out);
+    let (code, out) = gate(root, &["--index"], &[], &[new_rel]);
+    assert_eq!(code, 0, "the index has no such path: {}", out);
+    let (code, out) = gate(root, &["--head", "HEAD"], &[], &[new_rel]);
+    assert_eq!(code, 0, "HEAD has no such path: {}", out);
+}
+
+#[test]
+fn outside_a_repo_or_without_git_cannot_be_judged() {
+    let outside = tempfile::TempDir::new().unwrap();
+    let ceiling = outside.path().parent().unwrap().to_path_buf();
+    for extra in [&["--index"][..], &["--head", "HEAD"][..]] {
+        let (code, out) = gate(outside.path(), extra, &[("GIT_CEILING_DIRECTORIES", &ceiling)], &[LENDING_REL]);
+        assert_eq!(code, 2, "{:?} outside a repo: {}", extra, out);
+        assert!(out.contains("cannot judge"), "{}", out);
+    }
+    let dir = base(&[(LENDING_REL, LENDING)]);
+    let empty = tempfile::TempDir::new().unwrap();
+    for extra in [&["--index"][..], &["--head", "HEAD"][..]] {
+        let (code, out) = gate(dir.path(), extra, &[("PATH", empty.path())], &[LENDING_REL]);
+        assert_eq!(code, 2, "{:?} without git: {}", extra, out);
+        assert!(out.contains("cannot judge"), "{}", out);
     }
 }

@@ -180,7 +180,7 @@ fn run(args: Args, lcom4: Lcom4) -> (Verdict, Vec<Fact>) {
         Ok(base) => base,
         Err(reason) => return (Verdict::Unjudgeable(reason), Vec::new()),
     };
-    let now = match git::ChangedTree::open(&args.repo, args.source) {
+    let now = match git::ChangedTree::open(&base, args.source) {
         Ok(now) => now,
         Err(reason) => return (Verdict::Unjudgeable(reason), Vec::new()),
     };
