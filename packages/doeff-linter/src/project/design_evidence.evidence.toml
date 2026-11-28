@@ -346,7 +346,7 @@ why = "the ledger is looked up by key and a key appears once; a map says so"
 [[element]]
 name = "Problem"
 kind = "sum"
-concern = "the kind of one DOEFF212 finding and its detail"
+concern = "the kind of one DOEFF212 to DOEFF216 finding and its detail"
 key = []
 fan_out = 2
 review = "design-evidence-review-2026-11-20"
@@ -379,6 +379,16 @@ fact = "the evidence file cannot be read"
 name = "Grew"
 type = "{ fields: Vec<String> }"
 fact = "an existing type gained fields without an approval at the base"
+
+[[element.field]]
+name = "Wide"
+type = "{ width: usize, fields: Vec<String> }"
+fact = "DOEFF215: a type the change made or grew is wider than the limit"
+
+[[element.field]]
+name = "UnusedInModule"
+type = "{ fields: Vec<String> }"
+fact = "DOEFF216: fields an existing type gained that no function of its own module uses"
 
 [[element.rejected]]
 shape = "a kind string with optional detail fields"

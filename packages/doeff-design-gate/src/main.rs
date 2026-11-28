@@ -1,5 +1,5 @@
-//! doeff-design-gate — the merge-time gate of DOEFF212 (a type changes only with its design evidence), DOEFF213 (values that stand in for a type), and DOEFF214 (the
-//! ledgers only shrink). Called by the repo-charter gate before a merge (`exec doeff-design-gate --base {base} --paths {paths}`) and by the commit hook.
+//! doeff-design-gate — the merge-time gate of DOEFF212 (a type changes only with its design evidence), DOEFF213 (values that stand in for a type), DOEFF214 (the
+//! ledgers only shrink), DOEFF215 (a type the change made is at most 5 fields wide), and DOEFF216 (a field an existing type gains is used by its own module). Called by the repo-charter gate before a merge (`exec doeff-design-gate --base {base} --paths {paths}`) and by the commit hook.
 //!
 //! Why a separate binary: the gate has 5 seconds, and doeff-linter builds the project's facts (minutes on a cold tree) even for one file. This binary reads only the
 //! changed paths, their sibling evidence, and the declaration, ledgers, and approvals at the base — never the facts.

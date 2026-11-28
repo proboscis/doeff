@@ -2,7 +2,7 @@
 name = "doeff-design-gate"
 version = "0.1.0"
 edition = "2021"
-description = "The merge-time gate of DOEFF212/213/214: judges the changed paths against the declaration, ledgers, and approvals read at the base commit, without the project facts"
+description = "The merge-time gate of DOEFF212/213/214/215/216: judges the changed paths against the declaration, ledgers, and approvals read at the base commit, without the project facts"
 license = "MIT"
 publish = false
 

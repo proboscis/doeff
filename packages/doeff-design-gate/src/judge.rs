@@ -8,6 +8,7 @@ use std::path::Path;
 
 use doeff_linter::project::architecture::DesignEvidenceDecl;
 use doeff_linter::project::design_evidence::{self as evidence, ExistingShapes};
+use doeff_linter::project::field_cohesion as cohesion;
 use doeff_linter::project::ledger_guard::{
     self as guard, declaration_fingerprint, ApprovalLedger, Approvals, BaseApprovals, GuardHit,
 };
@@ -27,7 +28,6 @@ pub(crate) struct Hit {
     pub(crate) reason: String,
 }
 
-const DESIGN_EVIDENCE: &str = "DOEFF212";
 const TYPE_SUBSTITUTE: &str = "DOEFF213";
 const LEDGER_GUARD: &str = "DOEFF214";
 /// The value of a `declaration` approval that lets the declaration be removed.
@@ -148,7 +148,8 @@ fn judge_module(at: &AtBase, repo: &Path, rel: &str) -> Result<Vec<Hit>, String>
             Some(_) => evidence::grown_fields(rel, &source, &at.shapes, || base.clone(), &at.approvals)?,
             None => Vec::new(),
         })
-        .map(|h| Hit { rel: rel.to_string(), rule: DESIGN_EVIDENCE, detail: h.problem.key_detail(&h.name), reason: h.problem.describe(&h.name, &evidence_rel) })
+        .chain(cohesion::judge(rel, &source, base.as_deref(), &at.approvals)?)
+        .map(|h| Hit { rel: rel.to_string(), rule: h.problem.rule(), detail: h.problem.key_detail(&h.name), reason: h.problem.describe(&h.name, &evidence_rel) })
         .collect();
     if substitutes::wants(rel, at.decl()) {
         let counts = module_counts(at, rel, base.as_deref())?;

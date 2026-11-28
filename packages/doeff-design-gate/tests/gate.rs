@@ -4,6 +4,7 @@
 //!   * A type the base already had in the same shape passes even when the ledger lacks it (the base's debt is not the change's); reshaping it is refused.
 //!   * A line added to the ledger is refused; a line removed passes.
 //!   * Removing or narrowing the declaration is refused unless an approval at the base covers it.
+//!   * A seventh field its module does not use is refused by DOEFF215 and DOEFF216; a field added to a module of types only is not.
 //!   * Fails closed: no declaration at the base, an unreadable ledger at the base, and a base that is not a commit cannot be judged (2).
 
 use std::path::Path;
@@ -168,4 +169,48 @@ fn what_cannot_be_read_holds_the_change() {
     assert_eq!(code, 2, "an unreadable ledger at the base: {}", out);
     let (code, out) = gate(root, "no-such-ref", &["app/core/kept.hy"]);
     assert_eq!(code, 2, "a base that is not a commit: {}", out);
+}
+
+/// Commits files on main and starts the work branch again from it.
+fn on_main(root: &Path, files: &[(&str, &str)]) {
+    git(root, &["checkout", "-q", "main"]);
+    for (rel, text) in files {
+        write(root, rel, text);
+    }
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "more base"]);
+    git(root, &["checkout", "-q", "-B", "work"]);
+}
+
+const LENDING: &str = "(defrecord LendingState\n  (#^ tuple returning)\n  (#^ tuple unreturned)\n  (#^ tuple extending)\n  (#^ tuple touching)\n  (#^ int last-seq)\n  (#^ tuple leases))\n\n\
+                       (deff next-seq [state]\n  (LendingState :returning state.returning :unreturned state.unreturned :extending state.extending\n\
+                       :touching state.touching :last-seq (+ 1 state.last-seq) :leases state.leases))\n";
+
+#[test]
+fn a_seventh_field_its_module_does_not_use_is_refused_by_doeff215_and_doeff216() {
+    let dir = base(DECLARATION, "");
+    let root = dir.path();
+    on_main(root, &[("app/core/lending.hy", LENDING), ("design-existing.toml", &ledger(&[("app/core/kept.hy", KEPT), ("app/core/lending.hy", LENDING)]))]);
+    let grown = LENDING.replace("(#^ tuple leases))", "(#^ tuple leases)\n  (setv #^ frozenset paused-credentials (frozenset)))");
+    write(root, "app/core/lending.hy", &grown);
+    let started = std::time::Instant::now();
+    let (code, out) = gate(root, "main", &["app/core/lending.hy"]);
+    let spent = started.elapsed();
+    assert_eq!(code, 1, "{}", out);
+    assert!(out.contains("DOEFF215 LendingState:width") && out.contains("7 fields"), "{}", out);
+    assert!(out.contains("DOEFF216 LendingState:unused-in-module") && out.contains("paused-credentials"), "{}", out);
+    assert!(spent < std::time::Duration::from_secs(1), "the gate took {:?}", spent);
+}
+
+#[test]
+fn a_types_only_module_gaining_a_field_has_no_doeff215_or_doeff216_hit() {
+    let intent = "(defrecord SrpTarget\n  (#^ str card)\n  (#^ str rel))\n";
+    let approvals = "[[approval]]\nledger = \"fields\"\nkey = \"app/intent/types.hy::SrpTarget\"\nvalue = \"base\"\nreview = \"req-3\"\nwhy = \"the target names its base\"\n";
+    let dir = base(DECLARATION, approvals);
+    let root = dir.path();
+    on_main(root, &[("app/intent/types.hy", intent), ("design-existing.toml", &ledger(&[("app/core/kept.hy", KEPT), ("app/intent/types.hy", intent)]))]);
+    write(root, "app/intent/types.hy", &intent.replace("(#^ str rel))", "(#^ str rel)\n  (#^ str base))"));
+    let (code, out) = gate(root, "main", &["app/intent/types.hy"]);
+    assert!(!out.contains("DOEFF215") && !out.contains("DOEFF216"), "a module with no function bodies has no false hit: {}", out);
+    assert!(code == 0 || out.contains("DOEFF212"), "only the evidence of the reshape is asked: {}", out);
 }

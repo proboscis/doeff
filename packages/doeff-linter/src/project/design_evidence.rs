@@ -21,6 +21,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::architecture::DesignEvidenceDecl;
+use super::field_cohesion::WIDTH_LIMIT;
 use super::retired::{judge_files, selected};
 
 /// The suffix of an evidence file, replacing the module's extension.
@@ -61,7 +62,7 @@ impl ShapeKind {
 }
 
 /// The members of a variant's payload as spelled (`{ a: T, b: U }` → `a`, `b`; `(T, U)` → `0`, `1`; no payload → none). Splits at the top-level commas only.
-fn payload_members(type_text: Option<&str>) -> Vec<String> {
+pub(super) fn payload_members(type_text: Option<&str>) -> Vec<String> {
     let Some(text) = type_text.map(str::trim) else { return Vec::new() };
     let named = text.starts_with('{');
     let inner = text.get(1..text.len().saturating_sub(1)).unwrap_or("");
@@ -156,7 +157,7 @@ fn hy_optional(type_text: &str) -> bool {
 }
 
 /// The contents of a list without discards (`#_`).
-fn live(items: &[Form]) -> Vec<&Form> {
+pub(super) fn live(items: &[Form]) -> Vec<&Form> {
     items.iter().filter(|f| !matches!(f.node, Node::Discarded)).collect()
 }
 
@@ -819,6 +820,11 @@ pub enum Problem {
     /// A type of the shapes ledger at the base has fields its version at the base did not have, and no user approval at the base covers them — evidence alone does not let an
     /// existing type grow (v2 §8.3).
     Grew { fields: Vec<String> },
+    /// DOEFF215: a type the change made (new, or grown by a field) is wider than `WIDTH_LIMIT`; `fields` = the fields past the limit (new type) or the grown ones that
+    /// no approval at the base covers.
+    Wide { width: usize, fields: Vec<String> },
+    /// DOEFF216: fields an existing type gained that no function body of the module defining the type reads or writes — a fact another module rides on this type.
+    UnusedInModule { fields: Vec<String> },
 }
 
 impl Problem {
@@ -831,6 +837,17 @@ impl Problem {
             Problem::Orphan => format!("{}:orphan", name),
             Problem::Unreadable { .. } => name.to_string(),
             Problem::Grew { .. } => format!("{}:grew", name),
+            Problem::Wide { .. } => format!("{}:width", name),
+            Problem::UnusedInModule { .. } => format!("{}:unused-in-module", name),
+        }
+    }
+
+    /// The rule the problem belongs to (DOEFF212 unless it is one of the width and cohesion rules).
+    pub fn rule(&self) -> &'static str {
+        match self {
+            Problem::Wide { .. } => "DOEFF215",
+            Problem::UnusedInModule { .. } => "DOEFF216",
+            _ => "DOEFF212",
         }
     }
 
@@ -854,6 +871,21 @@ impl Problem {
                  (an entry ledger = \"fields\" in the approvals file, landed before this change); put the new fact in a part type or a new type instead",
                 name,
                 fields.join(", ")
+            ),
+            Problem::Wide { width, fields } => format!(
+                "{} has {} fields (more than {}) after this change, which made or grew it ({}) — a type past {} fields holds more than one responsibility; split the new facts \
+                 into a part type or a new type (or land an approval ledger = \"fields\" for each of them first)",
+                name,
+                width,
+                WIDTH_LIMIT,
+                fields.join(", "),
+                WIDTH_LIMIT
+            ),
+            Problem::UnusedInModule { fields } => format!(
+                "{} gained fields {} that no function of its own module reads or writes — the fact belongs to the module that uses it; give it a type there instead of riding on {}",
+                name,
+                fields.join(", "),
+                name
             ),
         }
     }

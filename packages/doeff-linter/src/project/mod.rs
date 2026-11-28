@@ -69,6 +69,7 @@ pub mod typed_values;
 pub mod record_stubs;
 pub mod design_evidence;
 pub mod srp_metrics;
+pub mod field_cohesion;
 pub mod type_substitutes;
 pub mod ledger_guard;
 pub mod business_fakes;
